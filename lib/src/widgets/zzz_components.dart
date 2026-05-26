@@ -2,12 +2,24 @@ import 'package:flutter/material.dart';
 
 import '../theme/zzz_colors.dart';
 
-class ZzzPanel extends StatelessWidget {
+const Duration _kZzzAnimFast = Duration(milliseconds: 120);
+const Duration _kZzzAnimNormal = Duration(milliseconds: 220);
+const Duration _kZzzAnimSegment = Duration(milliseconds: 280);
+const Duration _kZzzAnimExpand = Duration(milliseconds: 320);
+const Curve _kZzzCurve = Curves.easeOutCubic;
+const Curve _kZzzBounce = Cubic(0.34, 1.56, 0.64, 1);
+
+Duration _zzzDuration(bool animated, [Duration duration = _kZzzAnimNormal]) {
+  return animated ? duration : Duration.zero;
+}
+
+class ZzzPanel extends StatefulWidget {
   const ZzzPanel({
     required this.child,
     this.background,
     this.padding = const EdgeInsets.all(16),
     this.radius = 18,
+    this.animateEntrance = false,
     super.key,
   });
 
@@ -15,30 +27,370 @@ class ZzzPanel extends StatelessWidget {
   final DecorationImage? background;
   final EdgeInsetsGeometry padding;
   final double radius;
+  final bool animateEntrance;
+
+  @override
+  State<ZzzPanel> createState() => _ZzzPanelState();
+}
+
+class _ZzzPanelState extends State<ZzzPanel> with SingleTickerProviderStateMixin {
+  late final AnimationController _entranceController;
+  late final Animation<double> _entranceOpacity;
+  late final Animation<Offset> _entranceOffset;
+
+  @override
+  void initState() {
+    super.initState();
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: _kZzzAnimExpand,
+    );
+    final curve = CurvedAnimation(
+      parent: _entranceController,
+      curve: _kZzzCurve,
+    );
+    _entranceOpacity = curve;
+    _entranceOffset = Tween<Offset>(
+      begin: const Offset(0, 0.04),
+      end: Offset.zero,
+    ).animate(curve);
+    if (widget.animateEntrance) {
+      _entranceController.forward();
+    } else {
+      _entranceController.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ZzzPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animateEntrance && !oldWidget.animateEntrance) {
+      _entranceController.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _entranceController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: padding,
+    final panel = Container(
+      padding: widget.padding,
       decoration: BoxDecoration(
         color: ZzzColors.panel,
-        borderRadius: BorderRadius.circular(radius),
+        borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(color: Colors.white12),
-        image: background,
+        image: widget.background,
       ),
-      child: child,
+      child: widget.child,
+    );
+
+    if (!widget.animateEntrance) return panel;
+
+    return FadeTransition(
+      opacity: _entranceOpacity,
+      child: SlideTransition(position: _entranceOffset, child: panel),
+    );
+  }
+}
+
+/// Height + fade reveal for expandable bodies.
+///
+/// Uses [SizeTransition] instead of [AnimatedSize] to avoid re-entrant layout
+/// when nested with other animated size widgets (e.g. [ZzzAnimatedSwap]).
+class ZzzReveal extends StatefulWidget {
+  const ZzzReveal({
+    required this.expanded,
+    required this.child,
+    this.animated = true,
+    this.duration = _kZzzAnimExpand,
+    super.key,
+  });
+
+  final bool expanded;
+  final Widget child;
+  final bool animated;
+  final Duration duration;
+
+  @override
+  State<ZzzReveal> createState() => _ZzzRevealState();
+}
+
+class _ZzzRevealState extends State<ZzzReveal>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _sizeAnimation;
+  late Animation<double> _popScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: _zzzDuration(widget.animated, widget.duration),
+    );
+    _sizeAnimation = CurvedAnimation(parent: _controller, curve: _kZzzCurve);
+    _popScale = Tween<double>(begin: 0.96, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: _kZzzBounce),
+    );
+    if (widget.expanded) {
+      _controller.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ZzzReveal oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _controller.duration = _zzzDuration(widget.animated, widget.duration);
+    if (widget.expanded != oldWidget.expanded) {
+      if (widget.expanded) {
+        _controller.forward();
+      } else {
+        _controller.reverse();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: SizeTransition(
+        axisAlignment: -1,
+        sizeFactor: _sizeAnimation,
+        child: FadeTransition(
+          opacity: _sizeAnimation,
+          child: ScaleTransition(scale: _popScale, child: widget.child),
+        ),
+      ),
+    );
+  }
+}
+
+/// Titled section with animated expand / collapse.
+class ZzzExpandableSection extends StatefulWidget {
+  const ZzzExpandableSection({
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.initiallyExpanded = true,
+    this.animated = true,
+    this.onExpansionChanged,
+    super.key,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget child;
+  final bool initiallyExpanded;
+  final bool animated;
+  final ValueChanged<bool>? onExpansionChanged;
+
+  @override
+  State<ZzzExpandableSection> createState() => _ZzzExpandableSectionState();
+}
+
+class _ZzzExpandableSectionState extends State<ZzzExpandableSection> {
+  late bool _expanded;
+  bool _headerPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initiallyExpanded;
+  }
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+    widget.onExpansionChanged?.call(_expanded);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = _zzzDuration(widget.animated);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          onTapDown: (_) => setState(() => _headerPressed = true),
+          onTapUp: (_) {
+            setState(() => _headerPressed = false);
+            _toggle();
+          },
+          onTapCancel: () => setState(() => _headerPressed = false),
+          child: AnimatedScale(
+            scale: _headerPressed ? 0.985 : 1,
+            duration: _kZzzAnimFast,
+            curve: _kZzzCurve,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: null,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.title,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            if (widget.subtitle != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                widget.subtitle!,
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      AnimatedRotation(
+                        duration: duration,
+                        curve: _kZzzCurve,
+                        turns: _expanded ? 0.5 : 0,
+                        child: const Icon(
+                          Icons.expand_more_rounded,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        ZzzReveal(
+          expanded: _expanded,
+          animated: widget.animated,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: widget.child,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// [ZzzPanel] with a collapsible header and animated body.
+class ZzzExpandablePanel extends StatelessWidget {
+  const ZzzExpandablePanel({
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.background,
+    this.padding = const EdgeInsets.all(16),
+    this.radius = 18,
+    this.initiallyExpanded = true,
+    this.animated = true,
+    super.key,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget child;
+  final DecorationImage? background;
+  final EdgeInsetsGeometry padding;
+  final double radius;
+  final bool initiallyExpanded;
+  final bool animated;
+
+  @override
+  Widget build(BuildContext context) {
+    return ZzzPanel(
+      background: background,
+      padding: padding,
+      radius: radius,
+      child: ZzzExpandableSection(
+        title: title,
+        subtitle: subtitle,
+        initiallyExpanded: initiallyExpanded,
+        animated: animated,
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Cross-fades and slides when [value] changes.
+class ZzzAnimatedSwap extends StatelessWidget {
+  const ZzzAnimatedSwap({
+    required this.value,
+    required this.builder,
+    this.animated = true,
+    super.key,
+  });
+
+  final Object value;
+  final Widget Function(BuildContext context) builder;
+  final bool animated;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = _zzzDuration(animated);
+
+    return AnimatedSwitcher(
+      duration: duration,
+      switchInCurve: _kZzzCurve,
+      switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (currentChild, previousChildren) {
+        return Stack(
+          alignment: Alignment.topCenter,
+          clipBehavior: Clip.hardEdge,
+          children: [
+            ...previousChildren,
+            if (currentChild != null) currentChild,
+          ],
+        );
+      },
+      transitionBuilder: (child, animation) {
+        final offsetAnimation = Tween<Offset>(
+          begin: const Offset(0, 0.05),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(parent: animation, curve: _kZzzCurve));
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(position: offsetAnimation, child: child),
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey(value),
+        child: builder(context),
+      ),
     );
   }
 }
 
 class ZzzSectionLabel extends StatelessWidget {
-  const ZzzSectionLabel({required this.label, super.key});
+  const ZzzSectionLabel({required this.label, this.animated = true, super.key});
 
   final String label;
+  final bool animated;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Row(
         children: [
@@ -50,6 +402,18 @@ class ZzzSectionLabel extends StatelessWidget {
           const Expanded(child: Divider(color: Colors.white24)),
         ],
       ),
+    );
+
+    if (!animated) return content;
+
+    return TweenAnimationBuilder<double>(
+      duration: _kZzzAnimNormal,
+      curve: _kZzzCurve,
+      tween: Tween(begin: 0, end: 1),
+      builder: (context, value, child) {
+        return Opacity(opacity: value, child: child);
+      },
+      child: content,
     );
   }
 }
@@ -86,24 +450,93 @@ class ZzzSegmentedControl<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedIndex = items.indexWhere((item) => item.value == value);
+
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(28),
       ),
-      child: Row(
-        children: [
-          for (final item in items)
-            Expanded(
-              child: _ZzzSegmentButton<T>(
-                item: item,
-                selected: item.value == value,
-                animated: animated,
-                onTap: item.enabled ? () => onChanged(item.value) : null,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final segmentWidth = constraints.maxWidth / items.length;
+
+          return Stack(
+            children: [
+              if (selectedIndex >= 0)
+                _ZzzSegmentIndicator(
+                  animated: animated,
+                  left: selectedIndex * segmentWidth,
+                  width: segmentWidth,
+                ),
+              Row(
+                children: [
+                  for (final item in items)
+                    Expanded(
+                      child: _ZzzSegmentButton<T>(
+                        item: item,
+                        selected: item.value == value,
+                        animated: animated,
+                        onTap:
+                            item.enabled ? () => onChanged(item.value) : null,
+                      ),
+                    ),
+                ],
               ),
-            ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ZzzSegmentIndicator extends StatelessWidget {
+  const _ZzzSegmentIndicator({
+    required this.animated,
+    required this.left,
+    required this.width,
+  });
+
+  final bool animated;
+  final double left;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final indicator = Container(
+      height: 42,
+      decoration: BoxDecoration(
+        color: ZzzColors.yellow,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: ZzzColors.yellow.withValues(alpha: 0.35),
+            blurRadius: 12,
+          ),
         ],
+      ),
+    );
+
+    if (!animated) {
+      return Positioned(left: left, width: width, child: indicator);
+    }
+
+    return AnimatedPositioned(
+      duration: _kZzzAnimSegment,
+      curve: _kZzzCurve,
+      left: left,
+      width: width,
+      child: TweenAnimationBuilder<double>(
+        key: ValueKey(left),
+        duration: _kZzzAnimSegment,
+        curve: _kZzzBounce,
+        tween: Tween(begin: 0.92, end: 1.0),
+        builder: (context, scale, child) {
+          return Transform.scale(scale: scale, child: child);
+        },
+        child: indicator,
       ),
     );
   }
@@ -122,45 +555,50 @@ class _ZzzSegmentButton<T> extends StatelessWidget {
   final bool animated;
   final VoidCallback? onTap;
 
+  Color _foregroundColor() {
+    if (!item.enabled) return Colors.white24;
+    return selected ? Colors.black : Colors.white;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final foreground =
-        item.enabled
-            ? selected
-                ? Colors.black
-                : Colors.white
-            : Colors.white24;
+    final foreground = _foregroundColor();
+    final duration = animated ? _kZzzAnimNormal : Duration.zero;
 
     return Tooltip(
       message: item.tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          height: 42,
-          decoration: BoxDecoration(
-            color: selected ? ZzzColors.yellow : Colors.transparent,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow:
-                selected && animated
-                    ? [
-                      BoxShadow(
-                        color: ZzzColors.yellow.withValues(alpha: 0.35),
-                        blurRadius: 12,
-                      ),
-                    ]
-                    : null,
-          ),
-          child: Center(
-            child:
-                item.iconAsset == null
-                    ? Icon(item.icon, color: foreground)
-                    : Image.asset(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: onTap,
+          child: SizedBox(
+            height: 42,
+            child: Center(
+              child: TweenAnimationBuilder<double>(
+                duration: duration,
+                curve: _kZzzCurve,
+                tween: Tween(end: selected ? 1.08 : 1),
+                builder: (context, scale, child) {
+                  return Transform.scale(scale: scale, child: child);
+                },
+                child: TweenAnimationBuilder<Color?>(
+                  duration: duration,
+                  curve: _kZzzCurve,
+                  tween: ColorTween(end: foreground),
+                  builder: (context, color, _) {
+                    if (item.iconAsset == null) {
+                      return Icon(item.icon, color: color);
+                    }
+                    return Image.asset(
                       item.iconAsset!,
                       height: 28,
-                      color: foreground,
-                    ),
+                      color: color,
+                    );
+                  },
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -168,35 +606,75 @@ class _ZzzSegmentButton<T> extends StatelessWidget {
   }
 }
 
-class ZzzAvatar extends StatelessWidget {
+class ZzzAvatar extends StatefulWidget {
   const ZzzAvatar({
     required this.image,
     required this.size,
     this.backgroundColor = Colors.white,
+    this.animateEntrance = false,
     super.key,
   });
 
   final ImageProvider image;
   final double size;
   final Color backgroundColor;
+  final bool animateEntrance;
+
+  @override
+  State<ZzzAvatar> createState() => _ZzzAvatarState();
+}
+
+class _ZzzAvatarState extends State<ZzzAvatar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _entranceController;
+  late final Animation<double> _entranceScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: _kZzzAnimExpand,
+    );
+    _entranceScale = CurvedAnimation(
+      parent: _entranceController,
+      curve: _kZzzBounce,
+    );
+    if (widget.animateEntrance) {
+      _entranceController.forward();
+    } else {
+      _entranceController.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _entranceController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: size / 2,
-      backgroundColor: backgroundColor,
-      backgroundImage: image,
+    final avatar = CircleAvatar(
+      radius: widget.size / 2,
+      backgroundColor: widget.backgroundColor,
+      backgroundImage: widget.image,
     );
+
+    if (!widget.animateEntrance) return avatar;
+
+    return ScaleTransition(scale: _entranceScale, child: avatar);
   }
 }
 
-class ZzzPillButton extends StatelessWidget {
+class ZzzPillButton extends StatefulWidget {
   const ZzzPillButton({
     required this.title,
     required this.onPressed,
     this.subtitle,
     this.leading,
     this.animated = true,
+    this.animateEntrance = false,
     this.backgroundColor = ZzzColors.yellow,
     this.foregroundColor = Colors.black,
     super.key,
@@ -207,43 +685,93 @@ class ZzzPillButton extends StatelessWidget {
   final Widget? leading;
   final VoidCallback onPressed;
   final bool animated;
+  final bool animateEntrance;
   final Color backgroundColor;
   final Color foregroundColor;
 
   @override
+  State<ZzzPillButton> createState() => _ZzzPillButtonState();
+}
+
+class _ZzzPillButtonState extends State<ZzzPillButton>
+    with SingleTickerProviderStateMixin {
+  bool _pressed = false;
+  late final AnimationController _entranceController;
+  late final Animation<double> _entranceOpacity;
+  late final Animation<Offset> _entranceOffset;
+
+  @override
+  void initState() {
+    super.initState();
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: _kZzzAnimExpand,
+    );
+    final curve = CurvedAnimation(
+      parent: _entranceController,
+      curve: _kZzzBounce,
+    );
+    _entranceOpacity = curve;
+    _entranceOffset = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(curve);
+    if (widget.animateEntrance) {
+      _entranceController.forward();
+    } else {
+      _entranceController.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _entranceController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FilledButton(
+    final scale = widget.animated && _pressed ? 0.97 : 1.0;
+
+    final button = FilledButton(
       style: FilledButton.styleFrom(
-        backgroundColor: backgroundColor,
-        foregroundColor: foregroundColor,
+        backgroundColor: widget.backgroundColor,
+        foregroundColor: widget.foregroundColor,
         padding: const EdgeInsets.all(8),
         minimumSize: const Size.fromHeight(66),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(36)),
-        shadowColor: animated ? backgroundColor : Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(36),
+        ),
+        shadowColor:
+            widget.animated ? widget.backgroundColor : Colors.transparent,
+        animationDuration: _kZzzAnimNormal,
       ),
-      onPressed: onPressed,
+      onPressed: widget.onPressed,
       child: Row(
         children: [
-          if (leading != null) ...[leading!, const SizedBox(width: 12)],
+          if (widget.leading != null) ...[
+            widget.leading!,
+            const SizedBox(width: 12),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  title,
+                  widget.title,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                if (subtitle != null)
+                if (widget.subtitle != null)
                   Text(
-                    subtitle!,
+                    widget.subtitle!,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: foregroundColor.withValues(alpha: 0.48),
+                      color: widget.foregroundColor.withValues(alpha: 0.48),
                     ),
                   ),
               ],
@@ -252,10 +780,29 @@ class ZzzPillButton extends StatelessWidget {
         ],
       ),
     );
+
+    final content = Listener(
+      onPointerDown: (_) => setState(() => _pressed = true),
+      onPointerUp: (_) => setState(() => _pressed = false),
+      onPointerCancel: (_) => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: scale,
+        duration: _kZzzAnimFast,
+        curve: _kZzzCurve,
+        child: button,
+      ),
+    );
+
+    if (!widget.animateEntrance) return content;
+
+    return FadeTransition(
+      opacity: _entranceOpacity,
+      child: SlideTransition(position: _entranceOffset, child: content),
+    );
   }
 }
 
-class ZzzTextAction extends StatelessWidget {
+class ZzzTextAction extends StatefulWidget {
   const ZzzTextAction({
     required this.icon,
     required this.label,
@@ -268,14 +815,48 @@ class ZzzTextAction extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<ZzzTextAction> createState() => _ZzzTextActionState();
+}
+
+class _ZzzTextActionState extends State<ZzzTextAction> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 20),
-      label: Text(label),
-      style: TextButton.styleFrom(
-        foregroundColor: Colors.white38,
-        minimumSize: const Size.fromHeight(40),
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedSlide(
+        duration: _kZzzAnimFast,
+        curve: _kZzzCurve,
+        offset: _pressed ? const Offset(0, 0.03) : Offset.zero,
+        child: AnimatedScale(
+          scale: _pressed ? 0.97 : 1,
+          duration: _kZzzAnimFast,
+          curve: _kZzzCurve,
+          child: TextButton.icon(
+            onPressed: null,
+            icon: Icon(widget.icon, size: 20),
+            label: Text(widget.label),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white38,
+              minimumSize: const Size.fromHeight(40),
+              animationDuration: _kZzzAnimNormal,
+            ).copyWith(
+              overlayColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.pressed)) {
+                  return Colors.white.withValues(alpha: 0.12);
+                }
+                if (states.contains(WidgetState.hovered)) {
+                  return Colors.white.withValues(alpha: 0.06);
+                }
+                return null;
+              }),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -311,13 +892,29 @@ class ZzzSelectableAvatar extends StatelessWidget {
               InkWell(
                 onTap: onSelect,
                 customBorder: const CircleBorder(),
-                child: Container(
+                child: AnimatedContainer(
+                  duration: _kZzzAnimNormal,
+                  curve: _kZzzCurve,
                   padding: EdgeInsets.all(selected ? 4 : 2),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: selected ? ZzzColors.yellow : Colors.white24,
+                    boxShadow:
+                        selected
+                            ? [
+                              BoxShadow(
+                                color: ZzzColors.yellow.withValues(alpha: 0.3),
+                                blurRadius: 10,
+                              ),
+                            ]
+                            : null,
                   ),
-                  child: ZzzAvatar(image: image, size: size),
+                  child: AnimatedScale(
+                    duration: _kZzzAnimExpand,
+                    curve: selected ? _kZzzBounce : _kZzzCurve,
+                    scale: selected ? 1 : 0.94,
+                    child: ZzzAvatar(image: image, size: size),
+                  ),
                 ),
               ),
               if (onRemove != null)
@@ -351,7 +948,7 @@ class ZzzSelectableAvatar extends StatelessWidget {
   }
 }
 
-class ZzzTextInput extends StatelessWidget {
+class ZzzTextInput extends StatefulWidget {
   const ZzzTextInput({
     this.controller,
     this.hintText,
@@ -382,31 +979,75 @@ class ZzzTextInput extends StatelessWidget {
   final Color foregroundColor;
 
   @override
+  State<ZzzTextInput> createState() => _ZzzTextInputState();
+}
+
+class _ZzzTextInputState extends State<ZzzTextInput> {
+  late final FocusNode _focusNode;
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode();
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus != _focused) {
+        setState(() => _focused = _focusNode.hasFocus);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      minLines: minLines,
-      maxLines: maxLines,
-      autofocus: autofocus,
-      textInputAction: textInputAction,
-      decoration: InputDecoration(
-        hintText: hintText,
-        prefixIcon: prefixIcon,
-        filled: true,
-        fillColor: fillColor,
-        hintStyle: TextStyle(color: foregroundColor.withValues(alpha: 0.45)),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 14,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(28),
-          borderSide: BorderSide.none,
-        ),
+    return AnimatedContainer(
+      duration: _kZzzAnimNormal,
+      curve: _kZzzCurve,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: _focused
+            ? [
+                BoxShadow(
+                  color: ZzzColors.yellow.withValues(alpha: 0.35),
+                  blurRadius: 16,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
       ),
-      style: style ?? TextStyle(color: foregroundColor),
-      onChanged: onChanged,
-      onSubmitted: onSubmitted,
+      child: TextField(
+        controller: widget.controller,
+        focusNode: _focusNode,
+        minLines: widget.minLines,
+        maxLines: widget.maxLines,
+        autofocus: widget.autofocus,
+        textInputAction: widget.textInputAction,
+        decoration: InputDecoration(
+          hintText: widget.hintText,
+          prefixIcon: widget.prefixIcon,
+          filled: true,
+          fillColor: widget.fillColor,
+          hintStyle: TextStyle(
+            color: widget.foregroundColor.withValues(alpha: 0.45),
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 14,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(28),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        style: widget.style ?? TextStyle(color: widget.foregroundColor),
+        onChanged: widget.onChanged,
+        onSubmitted: widget.onSubmitted,
+      ),
     );
   }
 }
@@ -474,6 +1115,7 @@ class ZzzSwitchTile extends StatelessWidget {
     required this.title,
     required this.onChanged,
     this.subtitle,
+    this.animated = true,
     super.key,
   });
 
@@ -481,14 +1123,23 @@ class ZzzSwitchTile extends StatelessWidget {
   final String title;
   final String? subtitle;
   final ValueChanged<bool> onChanged;
+  final bool animated;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnimatedContainer(
+      duration: _zzzDuration(animated),
+      curve: _kZzzCurve,
       margin: const EdgeInsets.symmetric(vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.07),
+        color:
+            value
+                ? ZzzColors.yellow.withValues(alpha: 0.14)
+                : Colors.white.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: value ? ZzzColors.yellow.withValues(alpha: 0.35) : Colors.white10,
+        ),
       ),
       child: SwitchListTile(
         value: value,
@@ -502,22 +1153,51 @@ class ZzzSwitchTile extends StatelessWidget {
   }
 }
 
-class ZzzFooterButton extends StatelessWidget {
-  const ZzzFooterButton({required this.icon, super.key});
+class ZzzFooterButton extends StatefulWidget {
+  const ZzzFooterButton({required this.icon, this.onTap, super.key});
 
   final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  State<ZzzFooterButton> createState() => _ZzzFooterButtonState();
+}
+
+class _ZzzFooterButtonState extends State<ZzzFooterButton> {
+  bool _pressed = false;
+
+  void _handleTap() {
+    widget.onTap?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 40,
-      width: 46,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white24),
+    return Listener(
+      onPointerDown: (_) => setState(() => _pressed = true),
+      onPointerUp: (_) {
+        setState(() => _pressed = false);
+        _handleTap();
+      },
+      onPointerCancel: (_) => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.92 : 1,
+        duration: _kZzzAnimFast,
+        curve: _kZzzCurve,
+        child: AnimatedContainer(
+          duration: _kZzzAnimNormal,
+          curve: _kZzzCurve,
+          height: 40,
+          width: 46,
+          decoration: BoxDecoration(
+            color: _pressed ? Colors.white10 : Colors.black,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: _pressed ? Colors.white38 : Colors.white24,
+            ),
+          ),
+          child: Icon(widget.icon),
+        ),
       ),
-      child: Icon(icon),
     );
   }
 }

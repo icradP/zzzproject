@@ -55,8 +55,6 @@ class _ChatHomePageState extends State<ChatHomePage>
   final _messageController = TextEditingController();
   final _chatExportKey = GlobalKey();
 
-  late final AnimationController _backgroundController;
-
   List<ChatCharacter> _characters = [];
   List<ChatMessage> _messages = [];
   List<ChatIdentity> _groupMembers = [];
@@ -76,6 +74,8 @@ class _ChatHomePageState extends State<ChatHomePage>
   bool _isChangingColorsEnabled = true;
   bool _isAnimatedBackgroundEnabled = true;
   bool _wideImageExportEnabled = false;
+
+  late final AnimationController _backgroundController;
   bool _showHowToUse = false;
   bool _isExportingImage = false;
   bool _isLoadingCharacters = true;
@@ -85,7 +85,7 @@ class _ChatHomePageState extends State<ChatHomePage>
     super.initState();
     _backgroundController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 32),
+      duration: const Duration(seconds: 30),
     )..repeat();
     _loadCharacters();
     _loadSettings();
@@ -93,8 +93,8 @@ class _ChatHomePageState extends State<ChatHomePage>
 
   @override
   void dispose() {
-    _messageController.dispose();
     _backgroundController.dispose();
+    _messageController.dispose();
     super.dispose();
   }
 
@@ -505,6 +505,7 @@ class _ChatHomePageState extends State<ChatHomePage>
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
+        clipBehavior: Clip.none,
         children: [
           ZzzBackground(
             controller: _backgroundController,
@@ -606,31 +607,57 @@ class _ChatHomePageState extends State<ChatHomePage>
   }
 
   Widget _buildProfilePanel() {
+    final animated = _isChangingColorsEnabled;
+
     return ZzzPanel(
+      animateEntrance: animated,
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildModeSwitch(),
-            ZzzSectionLabel(label: 'Choose'),
-            const Text(
-              'Messaging',
-              style: TextStyle(color: Colors.white54, fontSize: 16),
+            ZzzExpandableSection(
+              title: 'Choose',
+              subtitle: 'Messaging participants',
+              animated: animated,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Messaging',
+                    style: TextStyle(color: Colors.white54, fontSize: 16),
+                  ),
+                  const SizedBox(height: 10),
+                  ZzzAnimatedSwap(
+                    value: _isGroupChat,
+                    animated: animated,
+                    builder:
+                        (_) =>
+                            _isGroupChat
+                                ? _buildGroupMemberPicker()
+                                : _buildDmLeftPicker(),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'as',
+                    style: TextStyle(color: Colors.white54, fontSize: 16),
+                  ),
+                  const SizedBox(height: 10),
+                  _buildRightPicker(),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
-            if (_isGroupChat)
-              _buildGroupMemberPicker()
-            else
-              _buildDmLeftPicker(),
-            const SizedBox(height: 18),
-            const Text(
-              'as',
-              style: TextStyle(color: Colors.white54, fontSize: 16),
+            ZzzExpandableSection(
+              title: 'Info',
+              subtitle: 'Simulation summary',
+              animated: animated,
+              initiallyExpanded: false,
+              child: ZzzAnimatedSwap(
+                value: '$_isGroupChat-${_messages.length}-${_groupMembers.length}',
+                animated: animated,
+                builder: (_) => _buildInfoBlock(),
+              ),
             ),
-            const SizedBox(height: 10),
-            _buildRightPicker(),
-            ZzzSectionLabel(label: 'Info'),
-            _buildInfoBlock(),
           ],
         ),
       ),
@@ -821,6 +848,7 @@ class _ChatHomePageState extends State<ChatHomePage>
     return RepaintBoundary(
       key: _chatExportKey,
       child: ZzzPanel(
+        animateEntrance: _isChangingColorsEnabled,
         background: const DecorationImage(
           image: AssetImage(
             'assets/BG_background_ZZZChat_with_pattern_dark-2.png',
@@ -1272,35 +1300,58 @@ class _ChatHomePageState extends State<ChatHomePage>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ZzzSwitchTile(
-                      value: _isChangingColorsEnabled,
-                      title: 'Flashing colors',
-                      subtitle: 'ZZZ-like animated menu accents.',
-                      onChanged: (value) {
-                        setState(() => _isChangingColorsEnabled = value);
-                        setDialogState(() {});
-                        _saveBoolSetting('isChangingColorsEnabled', value);
-                      },
+                    ZzzExpandableSection(
+                      title: 'Visual effects',
+                      subtitle: 'Motion and accent animations',
+                      animated: _isChangingColorsEnabled,
+                      child: Column(
+                        children: [
+                          ZzzSwitchTile(
+                            value: _isChangingColorsEnabled,
+                            title: 'Flashing colors',
+                            subtitle: 'ZZZ-like animated menu accents.',
+                            animated: _isChangingColorsEnabled,
+                            onChanged: (value) {
+                              setState(() => _isChangingColorsEnabled = value);
+                              setDialogState(() {});
+                              _saveBoolSetting('isChangingColorsEnabled', value);
+                            },
+                          ),
+                          ZzzSwitchTile(
+                            value: _isAnimatedBackgroundEnabled,
+                            title: 'Animated background',
+                            subtitle: 'Moving ZERO ZONE style backdrop.',
+                            animated: _isChangingColorsEnabled,
+                            onChanged: (value) {
+                              setState(
+                                () => _isAnimatedBackgroundEnabled = value,
+                              );
+                              setDialogState(() {});
+                              _saveBoolSetting(
+                                'isAnimatedBackgroundEnabled',
+                                value,
+                              );
+                            },
+                          ),
+                        ],
+                      ),
                     ),
-                    ZzzSwitchTile(
-                      value: _isAnimatedBackgroundEnabled,
-                      title: 'Animated background',
-                      subtitle: 'Moving ZERO ZONE style backdrop.',
-                      onChanged: (value) {
-                        setState(() => _isAnimatedBackgroundEnabled = value);
-                        setDialogState(() {});
-                        _saveBoolSetting('isAnimatedBackgroundEnabled', value);
-                      },
-                    ),
-                    ZzzSwitchTile(
-                      value: _wideImageExportEnabled,
-                      title: 'Wide export',
-                      subtitle: 'Exports images at a higher scale.',
-                      onChanged: (value) {
-                        setState(() => _wideImageExportEnabled = value);
-                        setDialogState(() {});
-                        _saveBoolSetting('wideImageExportEnabled', value);
-                      },
+                    ZzzExpandableSection(
+                      title: 'Export',
+                      subtitle: 'Image output options',
+                      animated: _isChangingColorsEnabled,
+                      initiallyExpanded: false,
+                      child: ZzzSwitchTile(
+                        value: _wideImageExportEnabled,
+                        title: 'Wide export',
+                        subtitle: 'Exports images at a higher scale.',
+                        animated: _isChangingColorsEnabled,
+                        onChanged: (value) {
+                          setState(() => _wideImageExportEnabled = value);
+                          setDialogState(() {});
+                          _saveBoolSetting('wideImageExportEnabled', value);
+                        },
+                      ),
                     ),
                   ],
                 ),
