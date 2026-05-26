@@ -33,7 +33,8 @@ class ZzzPanel extends StatefulWidget {
   State<ZzzPanel> createState() => _ZzzPanelState();
 }
 
-class _ZzzPanelState extends State<ZzzPanel> with SingleTickerProviderStateMixin {
+class _ZzzPanelState extends State<ZzzPanel>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _entranceController;
   late final Animation<double> _entranceOpacity;
   late final Animation<Offset> _entranceOffset;
@@ -133,9 +134,10 @@ class _ZzzRevealState extends State<ZzzReveal>
       duration: _zzzDuration(widget.animated, widget.duration),
     );
     _sizeAnimation = CurvedAnimation(parent: _controller, curve: _kZzzCurve);
-    _popScale = Tween<double>(begin: 0.96, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: _kZzzBounce),
-    );
+    _popScale = Tween<double>(
+      begin: 0.96,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: _kZzzBounce));
     if (widget.expanded) {
       _controller.value = 1;
     }
@@ -374,10 +376,7 @@ class ZzzAnimatedSwap extends StatelessWidget {
           child: SlideTransition(position: offsetAnimation, child: child),
         );
       },
-      child: KeyedSubtree(
-        key: ValueKey(value),
-        child: builder(context),
-      ),
+      child: KeyedSubtree(key: ValueKey(value), child: builder(context)),
     );
   }
 }
@@ -739,9 +738,7 @@ class _ZzzPillButtonState extends State<ZzzPillButton>
         foregroundColor: widget.foregroundColor,
         padding: const EdgeInsets.all(8),
         minimumSize: const Size.fromHeight(66),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(36),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(36)),
         shadowColor:
             widget.animated ? widget.backgroundColor : Colors.transparent,
         animationDuration: _kZzzAnimNormal,
@@ -862,7 +859,7 @@ class _ZzzTextActionState extends State<ZzzTextAction> {
   }
 }
 
-class ZzzSelectableAvatar extends StatelessWidget {
+class ZzzSelectableAvatar extends StatefulWidget {
   const ZzzSelectableAvatar({
     required this.image,
     required this.label,
@@ -881,68 +878,105 @@ class ZzzSelectableAvatar extends StatelessWidget {
   final double size;
 
   @override
+  State<ZzzSelectableAvatar> createState() => _ZzzSelectableAvatarState();
+}
+
+class _ZzzSelectableAvatarState extends State<ZzzSelectableAvatar> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size + 16,
-      child: Column(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              InkWell(
-                onTap: onSelect,
-                customBorder: const CircleBorder(),
-                child: AnimatedContainer(
-                  duration: _kZzzAnimNormal,
-                  curve: _kZzzCurve,
-                  padding: EdgeInsets.all(selected ? 4 : 2),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: selected ? ZzzColors.yellow : Colors.white24,
-                    boxShadow:
-                        selected
-                            ? [
-                              BoxShadow(
-                                color: ZzzColors.yellow.withValues(alpha: 0.3),
-                                blurRadius: 10,
-                              ),
-                            ]
-                            : null,
-                  ),
-                  child: AnimatedScale(
-                    duration: _kZzzAnimExpand,
-                    curve: selected ? _kZzzBounce : _kZzzCurve,
-                    scale: selected ? 1 : 0.94,
-                    child: ZzzAvatar(image: image, size: size),
-                  ),
-                ),
-              ),
-              if (onRemove != null)
-                Positioned(
-                  top: -8,
-                  right: -8,
-                  child: IconButton.filled(
-                    tooltip: 'Remove',
-                    onPressed: onRemove,
-                    style: IconButton.styleFrom(
-                      backgroundColor: ZzzColors.red,
-                      minimumSize: const Size(28, 28),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    final removeVisible = widget.onRemove != null && _hovered;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: SizedBox(
+        width: widget.size + 16,
+        child: Column(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                InkWell(
+                  onTap: widget.onSelect,
+                  customBorder: const CircleBorder(),
+                  child: AnimatedContainer(
+                    duration: _kZzzAnimNormal,
+                    curve: _kZzzCurve,
+                    padding: EdgeInsets.all(widget.selected ? 4 : 2),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color:
+                          widget.selected ? ZzzColors.yellow : Colors.white24,
+                      boxShadow:
+                          widget.selected
+                              ? [
+                                BoxShadow(
+                                  color: ZzzColors.yellow.withValues(
+                                    alpha: 0.3,
+                                  ),
+                                  blurRadius: 10,
+                                ),
+                              ]
+                              : null,
                     ),
-                    icon: const Icon(Icons.close_rounded, size: 16),
+                    child: AnimatedScale(
+                      duration: _kZzzAnimExpand,
+                      curve: widget.selected ? _kZzzBounce : _kZzzCurve,
+                      scale: widget.selected ? 1 : 0.94,
+                      child: ZzzAvatar(image: widget.image, size: widget.size),
+                    ),
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11, color: Colors.white70),
-          ),
-        ],
+                if (widget.onRemove != null)
+                  Positioned(
+                    top: -8,
+                    right: -8,
+                    child: IgnorePointer(
+                      ignoring: !removeVisible,
+                      child: AnimatedOpacity(
+                        opacity: removeVisible ? 1 : 0,
+                        duration: _kZzzAnimNormal,
+                        curve: Curves.easeOutCubic,
+                        child: AnimatedSlide(
+                          offset:
+                              removeVisible
+                                  ? Offset.zero
+                                  : const Offset(0.16, -0.16),
+                          duration: _kZzzAnimNormal,
+                          curve: _kZzzCurve,
+                          child: AnimatedScale(
+                            scale: removeVisible ? 1 : 0.62,
+                            duration: _kZzzAnimNormal,
+                            curve: _kZzzBounce,
+                            child: IconButton.filled(
+                              tooltip: 'Remove',
+                              onPressed: widget.onRemove,
+                              style: IconButton.styleFrom(
+                                backgroundColor: ZzzColors.red,
+                                minimumSize: const Size(28, 28),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              icon: const Icon(Icons.close_rounded, size: 16),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              widget.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1010,15 +1044,16 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
       curve: _kZzzCurve,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
-        boxShadow: _focused
-            ? [
-                BoxShadow(
-                  color: ZzzColors.yellow.withValues(alpha: 0.35),
-                  blurRadius: 16,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
+        boxShadow:
+            _focused
+                ? [
+                  BoxShadow(
+                    color: ZzzColors.yellow.withValues(alpha: 0.35),
+                    blurRadius: 16,
+                    spreadRadius: 1,
+                  ),
+                ]
+                : null,
       ),
       child: TextField(
         controller: widget.controller,
@@ -1138,7 +1173,8 @@ class ZzzSwitchTile extends StatelessWidget {
                 : Colors.white.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: value ? ZzzColors.yellow.withValues(alpha: 0.35) : Colors.white10,
+          color:
+              value ? ZzzColors.yellow.withValues(alpha: 0.35) : Colors.white10,
         ),
       ),
       child: SwitchListTile(

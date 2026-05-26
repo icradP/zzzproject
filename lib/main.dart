@@ -280,36 +280,17 @@ class _ChatHomePageState extends State<ChatHomePage>
   Future<void> _editMessage(int index) async {
     final message = _messages[index];
     if (message.kind != MessageKind.text) return;
-    final controller = TextEditingController(text: message.text);
     final edited = await showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: Colors.black,
-          title: const Text('Edit Message'),
-          content: ZzzTextInput(
-            controller: controller,
-            autofocus: true,
+      builder:
+          (context) => _TextInputDialog(
+            title: 'Edit Message',
+            initialText: message.text,
+            saveLabel: 'Save',
             minLines: 1,
             maxLines: 4,
-            fillColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            onSubmitted: (value) => Navigator.of(context).pop(value),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
     );
-    controller.dispose();
     if (edited == null || edited.trim().isEmpty) return;
     setState(() {
       final next = [..._messages];
@@ -329,35 +310,16 @@ class _ChatHomePageState extends State<ChatHomePage>
 
   Future<void> _renameIdentity(ChatSide side) async {
     final current = side == ChatSide.left ? _leftIdentity : _rightIdentity;
-    final controller = TextEditingController(text: current.name);
     final nextName = await showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: Colors.black,
-          title: const Text('Rename Character'),
-          content: ZzzTextInput(
-            controller: controller,
-            autofocus: true,
+      builder:
+          (context) => _TextInputDialog(
+            title: 'Rename Character',
+            initialText: current.name,
             hintText: 'Enter character name',
-            fillColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            onSubmitted: (value) => Navigator.of(context).pop(value),
+            saveLabel: 'Rename',
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
-              child: const Text('Rename'),
-            ),
-          ],
-        );
-      },
     );
-    controller.dispose();
     if (nextName == null || nextName.trim().isEmpty) return;
     setState(() {
       if (side == ChatSide.left) {
@@ -653,7 +615,8 @@ class _ChatHomePageState extends State<ChatHomePage>
               animated: animated,
               initiallyExpanded: false,
               child: ZzzAnimatedSwap(
-                value: '$_isGroupChat-${_messages.length}-${_groupMembers.length}',
+                value:
+                    '$_isGroupChat-${_messages.length}-${_groupMembers.length}',
                 animated: animated,
                 builder: (_) => _buildInfoBlock(),
               ),
@@ -969,10 +932,12 @@ class _ChatHomePageState extends State<ChatHomePage>
         children: [
           Flexible(child: ZzzSystemMessageView(message: message)),
           if (!_isExportingImage)
-            IconButton(
-              tooltip: 'Delete',
-              onPressed: () => _deleteMessage(index),
-              icon: const Icon(Icons.delete_rounded, color: ZzzColors.red),
+            _HoverActionHotspot(
+              child: IconButton(
+                tooltip: 'Delete',
+                onPressed: () => _deleteMessage(index),
+                icon: const Icon(Icons.delete_rounded, color: ZzzColors.red),
+              ),
             ),
         ],
       );
@@ -993,14 +958,17 @@ class _ChatHomePageState extends State<ChatHomePage>
         crossAxisAlignment:
             isLeft ? CrossAxisAlignment.start : CrossAxisAlignment.end,
         children: [
-          if (!_isExportingImage && message.kind == MessageKind.text)
+          if (!_isExportingImage)
             Padding(
-              padding: const EdgeInsets.only(bottom: 3),
+              padding: const EdgeInsets.only(bottom: 4),
               child: Text(
-                'Tap to edit',
+                sender.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.32),
-                  fontSize: 10,
+                  color: Colors.white.withValues(alpha: 0.48),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
@@ -1009,59 +977,18 @@ class _ChatHomePageState extends State<ChatHomePage>
                 message.kind == MessageKind.text
                     ? () => _editMessage(index)
                     : null,
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 560),
-              padding: EdgeInsets.all(
-                message.kind == MessageKind.image ? 8 : 12,
+            child: Tooltip(
+              message: message.kind == MessageKind.text ? 'Tap to edit' : '',
+              child: _buildMessageBubble(
+                message: message,
+                isLeft: isLeft,
+                onDelete: () => _deleteMessage(index),
               ),
-              decoration: BoxDecoration(
-                color: isLeft ? Colors.grey.shade200 : ZzzColors.blue,
-                borderRadius: BorderRadius.circular(
-                  message.kind == MessageKind.text ? 18 : 12,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.18),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child:
-                  message.kind == MessageKind.image
-                      ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          message.imageBytes!,
-                          fit: BoxFit.contain,
-                          height: 240,
-                        ),
-                      )
-                      : Text(
-                        message.text,
-                        textAlign:
-                            message.text.length < 3
-                                ? TextAlign.center
-                                : TextAlign.left,
-                        style: TextStyle(
-                          color: isLeft ? Colors.black : Colors.white,
-                          fontSize: 16,
-                        ),
-                      ),
             ),
           ),
         ],
       ),
     );
-
-    final deleteButton =
-        _isExportingImage
-            ? const SizedBox.shrink()
-            : IconButton(
-              tooltip: 'Delete',
-              onPressed: () => _deleteMessage(index),
-              icon: Image.asset('assets/icons/ZZZ_trash_icon.png', width: 22),
-            );
 
     return Row(
       mainAxisAlignment:
@@ -1069,8 +996,92 @@ class _ChatHomePageState extends State<ChatHomePage>
       crossAxisAlignment: CrossAxisAlignment.start,
       children:
           isLeft
-              ? [avatar, const SizedBox(width: 10), bubble, deleteButton]
-              : [deleteButton, bubble, const SizedBox(width: 10), avatar],
+              ? [avatar, const SizedBox(width: 10), bubble]
+              : [bubble, const SizedBox(width: 10), avatar],
+    );
+  }
+
+  Widget _buildMessageBubble({
+    required ChatMessage message,
+    required bool isLeft,
+    required VoidCallback onDelete,
+  }) {
+    final radius = BorderRadius.circular(
+      message.kind == MessageKind.text ? 18 : 12,
+    );
+    final contentMaxWidth = _isExportingImage ? 560.0 : 518.0;
+    final content =
+        message.kind == MessageKind.image
+            ? ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: contentMaxWidth),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    message.imageBytes!,
+                    fit: BoxFit.contain,
+                    height: 240,
+                  ),
+                ),
+              ),
+            )
+            : ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: contentMaxWidth),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  message.text,
+                  textAlign:
+                      message.text.length < 3
+                          ? TextAlign.center
+                          : TextAlign.left,
+                  style: TextStyle(
+                    color: isLeft ? Colors.black : Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            );
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 560),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: isLeft ? Colors.grey.shade200 : ZzzColors.blue,
+        borderRadius: radius,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child:
+          _isExportingImage
+              ? content
+              : _ExpandingBubbleAction(
+                actionOnRight: isLeft,
+                tint:
+                    isLeft
+                        ? Colors.black.withValues(alpha: 0.07)
+                        : Colors.white.withValues(alpha: 0.13),
+                action: IconButton(
+                  tooltip: 'Delete',
+                  onPressed: onDelete,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size.square(34),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: EdgeInsets.zero,
+                  ),
+                  icon: Image.asset(
+                    'assets/icons/ZZZ_trash_icon.png',
+                    width: 21,
+                  ),
+                ),
+                child: content,
+              ),
     );
   }
 
@@ -1314,7 +1325,10 @@ class _ChatHomePageState extends State<ChatHomePage>
                             onChanged: (value) {
                               setState(() => _isChangingColorsEnabled = value);
                               setDialogState(() {});
-                              _saveBoolSetting('isChangingColorsEnabled', value);
+                              _saveBoolSetting(
+                                'isChangingColorsEnabled',
+                                value,
+                              );
                             },
                           ),
                           ZzzSwitchTile(
@@ -1437,6 +1451,191 @@ class _HowToUse extends StatelessWidget {
             style: style,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TextInputDialog extends StatefulWidget {
+  const _TextInputDialog({
+    required this.title,
+    required this.initialText,
+    required this.saveLabel,
+    this.hintText,
+    this.minLines = 1,
+    this.maxLines = 1,
+  });
+
+  final String title;
+  final String initialText;
+  final String saveLabel;
+  final String? hintText;
+  final int minLines;
+  final int maxLines;
+
+  @override
+  State<_TextInputDialog> createState() => _TextInputDialogState();
+}
+
+class _TextInputDialogState extends State<_TextInputDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.black,
+      title: Text(widget.title),
+      content: ZzzTextInput(
+        controller: _controller,
+        autofocus: true,
+        hintText: widget.hintText,
+        minLines: widget.minLines,
+        maxLines: widget.maxLines,
+        fillColor: Colors.white.withValues(alpha: 0.08),
+        foregroundColor: Colors.white,
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: Text(widget.saveLabel)),
+      ],
+    );
+  }
+}
+
+class _ExpandingBubbleAction extends StatefulWidget {
+  const _ExpandingBubbleAction({
+    required this.child,
+    required this.action,
+    required this.actionOnRight,
+    required this.tint,
+  });
+
+  final Widget child;
+  final Widget action;
+  final bool actionOnRight;
+  final Color tint;
+
+  @override
+  State<_ExpandingBubbleAction> createState() => _ExpandingBubbleActionState();
+}
+
+class _ExpandingBubbleActionState extends State<_ExpandingBubbleAction> {
+  static const _collapsedWidth = 10.0;
+  static const _expandedWidth = 42.0;
+
+  bool _hovered = false;
+
+  void _setHovered(bool hovered) {
+    if (_hovered == hovered) return;
+    setState(() => _hovered = hovered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rail = MouseRegion(
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 210),
+        curve: Curves.easeOutCubic,
+        width: _hovered ? _expandedWidth : _collapsedWidth,
+        alignment: Alignment.topCenter,
+        padding: const EdgeInsets.only(top: 5),
+        decoration: BoxDecoration(color: _hovered ? widget.tint : null),
+        child: _HoverRevealAction(visible: _hovered, child: widget.action),
+      ),
+    );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children:
+          widget.actionOnRight
+              ? [Flexible(child: widget.child), rail]
+              : [rail, Flexible(child: widget.child)],
+    );
+  }
+}
+
+class _HoverActionHotspot extends StatefulWidget {
+  const _HoverActionHotspot({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_HoverActionHotspot> createState() => _HoverActionHotspotState();
+}
+
+class _HoverActionHotspotState extends State<_HoverActionHotspot> {
+  bool _hovered = false;
+
+  void _setHovered(bool hovered) {
+    if (_hovered == hovered) return;
+    setState(() => _hovered = hovered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final child = SizedBox.square(
+      dimension: 40,
+      child: Center(
+        child: _HoverRevealAction(visible: _hovered, child: widget.child),
+      ),
+    );
+
+    return MouseRegion(
+      onEnter: (_) => _setHovered(true),
+      onExit: (_) => _setHovered(false),
+      child: child,
+    );
+  }
+}
+
+class _HoverRevealAction extends StatelessWidget {
+  const _HoverRevealAction({required this.visible, required this.child});
+
+  final bool visible;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: !visible,
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        child: AnimatedSlide(
+          offset: visible ? Offset.zero : const Offset(0, 0.18),
+          duration: const Duration(milliseconds: 190),
+          curve: Curves.easeOutCubic,
+          child: AnimatedScale(
+            scale: visible ? 1 : 0.68,
+            duration: const Duration(milliseconds: 190),
+            curve: Curves.easeOutBack,
+            child: child,
+          ),
+        ),
       ),
     );
   }
