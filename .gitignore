@@ -1,0 +1,98 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+*.swo
+*~
+*.orig
+*.bak
+.DS_Store
+**/.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.atom/
+.build/
+.buildlog/
+.history/
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ / Android Studio
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code / Cursor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+
+# Flutter/Dart/Pub
+**/doc/api/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+coverage/
+*.dart.js
+*.info.json
+*.js
+*.js_
+*.js.deps
+*.js.map
+
+# FVM (Flutter Version Management)
+.fvm/
+.fvmrc
+
+# Symbolication
+app.*.symbols
+
+# Obfuscation
+app.*.map.json
+
+# Flutter DevTools (machine-local)
+devtools_options.yaml
+
+# Android Studio build outputs
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Signing & secrets (never commit)
+*.jks
+*.keystore
+key.properties
+.env
+.env.*
+!.env.example
+
+# CodeGraph index (local, regenerated per machine)
+.codegraph/
+
+# Cursor local state (uncomment rules block below to share team rules)
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+
+# Agent skills installer (local tooling; force-add if sharing with team)
+.agents/
+skills-lock.json
+
+# fastlane (iOS/Android CI)
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots
+**/fastlane/test_output
+
+# Test / integration driver artifacts
+test_driver/**/screenshots/
