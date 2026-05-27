@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:zzzproject/main.dart';
+import 'package:zzzproject/src/app/zzz_app.dart';
+import 'package:zzzproject/src/assets/app_assets.dart';
+import 'package:zzzproject/src/demo/chat_simulator_demo_page.dart';
 import 'package:zzzproject/src/models/chat_models.dart';
 
 void main() {
@@ -17,18 +19,24 @@ void main() {
   ];
 
   for (final scenario in scenarios) {
-    testWidgets('adapts without layout exceptions on ${scenario.name}', (
+    testWidgets('IM home adapts without layout exceptions on ${scenario.name}', (
       tester,
     ) async {
       await _setViewport(tester, scenario.size);
       SharedPreferences.setMockInitialValues({});
 
-      await tester.pumpWidget(const MyApp());
+      await tester.pumpWidget(const ZzzApp());
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       _expectNoFlutterException(tester);
 
-      expect(find.text('Knock Knock'), findsOneWidget);
+      expect(find.text('Messages'), findsOneWidget);
+      expect(find.text('Belle'), findsWidgets);
+
+      await _openDemoFromImHome(tester);
+      _expectNoFlutterException(tester);
+
+      expect(find.text('Chat Simulator'), findsOneWidget);
       expect(find.text('Start a conversation!'), findsOneWidget);
 
       await _openAndCloseSettings(tester);
@@ -68,6 +76,14 @@ Future<void> _setViewport(WidgetTester tester, Size size) async {
   });
 }
 
+Future<void> _openDemoFromImHome(WidgetTester tester) async {
+  final demoButton = find.byTooltip('Chat simulator demo');
+  await tester.ensureVisible(demoButton);
+  await tester.tap(demoButton);
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
 Future<void> _openAndCloseSettings(WidgetTester tester) async {
   final settingsButton = find.text('Settings');
   await tester.ensureVisible(settingsButton);
@@ -95,27 +111,27 @@ class _ViewportScenario {
 const _sampleCharacters = <ChatCharacter>[
   ChatCharacter(
     name: 'Wise',
-    assetPath: 'assets/characters/Wise.png',
+    assetPath: AppAssets.characterWise,
     category: 'Phaethon',
   ),
   ChatCharacter(
     name: 'Belle',
-    assetPath: 'assets/characters/Belle.png',
+    assetPath: AppAssets.characterBelle,
     category: 'Phaethon',
   ),
   ChatCharacter(
     name: 'Anby Demara',
-    assetPath: 'assets/characters/AnbyDemara.png',
+    assetPath: AppAssets.character('AnbyDemara.png'),
     category: 'Cunning Hares',
   ),
   ChatCharacter(
     name: 'Nicole Demara',
-    assetPath: 'assets/characters/NicoleDemara.png',
+    assetPath: AppAssets.character('NicoleDemara.png'),
     category: 'Cunning Hares',
   ),
   ChatCharacter(
     name: 'Fairy',
-    assetPath: 'assets/characters/temp/Fairy.png',
+    assetPath: AppAssets.character('temp/Fairy.png'),
     category: 'System',
   ),
 ];

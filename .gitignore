@@ -19,7 +19,7 @@ Desktop.ini
 .svn/
 .swiftpm/
 migrate_working_dir/
-
+build/
 # IntelliJ / Android Studio
 *.iml
 *.ipr

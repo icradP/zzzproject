@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../assets/app_assets.dart';
+
 class ZzzBackground extends StatelessWidget {
   const ZzzBackground({required this.controller, required this.animated, super.key});
 
@@ -13,7 +15,7 @@ class ZzzBackground extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         Image.asset(
-          'assets/BG_background_ZZZChat_with_pattern.png',
+          AppAssets.bgChatWithPattern,
           fit: BoxFit.cover,
           color: Colors.black.withValues(alpha: 0.60),
           colorBlendMode: BlendMode.darken,
