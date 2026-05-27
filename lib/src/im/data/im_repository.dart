@@ -31,6 +31,15 @@ abstract class ImRepository {
   /// Optional search hook for future inbox filtering.
   Future<List<ImConversation>> searchConversations(String query);
 
+  /// All known users (excluding self).
+  Future<List<ImUser>> getUsers();
+
+  /// All known groups as lightweight conversation stubs.
+  Future<List<ImConversation>> getGroupList();
+
+  /// Ensure a conversation appears in [watchConversations], adding it if absent.
+  Future<void> ensureConversation(ImConversation conversation);
+
   /// Release streams and subscriptions.
   void dispose();
 }

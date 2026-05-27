@@ -59,7 +59,7 @@ class MockImRepository implements ImRepository {
     final now = DateTime.now();
     _putConversation(
       ImConversation(
-        id: 'dm_belle',
+        id: 'dm_belle_me',
         type: ImConversationType.direct,
         title: 'Belle',
         participantIds: [_currentUserId, 'belle'],
@@ -72,7 +72,7 @@ class MockImRepository implements ImRepository {
     );
     _putConversation(
       ImConversation(
-        id: 'dm_wise',
+        id: 'dm_me_wise',
         type: ImConversationType.direct,
         title: 'Wise',
         participantIds: [_currentUserId, 'wise'],
@@ -95,7 +95,7 @@ class MockImRepository implements ImRepository {
     );
     _putConversation(
       ImConversation(
-        id: 'dm_nicole',
+        id: 'dm_me_nicole',
         type: ImConversationType.direct,
         title: 'Nicole Demara',
         participantIds: [_currentUserId, 'nicole'],
@@ -106,7 +106,7 @@ class MockImRepository implements ImRepository {
     );
     _putConversation(
       ImConversation(
-        id: 'sys_fairy',
+        id: 'dm_fairy_me',
         type: ImConversationType.direct,
         title: 'Fairy · System',
         participantIds: [_currentUserId, 'fairy'],
@@ -116,17 +116,17 @@ class MockImRepository implements ImRepository {
       ),
     );
 
-    _putMessages('dm_belle', [
+    _putMessages('dm_belle_me', [
       _msg(
         id: 'm1',
-        conversationId: 'dm_belle',
+        conversationId: 'dm_belle_me',
         senderId: 'belle',
         text: 'Proxy, are you still at the video store?',
         sentAt: now.subtract(const Duration(minutes: 18)),
       ),
       _msg(
         id: 'm2',
-        conversationId: 'dm_belle',
+        conversationId: 'dm_belle_me',
         senderId: _currentUserId,
         text: 'Yeah, sorting the new Hollow Observer tapes.',
         sentAt: now.subtract(const Duration(minutes: 12)),
@@ -134,17 +134,17 @@ class MockImRepository implements ImRepository {
       ),
       _msg(
         id: 'm3',
-        conversationId: 'dm_belle',
+        conversationId: 'dm_belle_me',
         senderId: 'belle',
         text: 'See you at Sixth Street!',
         sentAt: now.subtract(const Duration(minutes: 3)),
       ),
     ]);
 
-    _putMessages('dm_wise', [
+    _putMessages('dm_me_wise', [
       _msg(
         id: 'w1',
-        conversationId: 'dm_wise',
+        conversationId: 'dm_me_wise',
         senderId: 'wise',
         text: "Don't forget the commission.",
         sentAt: now.subtract(const Duration(hours: 1)),
@@ -176,20 +176,20 @@ class MockImRepository implements ImRepository {
       ),
     ]);
 
-    _putMessages('dm_nicole', [
+    _putMessages('dm_me_nicole', [
       _msg(
         id: 'n1',
-        conversationId: 'dm_nicole',
+        conversationId: 'dm_me_nicole',
         senderId: 'nicole',
         text: 'Interest is compounding.',
         sentAt: now.subtract(const Duration(days: 1)),
       ),
     ]);
 
-    _putMessages('sys_fairy', [
+    _putMessages('dm_fairy_me', [
       _msg(
         id: 'f1',
-        conversationId: 'sys_fairy',
+        conversationId: 'dm_fairy_me',
         senderId: 'fairy',
         text: 'Power inspection scheduled.',
         sentAt: now.subtract(const Duration(days: 2)),
@@ -316,8 +316,21 @@ class MockImRepository implements ImRepository {
         updatedAt: message.sentAt,
         unreadCount: 0,
       );
-      _emitConversations();
+    } else {
+      final isGroup = conversationId.startsWith('group_');
+      final title = isGroup
+          ? 'Group ${conversationId.substring(6)}'
+          : _resolveDisplayName(conversationId);
+      _conversations[conversationId] = ImConversation(
+        id: conversationId,
+        type: isGroup ? ImConversationType.group : ImConversationType.direct,
+        title: title,
+        participantIds: [_currentUserId],
+        subtitle: trimmed,
+        updatedAt: message.sentAt,
+      );
     }
+    _emitConversations();
 
     return message;
   }
@@ -342,6 +355,45 @@ class MockImRepository implements ImRepository {
               (conversation.subtitle ?? '').toLowerCase().contains(normalized);
         })
         .toList();
+  }
+
+  @override
+  Future<List<ImUser>> getUsers() async {
+    return _users.values.where((u) => u.id != _currentUserId).toList();
+  }
+
+  @override
+  Future<List<ImConversation>> getGroupList() async {
+    final groups = _conversations.values
+        .where((c) => c.type == ImConversationType.group)
+        .toList();
+    // Include a synthetic group to demonstrate groups without messages.
+    if (!groups.any((g) => g.id == 'group_mock')) {
+      groups.add(ImConversation(
+        id: 'group_mock',
+        type: ImConversationType.group,
+        title: 'Random Play (Mock)',
+        participantIds: [_currentUserId],
+      ));
+    }
+    return groups;
+  }
+
+  @override
+  Future<void> ensureConversation(ImConversation conversation) async {
+    if (_conversations.containsKey(conversation.id)) return;
+    _conversations[conversation.id] = conversation;
+    _emitConversations();
+  }
+
+  String _resolveDisplayName(String conversationId) {
+    if (!conversationId.startsWith('dm_')) return conversationId;
+    final parts = conversationId.substring(3).split('_');
+    final otherId = parts.firstWhere(
+      (p) => p != _currentUserId,
+      orElse: () => parts.last,
+    );
+    return _users[otherId]?.displayName ?? otherId;
   }
 
   @override

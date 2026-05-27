@@ -38,6 +38,30 @@ class ImMessageBubble extends StatelessWidget {
       );
     }
 
+    if (message.kind == ImMessageKind.poke) {
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.touch_app_rounded, size: 16, color: Colors.white54),
+              const SizedBox(width: 6),
+              Text(
+                message.text,
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final isMine = message.isMine;
     final avatarWidget = ZzzAvatar(image: avatar, size: 38);
 

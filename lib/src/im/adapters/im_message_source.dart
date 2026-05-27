@@ -31,6 +31,16 @@ abstract class ImMessageSource {
 
   Future<List<ImConversation>> searchConversations(String query);
 
+  /// All known users from the platform (excluding self).
+  Future<List<ImUser>> getUsers();
+
+  /// All known groups from the platform, as lightweight conversation stubs.
+  /// These may not have any messages yet.
+  Future<List<ImConversation>> getGroupList();
+
+  /// Ensure a conversation appears in [watchConversations], adding it if absent.
+  Future<void> ensureConversation(ImConversation conversation);
+
   /// Establish the connection to the platform. No-op for offline / mock sources.
   Future<void> connect();
 

@@ -13,7 +13,9 @@ ImUser oneBotSenderToImUser(
 }) {
   return ImUser(
     id: sender.userId,
-    displayName: sender.card ?? sender.nickname,
+    displayName: (sender.card != null && sender.card!.isNotEmpty)
+        ? sender.card!
+        : sender.nickname,
     avatarAssetPath: avatarResolver(sender.userId),
     isOnline: true,
   );
@@ -106,9 +108,27 @@ ImConversation oneBotGroupEventToConversation({
   );
 }
 
-/// Converts an [ImMessage] into the OneBot message-chain format for sending.
-List<Map<String, dynamic>> imMessageToOneBotChain(ImMessage message) {
-  return [
-    {'type': 'text', 'data': {'text': message.text}},
-  ];
+/// Converts an [ImMessage] into OneBot message segments for sending.
+List<OneBotMessageSegment> imMessageToOneBotChain(ImMessage message) {
+  return [OneBotMessageSegment.plain(message.text)];
+}
+
+/// Result type for `parseConversationId`.
+({String targetId, bool isGroup}) parseConversationId(
+  String conversationId,
+  String selfId,
+) {
+  if (conversationId.startsWith('group_')) {
+    return (targetId: conversationId.substring(6), isGroup: true);
+  }
+  if (conversationId.startsWith('dm_')) {
+    final suffix = conversationId.substring(3);
+    final parts = suffix.split('_');
+    final target = parts.firstWhere(
+      (p) => p != selfId,
+      orElse: () => parts.last,
+    );
+    return (targetId: target, isGroup: false);
+  }
+  return (targetId: conversationId, isGroup: false);
 }

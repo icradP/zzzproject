@@ -52,5 +52,15 @@ class SourceBackedRepository implements ImRepository {
       _source.searchConversations(query);
 
   @override
+  Future<List<ImUser>> getUsers() => _source.getUsers();
+
+  @override
+  Future<List<ImConversation>> getGroupList() => _source.getGroupList();
+
+  @override
+  Future<void> ensureConversation(ImConversation conversation) =>
+      _source.ensureConversation(conversation);
+
+  @override
   void dispose() => _source.disconnect();
 }

@@ -10,6 +10,7 @@ import '../data/im_repository.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
 import '../widgets/conversation_list_view.dart';
+import '../widgets/contacts_panel.dart';
 import '../widgets/im_chat_room_view.dart';
 
 class ImHomePage extends StatefulWidget {
@@ -24,6 +25,8 @@ class ImHomePage extends StatefulWidget {
 class _ImHomePageState extends State<ImHomePage>
     with SingleTickerProviderStateMixin {
   String? _selectedConversationId;
+  ImConversation? _pendingConversation;
+  bool _showContacts = false;
   late final AnimationController _backgroundController;
 
   @override
@@ -42,7 +45,10 @@ class _ImHomePageState extends State<ImHomePage>
   }
 
   void _selectConversation(ImConversation conversation) {
-    setState(() => _selectedConversationId = conversation.id);
+    setState(() {
+      _selectedConversationId = conversation.id;
+      _pendingConversation = conversation;
+    });
     ImScope.interactionsOf(context).onConversationOpened(conversation);
     ImScope.repositoryOf(context).markConversationRead(conversation.id);
   }
@@ -54,6 +60,32 @@ class _ImHomePageState extends State<ImHomePage>
 
   void _openDemoPage() {
     context.push(AppRoutes.demo);
+  }
+
+  Future<void> _openContactsPage() async {
+    final result = await context.push<ImConversation>(AppRoutes.contacts);
+    if (result != null && mounted) {
+      ImScope.repositoryOf(context).ensureConversation(result);
+      _selectConversation(result);
+    }
+  }
+
+  void _onNewChatPressed(bool isWide) {
+    if (isWide) {
+      setState(() => _showContacts = true);
+    } else {
+      _openContactsPage();
+    }
+  }
+
+  void _closeContacts() {
+    setState(() => _showContacts = false);
+  }
+
+  void _onContactsSelection(ImConversation conversation) {
+    setState(() => _showContacts = false);
+    ImScope.repositoryOf(context).ensureConversation(conversation);
+    _selectConversation(conversation);
   }
 
   Future<String> _resolveUserName(String userId) async {
@@ -143,25 +175,24 @@ class _ImHomePageState extends State<ImHomePage>
               ],
             ),
           ),
+          if (isWide && _showContacts)
+            IconButton(
+              tooltip: 'Close contacts',
+              onPressed: _closeContacts,
+              icon: const Icon(Icons.close_rounded),
+            ),
           if (!isWide && _selectedConversationId != null)
             IconButton(
               tooltip: 'Back to inbox',
               onPressed: _clearSelection,
               icon: const Icon(Icons.inbox_rounded),
             ),
-          IconButton(
-            tooltip: 'New chat',
-            onPressed: () {
-              ImScope.interactionsOf(context).onComposeNewChat();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('New chat flow is not wired yet.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
-            icon: const Icon(Icons.edit_square, color: ZzzColors.yellow),
-          ),
+          if (!(isWide && _showContacts))
+            IconButton(
+              tooltip: 'New chat',
+              onPressed: () => _onNewChatPressed(isWide),
+              icon: const Icon(Icons.edit_square, color: ZzzColors.yellow),
+            ),
           IconButton(
             tooltip: 'Settings',
             onPressed: () => context.push(AppRoutes.settings),
@@ -178,12 +209,29 @@ class _ImHomePageState extends State<ImHomePage>
       children: [
         SizedBox(
           width: 340,
-          child: ZzzPanel(
-            animateEntrance: true,
-            child: ConversationListView(
-              selectedConversationId: _selectedConversationId,
-              onConversationSelected: _selectConversation,
-            ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: _showContacts
+                ? ZzzPanel(
+                    key: const ValueKey('contacts'),
+                    animateEntrance: true,
+                    background: const DecorationImage(
+                      image: AssetImage(AppAssets.bgChatWithPatternDark2),
+                      repeat: ImageRepeat.repeat,
+                      opacity: 0.1,
+                    ),
+                    child: ContactsPanel(
+                      onConversationSelected: _onContactsSelection,
+                    ),
+                  )
+                : ZzzPanel(
+                    key: const ValueKey('inbox'),
+                    animateEntrance: true,
+                    child: ConversationListView(
+                      selectedConversationId: _selectedConversationId,
+                      onConversationSelected: _selectConversation,
+                    ),
+                  ),
           ),
         ),
         const SizedBox(width: 14),
@@ -226,7 +274,12 @@ class _ImHomePageState extends State<ImHomePage>
           }
 
           if (_selectedConversationId == null || selected == null) {
-            return _buildEmptyChatPlaceholder();
+            final pending = _pendingConversation;
+            if (pending != null && pending.id == _selectedConversationId) {
+              selected = pending;
+            } else {
+              return _buildEmptyChatPlaceholder();
+            }
           }
 
           return StreamBuilder<List<ImMessage>>(

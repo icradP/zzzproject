@@ -41,7 +41,14 @@ export 'package:onebot_flutter/onebot_flutter.dart'
         OneBotMsgResult,
         OneBotGetMsgResult,
         OneBotForwardResult,
+        OneBotCanSendResult,
+        OneBotPrivateMessageQuickOp,
+        OneBotGroupMessageQuickOp,
+        OneBotFriendRequestQuickOp,
+        OneBotGroupRequestQuickOp,
         oneBotPlainText,
         oneBotChainToJson,
-        oneBotChainFromJson;
+        oneBotChainFromJson,
+        parseCqCode,
+        segmentsToCqCode;
 

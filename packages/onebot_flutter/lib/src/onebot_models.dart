@@ -11,7 +11,10 @@ enum OneBotPostType { message, notice, request, metaEvent }
 
 enum OneBotWsMode { forward, reverse }
 
-/// Covers all known OneBot v11 notice sub-types.
+/// Covers all known OneBot v11 `notice_type` values.
+///
+/// Note: poke, lucky_king, and honor use `notice_type: "notify"` with
+/// `sub_type` differentiating them.
 enum OneBotNoticeType {
   groupUpload,
   groupAdmin,
@@ -21,9 +24,7 @@ enum OneBotNoticeType {
   friendAdd,
   groupRecall,
   friendRecall,
-  poke,
-  luckyKing,
-  honor,
+  notify,
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,8 @@ class OneBotSender {
     this.sex,
     this.age,
     this.card,
+    this.area,
+    this.level,
     this.role,
     this.title,
   });
@@ -66,6 +69,8 @@ class OneBotSender {
   final String? sex;
   final int? age;
   final String? card;
+  final String? area;
+  final String? level;
   final String? role;
   final String? title;
 
@@ -76,6 +81,8 @@ class OneBotSender {
       sex: json['sex'] as String?,
       age: json['age'] as int?,
       card: json['card'] as String?,
+      area: json['area'] as String?,
+      level: json['level'] as String?,
       role: json['role'] as String?,
       title: json['title'] as String?,
     );
@@ -87,6 +94,8 @@ class OneBotSender {
         if (sex != null) 'sex': sex,
         if (age != null) 'age': age,
         if (card != null) 'card': card,
+        if (area != null) 'area': area,
+        if (level != null) 'level': level,
         if (role != null) 'role': role,
         if (title != null) 'title': title,
       };
@@ -121,21 +130,54 @@ class OneBotMessageSegment {
   static OneBotMessageSegment face(int id) =>
       OneBotMessageSegment(type: 'face', data: {'id': '$id'});
 
-  static OneBotMessageSegment image(String file, {String? type_, String? url}) {
+  static OneBotMessageSegment image(
+    String file, {
+    String? type_,
+    String? url,
+    bool cache = true,
+    bool proxy = true,
+    int? timeout,
+  }) {
     final d = <String, dynamic>{'file': file};
     if (type_ != null) d['type'] = type_;
     if (url != null) d['url'] = url;
+    if (!cache) d['cache'] = '0';
+    if (!proxy) d['proxy'] = '0';
+    if (timeout != null) d['timeout'] = '$timeout';
     return OneBotMessageSegment(type: 'image', data: d);
   }
 
-  static OneBotMessageSegment record(String file, {bool magic = false}) =>
-      OneBotMessageSegment(
-        type: 'record',
-        data: {'file': file, if (magic) 'magic': '1'},
-      );
+  static OneBotMessageSegment record(
+    String file, {
+    bool magic = false,
+    String? url,
+    bool cache = true,
+    bool proxy = true,
+    int? timeout,
+  }) {
+    final d = <String, dynamic>{'file': file};
+    if (magic) d['magic'] = '1';
+    if (url != null) d['url'] = url;
+    if (!cache) d['cache'] = '0';
+    if (!proxy) d['proxy'] = '0';
+    if (timeout != null) d['timeout'] = '$timeout';
+    return OneBotMessageSegment(type: 'record', data: d);
+  }
 
-  static OneBotMessageSegment video(String file) =>
-      OneBotMessageSegment(type: 'video', data: {'file': file});
+  static OneBotMessageSegment video(
+    String file, {
+    String? url,
+    bool cache = true,
+    bool proxy = true,
+    int? timeout,
+  }) {
+    final d = <String, dynamic>{'file': file};
+    if (url != null) d['url'] = url;
+    if (!cache) d['cache'] = '0';
+    if (!proxy) d['proxy'] = '0';
+    if (timeout != null) d['timeout'] = '$timeout';
+    return OneBotMessageSegment(type: 'video', data: d);
+  }
 
   static OneBotMessageSegment at(String qq) =>
       OneBotMessageSegment(type: 'at', data: {'qq': qq});
@@ -262,6 +304,88 @@ List<OneBotMessageSegment> oneBotChainFromJson(List<dynamic> json) => json
     .toList();
 
 // ---------------------------------------------------------------------------
+// CQ code parser / serializer
+// ---------------------------------------------------------------------------
+
+/// Parse a CQ-code string into a list of [OneBotMessageSegment]s.
+///
+/// Handles both plain text and `[CQ:type,key=value,...]` codes with proper
+/// unescaping of `&amp;`, `&#91;`, `&#93;`, and `&#44;`.
+List<OneBotMessageSegment> parseCqCode(String raw) {
+  if (raw.isEmpty) return [];
+  final segments = <OneBotMessageSegment>[];
+  final re = RegExp(r'\[CQ:([^,\]]+)(?:,([^\]]*))?\]');
+  int lastEnd = 0;
+
+  for (final match in re.allMatches(raw)) {
+    // Plain text before this CQ code
+    if (match.start > lastEnd) {
+      final text = _cqUnescape(raw.substring(lastEnd, match.start), inCq: false);
+      if (text.isNotEmpty) segments.add(OneBotMessageSegment.plain(text));
+    }
+
+    final type = match.group(1)!;
+    final data = <String, dynamic>{};
+    final params = match.group(2);
+
+    if (params != null && params.isNotEmpty) {
+      for (final pair in params.split(',')) {
+        final eq = pair.indexOf('=');
+        if (eq > 0) {
+          final key = pair.substring(0, eq);
+          final value = _cqUnescape(pair.substring(eq + 1), inCq: true);
+          data[key] = value;
+        }
+      }
+    }
+
+    segments.add(OneBotMessageSegment(type: type, data: data));
+    lastEnd = match.end;
+  }
+
+  // Trailing plain text
+  if (lastEnd < raw.length) {
+    final text = _cqUnescape(raw.substring(lastEnd), inCq: false);
+    if (text.isNotEmpty) segments.add(OneBotMessageSegment.plain(text));
+  }
+
+  return segments;
+}
+
+/// Serialise a list of [OneBotMessageSegment]s into a CQ-code string.
+String segmentsToCqCode(List<OneBotMessageSegment> segments) {
+  final buf = StringBuffer();
+  for (final seg in segments) {
+    if (seg.type == 'text') {
+      buf.write(_cqEscape(seg.data['text'] as String? ?? '', inCq: false));
+    } else {
+      buf.write('[CQ:${seg.type}');
+      final keys = seg.data.keys.toList();
+      for (int i = 0; i < keys.length; i++) {
+        final key = keys[i];
+        var value = seg.data[key]?.toString() ?? '';
+        value = _cqEscape(value, inCq: true);
+        buf.write(',$key=$value');
+      }
+      buf.write(']');
+    }
+  }
+  return buf.toString();
+}
+
+String _cqUnescape(String s, {required bool inCq}) {
+  s = s.replaceAll('&amp;', '&').replaceAll('&#91;', '[').replaceAll('&#93;', ']');
+  if (inCq) s = s.replaceAll('&#44;', ',');
+  return s;
+}
+
+String _cqEscape(String s, {required bool inCq}) {
+  s = s.replaceAll('&', '&amp;').replaceAll('[', '&#91;').replaceAll(']', '&#93;');
+  if (inCq) s = s.replaceAll(',', '&#44;');
+  return s;
+}
+
+// ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
@@ -275,6 +399,7 @@ class OneBotPrivateMessageEvent {
     required this.rawMessage,
     required this.sender,
     this.subType,
+    this.font,
   });
 
   final int time;
@@ -285,6 +410,7 @@ class OneBotPrivateMessageEvent {
   final String rawMessage;
   final OneBotSender sender;
   final String? subType;
+  final int? font;
 
   String get plainText => oneBotPlainText(message);
 
@@ -298,6 +424,7 @@ class OneBotPrivateMessageEvent {
       rawMessage: (json['raw_message'] as String?) ?? '',
       sender: OneBotSender.fromJson(json['sender'] as Map<String, dynamic>),
       subType: json['sub_type'] as String?,
+      font: json['font'] as int?,
     );
   }
 }
@@ -314,6 +441,7 @@ class OneBotGroupMessageEvent {
     required this.sender,
     this.subType,
     this.anonymous,
+    this.font,
   });
 
   final int time;
@@ -326,6 +454,7 @@ class OneBotGroupMessageEvent {
   final OneBotSender sender;
   final String? subType;
   final OneBotAnonymous? anonymous;
+  final int? font;
 
   String get plainText => oneBotPlainText(message);
 
@@ -343,6 +472,7 @@ class OneBotGroupMessageEvent {
       anonymous: json['anonymous'] != null
           ? OneBotAnonymous.fromJson(json['anonymous'] as Map<String, dynamic>)
           : null,
+      font: json['font'] as int?,
     );
   }
 }
@@ -359,6 +489,8 @@ class OneBotNoticeEvent {
     this.targetId,
     this.duration,
     this.file,
+    this.messageId,
+    this.honorType,
   });
 
   final int time;
@@ -371,6 +503,8 @@ class OneBotNoticeEvent {
   final String? targetId;
   final int? duration;
   final OneBotFileInfo? file;
+  final int? messageId;
+  final String? honorType;
 
   factory OneBotNoticeEvent.fromJson(Map<String, dynamic> json) {
     return OneBotNoticeEvent(
@@ -386,6 +520,8 @@ class OneBotNoticeEvent {
       file: json['file'] != null
           ? OneBotFileInfo.fromJson(json['file'] as Map<String, dynamic>)
           : null,
+      messageId: json['message_id'] as int?,
+      honorType: json['honor_type'] as String?,
     );
   }
 }
@@ -554,6 +690,87 @@ class OneBotFileInfo {
       busid: json['busid'] as int,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Quick operation types (HTTP POST response / .handle_quick_operation)
+// ---------------------------------------------------------------------------
+
+/// Quick operations that can be returned as a response to a private-message
+/// event (HTTP POST) or sent via [.handle_quick_operation].
+class OneBotPrivateMessageQuickOp {
+  const OneBotPrivateMessageQuickOp({
+    this.reply,
+    this.autoEscape = false,
+  });
+
+  final dynamic reply; // message type
+  final bool autoEscape;
+
+  Map<String, dynamic> toJson() => {
+        if (reply != null) 'reply': reply,
+        if (autoEscape) 'auto_escape': autoEscape,
+      };
+}
+
+class OneBotGroupMessageQuickOp {
+  const OneBotGroupMessageQuickOp({
+    this.reply,
+    this.autoEscape = false,
+    this.atSender = true,
+    this.delete = false,
+    this.kick = false,
+    this.ban = false,
+    this.banDuration = 30 * 60,
+  });
+
+  final dynamic reply;
+  final bool autoEscape;
+  final bool atSender;
+  final bool delete;
+  final bool kick;
+  final bool ban;
+  final int banDuration;
+
+  Map<String, dynamic> toJson() => {
+        if (reply != null) 'reply': reply,
+        if (autoEscape) 'auto_escape': autoEscape,
+        if (!atSender) 'at_sender': atSender,
+        if (delete) 'delete': delete,
+        if (kick) 'kick': kick,
+        if (ban) 'ban': ban,
+        if (ban) 'ban_duration': banDuration,
+      };
+}
+
+class OneBotFriendRequestQuickOp {
+  const OneBotFriendRequestQuickOp({
+    this.approve,
+    this.remark,
+  });
+
+  final bool? approve;
+  final String? remark;
+
+  Map<String, dynamic> toJson() => {
+        if (approve != null) 'approve': approve,
+        if (remark != null) 'remark': remark,
+      };
+}
+
+class OneBotGroupRequestQuickOp {
+  const OneBotGroupRequestQuickOp({
+    this.approve,
+    this.reason,
+  });
+
+  final bool? approve;
+  final String? reason;
+
+  Map<String, dynamic> toJson() => {
+        if (approve != null) 'approve': approve,
+        if (reason != null) 'reason': reason,
+      };
 }
 
 // ---------------------------------------------------------------------------

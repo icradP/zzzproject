@@ -375,7 +375,11 @@ class OneBotClient {
   }
 
   /// Send a message (auto-detect private vs group).
+  ///
+  /// [messageType] can be `private` or `group`. When omitted, the type is
+  /// inferred from whether [userId] or [groupId] is provided.
   Future<int> sendMsg({
+    String? messageType,
     String? userId,
     String? groupId,
     required List<OneBotMessageSegment> message,
@@ -385,11 +389,9 @@ class OneBotClient {
       'message': oneBotChainToJson(message),
       if (autoEscape) 'auto_escape': autoEscape,
     };
-    if (groupId != null) {
-      p['group_id'] = groupId;
-    } else if (userId != null) {
-      p['user_id'] = userId;
-    }
+    if (messageType != null) p['message_type'] = messageType;
+    if (groupId != null) p['group_id'] = groupId;
+    if (userId != null) p['user_id'] = userId;
     final r = await callApi('send_msg', p);
     _checkResponse(r);
     return (r.data as Map<String, dynamic>)['message_id'] as int;
@@ -456,6 +458,7 @@ class OneBotClient {
 
   Future<void> setGroupAnonymousBan({
     required String groupId,
+    OneBotAnonymous? anonymous,
     String? flag,
     int duration = 1800,
   }) async {
@@ -463,7 +466,15 @@ class OneBotClient {
       'group_id': groupId,
       'duration': duration,
     };
-    if (flag != null) p['flag'] = flag;
+    if (anonymous != null) {
+      p['anonymous'] = {
+        'id': anonymous.id,
+        'name': anonymous.name,
+        'flag': anonymous.flag,
+      };
+    } else if (flag != null) {
+      p['flag'] = flag;
+    }
     final r = await callApi('set_group_anonymous_ban', p);
     _checkResponse(r);
   }
@@ -725,13 +736,13 @@ class OneBotClient {
   Future<bool> canSendImage() async {
     final r = await callApi('can_send_image', null);
     _checkResponse(r);
-    return (r.data as Map<String, dynamic>)['yes'] as bool? ?? false;
+    return OneBotCanSendResult.fromJson(r.data as Map<String, dynamic>).yes;
   }
 
   Future<bool> canSendRecord() async {
     final r = await callApi('can_send_record', null);
     _checkResponse(r);
-    return (r.data as Map<String, dynamic>)['yes'] as bool? ?? false;
+    return OneBotCanSendResult.fromJson(r.data as Map<String, dynamic>).yes;
   }
 
   // -----------------------------------------------------------------------
@@ -758,6 +769,49 @@ class OneBotClient {
     final r = await callApi('clean_cache', null);
     _checkResponse(r);
   }
+
+  // -----------------------------------------------------------------------
+  // Hidden API
+  // -----------------------------------------------------------------------
+
+  /// Execute a quick operation against an event (the `.handle_quick_operation`
+  /// hidden API).
+  ///
+  /// [context] should be the raw event JSON that was received (can be
+  /// stripped of the `message` field). [operation] is a quick-operation
+  /// object such as [OneBotGroupMessageQuickOp].
+  Future<void> handleQuickOperation({
+    required Map<String, dynamic> context,
+    required Map<String, dynamic> operation,
+  }) async {
+    final r = await callApi('.handle_quick_operation', {
+      'context': context,
+      'operation': operation,
+    });
+    _checkResponse(r);
+  }
+
+  // -----------------------------------------------------------------------
+  // Async / rate-limited variants
+  // -----------------------------------------------------------------------
+
+  /// Call an API with the `_async` suffix so the server returns immediately.
+  ///
+  /// Only makes sense for *send* actions; the caller cannot retrieve the
+  /// result of a `get_*` action called this way.
+  Future<OneBotApiResponse> callApiAsync(
+    String action,
+    Map<String, dynamic>? params,
+  ) =>
+      callApi('${action}_async', params);
+
+  /// Call an API with the `_rate_limited` suffix so the server queues it
+  /// according to the configured rate limit.
+  Future<OneBotApiResponse> callApiRateLimited(
+    String action,
+    Map<String, dynamic>? params,
+  ) =>
+      callApi('${action}_rate_limited', params);
 
   // -----------------------------------------------------------------------
   // Helpers

@@ -4,7 +4,7 @@ enum ImConversationType { direct, group }
 
 enum ImMessageStatus { sending, sent, delivered, read, failed }
 
-enum ImMessageKind { text, image, system }
+enum ImMessageKind { text, image, system, poke }
 
 /// A contact or the signed-in user.
 class ImUser {
@@ -109,11 +109,12 @@ class ImMessage {
   final bool isMine;
 
   ImMessage copyWith({
+    String? id,
     String? text,
     ImMessageStatus? status,
   }) {
     return ImMessage(
-      id: id,
+      id: id ?? this.id,
       conversationId: conversationId,
       senderId: senderId,
       text: text ?? this.text,
