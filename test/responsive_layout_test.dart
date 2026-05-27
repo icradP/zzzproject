@@ -49,7 +49,7 @@ void main() {
       await _setViewport(tester, scenario.size);
 
       await tester.pumpWidget(
-        const MaterialApp(
+        MaterialApp(
           home: CharacterPickerDialog(
             characters: _sampleCharacters,
             sideLabel: 'left',
@@ -77,7 +77,7 @@ Future<void> _setViewport(WidgetTester tester, Size size) async {
 }
 
 Future<void> _openDemoFromImHome(WidgetTester tester) async {
-  final demoButton = find.byTooltip('Chat simulator demo');
+  final demoButton = find.text('Open Chat Simulator Demo');
   await tester.ensureVisible(demoButton);
   await tester.tap(demoButton);
   await tester.pump(const Duration(milliseconds: 400));
@@ -85,13 +85,15 @@ Future<void> _openDemoFromImHome(WidgetTester tester) async {
 }
 
 Future<void> _openAndCloseSettings(WidgetTester tester) async {
-  final settingsButton = find.text('Settings');
+  final settingsButton = find.byTooltip('Settings');
   await tester.ensureVisible(settingsButton);
   await tester.tap(settingsButton);
   await tester.pump(const Duration(milliseconds: 300));
 
-  expect(find.text('Flashing colors'), findsOneWidget);
-  await tester.tap(find.widgetWithText(FilledButton, 'Done'));
+  expect(find.text('IM Connection Settings'), findsOneWidget);
+  final backButton = find.byTooltip('Back');
+  await tester.ensureVisible(backButton);
+  await tester.tap(backButton);
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump(const Duration(milliseconds: 300));
 }
@@ -108,7 +110,7 @@ class _ViewportScenario {
   final Size size;
 }
 
-const _sampleCharacters = <ChatCharacter>[
+final _sampleCharacters = <ChatCharacter>[
   ChatCharacter(
     name: 'Wise',
     assetPath: AppAssets.characterWise,

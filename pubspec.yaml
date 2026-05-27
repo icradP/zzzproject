@@ -38,6 +38,8 @@ dependencies:
   share_plus: ^12.0.2
   shared_preferences: ^2.5.3
   go_router: ^17.2.3
+  onebot_flutter:
+    path: packages/onebot_flutter
 
 dev_dependencies:
   flutter_test:

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/index.dart';
+import '../assets/app_assets.dart';
 import '../im/adapters/im_message_source.dart';
 import '../im/adapters/nonebot/nonebot_models.dart';
 import '../im/adapters/nonebot/nonebot_source.dart';
@@ -48,17 +49,35 @@ class _ZzzAppState extends State<ZzzApp> {
     if (config.isNoneBot && config.wsEndpoint != null) {
       return SourceBackedRepository(
         NoneBotSource.connected(
-          config: OneBotConnectionConfig(
+          config: OneBotConfig(
             selfId: config.selfId,
             httpEndpoint: config.httpEndpoint,
             wsEndpoint: config.wsEndpoint,
             wsMode: config.wsMode,
             accessToken: config.accessToken,
           ),
+          avatarResolver: _zzzAvatarResolver,
         ),
       );
     }
     return MockImRepository();
+  }
+
+  String? _zzzAvatarResolver(String userId) {
+    switch (userId) {
+      case 'belle':
+        return AppAssets.characterBelle;
+      case 'wise':
+        return AppAssets.characterWise;
+      case 'nicole':
+        return AppAssets.character('NicoleDemara.png');
+      case 'anby':
+        return AppAssets.character('AnbyDemara.png');
+      case 'fairy':
+        return AppAssets.character('temp/Fairy.png');
+      default:
+        return AppAssets.characterWise;
+    }
   }
 
   @override

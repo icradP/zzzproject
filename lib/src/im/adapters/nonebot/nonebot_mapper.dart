@@ -1,21 +1,32 @@
-import '../../../assets/app_assets.dart';
 import '../../models/im_models.dart';
 import 'nonebot_models.dart';
 
+/// Resolves an avatar asset path for a user id.
+typedef AvatarResolver = String? Function(String userId);
+
+String? _defaultAvatarResolver(String userId) => null;
+
 /// Maps a OneBot sender to an [ImUser].
-ImUser oneBotSenderToImUser(OneBotSender sender) {
+ImUser oneBotSenderToImUser(
+  OneBotSender sender, {
+  AvatarResolver avatarResolver = _defaultAvatarResolver,
+}) {
   return ImUser(
     id: sender.userId,
     displayName: sender.card ?? sender.nickname,
+    avatarAssetPath: avatarResolver(sender.userId),
     isOnline: true,
   );
 }
 
 /// Builds a deterministic conversation id for a OneBot chat.
-String oneBotConversationId({required String selfId, String? userId, String? groupId}) {
+String oneBotConversationId({
+  required String selfId,
+  String? userId,
+  String? groupId,
+}) {
   if (groupId != null) return 'group_$groupId';
   assert(userId != null, 'userId or groupId must be provided');
-  // canonical ordering so dm ids are consistent
   final sorted = [selfId, userId!]..sort();
   return 'dm_${sorted[0]}_${sorted[1]}';
 }
@@ -62,13 +73,14 @@ ImConversation oneBotPrivateEventToConversation({
   required ImUser peer,
   required String subtitle,
   required DateTime updatedAt,
+  String? avatarAssetPath,
 }) {
   return ImConversation(
     id: conversationId,
     type: ImConversationType.direct,
     title: peer.displayName,
     participantIds: [selfId, event.userId],
-    avatarAssetPath: _avatarForUser(peer.id),
+    avatarAssetPath: avatarAssetPath ?? peer.avatarAssetPath,
     subtitle: subtitle,
     updatedAt: updatedAt,
   );
@@ -99,15 +111,4 @@ List<Map<String, dynamic>> imMessageToOneBotChain(ImMessage message) {
   return [
     {'type': 'text', 'data': {'text': message.text}},
   ];
-}
-
-String _avatarForUser(String userId) {
-  switch (userId) {
-    case 'belle':
-      return AppAssets.characterBelle;
-    case 'wise':
-      return AppAssets.characterWise;
-    default:
-      return AppAssets.characterWise;
-  }
 }

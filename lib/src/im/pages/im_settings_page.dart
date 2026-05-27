@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:onebot_flutter/onebot_flutter.dart' show OneBotClient;
 
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../adapters/nonebot/nonebot_models.dart';
-import '../adapters/nonebot/nonebot_source.dart';
 import '../data/im_connection_config.dart';
 
 class ImSettingsPage extends StatefulWidget {
@@ -128,23 +128,24 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       _testSuccess = false;
     });
 
-    final config = OneBotConnectionConfig(
-      selfId: _selfIdController.text.trim(),
-      httpEndpoint: _httpController.text.trim().isEmpty
-          ? null
-          : _httpController.text.trim(),
-      wsEndpoint: _wsController.text.trim().isEmpty
-          ? null
-          : _wsController.text.trim(),
-      wsMode: _wsMode,
-      accessToken: _tokenController.text.trim().isEmpty
-          ? null
-          : _tokenController.text.trim(),
+    final client = OneBotClient(
+      config: OneBotConfig(
+        selfId: _selfIdController.text.trim(),
+        httpEndpoint: _httpController.text.trim().isEmpty
+            ? null
+            : _httpController.text.trim(),
+        wsEndpoint: _wsController.text.trim().isEmpty
+            ? null
+            : _wsController.text.trim(),
+        wsMode: _wsMode,
+        accessToken: _tokenController.text.trim().isEmpty
+            ? null
+            : _tokenController.text.trim(),
+      ),
     );
 
-    final source = NoneBotSource.connected(config: config);
-    final error = await source.testConnection();
-    source.disconnect();
+    final error = await client.testConnection();
+    client.disconnect();
 
     if (mounted) {
       setState(() {

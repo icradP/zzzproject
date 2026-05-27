@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
-import '../../../assets/app_assets.dart';
+import 'package:onebot_flutter/onebot_flutter.dart' show OneBotClient, OneBotException;
+
 import '../../models/im_models.dart';
 import '../im_message_source.dart';
 import 'nonebot_mapper.dart';
@@ -10,45 +10,54 @@ import 'nonebot_models.dart';
 
 /// An [ImMessageSource] backed by the OneBot protocol.
 ///
-/// Two modes:
-/// - **Mock mode** (default via [NoneBotSource.mock]): fills sample ZZZ-themed
-///   data using OneBot event structures, so no real server is needed.
-/// - **Connected mode** (via [NoneBotSource.connected]): wires a real
-///   NoneBot / OneBot server using the provided [OneBotConnectionConfig].
+/// - **Mock mode** ([NoneBotSource.mock]): fills sample data so no real server
+///   is needed. Pass an [avatarResolver] to map user ids to asset paths.
+/// - **Connected mode** ([NoneBotSource.connected]): wraps [OneBotClient] from
+///   the standalone SDK, ingesting live events and translating them to the
+///   [ImMessageSource] interface used by the app.
 class NoneBotSource implements ImMessageSource {
-  NoneBotSource._({required this.config, required bool mock})
-    : _mock = mock {
+  NoneBotSource._({
+    required this.config,
+    required bool mock,
+    AvatarResolver? avatarResolver,
+  }) : _mock = mock,
+      _avatarResolver = avatarResolver ?? _defaultAvatar {
     _selfId = config.selfId;
     _users[_selfId] = ImUser(
       id: _selfId,
-      displayName: config.selfId.isNotEmpty ? 'Bot (${config.selfId})' : 'Proxy',
-      avatarAssetPath: AppAssets.characterWise,
+      displayName: _selfId.isNotEmpty ? 'Bot ($_selfId)' : 'Proxy',
+      avatarAssetPath: _avatarResolver(_selfId),
       isOnline: true,
     );
     if (_mock) _seedMockData();
   }
 
-  /// Creates a source pre-filled with sample data for development.
-  factory NoneBotSource.mock() {
+  factory NoneBotSource.mock({AvatarResolver? avatarResolver}) {
     return NoneBotSource._(
-      config: const OneBotConnectionConfig(selfId: 'me'),
+      config: const OneBotConfig(selfId: 'me'),
       mock: true,
+      avatarResolver: avatarResolver,
     );
   }
 
-  /// Creates a source that connects to a real NoneBot / OneBot server.
-  factory NoneBotSource.connected({required OneBotConnectionConfig config}) {
-    return NoneBotSource._(config: config, mock: false);
+  factory NoneBotSource.connected({
+    required OneBotConfig config,
+    AvatarResolver? avatarResolver,
+  }) {
+    return NoneBotSource._(
+      config: config,
+      mock: false,
+      avatarResolver: avatarResolver,
+    );
   }
 
-  final OneBotConnectionConfig config;
+  final OneBotConfig config;
   final bool _mock;
+  final AvatarResolver _avatarResolver;
 
   late String _selfId;
-  WebSocket? _ws;
-  HttpServer? _wsServer;
-  StreamSubscription? _wsSubscription;
-  StreamSubscription? _wsServerSubscription;
+  OneBotClient? _client;
+  StreamSubscription? _eventSubscription;
 
   final _users = <String, ImUser>{};
   final _conversations = <String, ImConversation>{};
@@ -58,15 +67,17 @@ class NoneBotSource implements ImMessageSource {
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
   final _statusController = StreamController<ConnectionStatus>.broadcast();
 
+  static String? _defaultAvatar(String userId) => null;
+
+  // -----------------------------------------------------------------
+  // ImMessageSource
+  // -----------------------------------------------------------------
+
   @override
   String get platformName => 'NoneBot / OneBot';
 
   @override
   Stream<ConnectionStatus> get connectionStatus => _statusController.stream;
-
-  // -----------------------------------------------------------------
-  // Lifecycle
-  // -----------------------------------------------------------------
 
   @override
   Future<void> connect() async {
@@ -75,19 +86,21 @@ class NoneBotSource implements ImMessageSource {
       return;
     }
 
-    final wsUrl = config.wsEndpoint;
-    if (wsUrl == null || wsUrl.isEmpty) {
-      _statusController.add(ConnectionStatus.failed);
-      return;
-    }
-
     _statusController.add(ConnectionStatus.connecting);
     try {
-      if (config.wsMode == OneBotWsMode.reverse) {
-        await _startReverseWs(wsUrl);
-      } else {
-        await _startForwardWs(wsUrl);
-      }
+      _client = OneBotClient(config: config);
+      await _client!.connect();
+
+      _eventSubscription = _client!.eventStream.listen((event) {
+        if (event is OneBotMessageEvent) {
+          if (event.isPrivate && event.event != null) {
+            _ingestPrivateEvent(event.event!);
+          } else if (event.isGroup) {
+            _ingestGroupEvent(event.groupEvent!);
+          }
+        }
+      });
+
       _statusController.add(ConnectionStatus.connected);
     } catch (e) {
       _statusController.add(ConnectionStatus.failed);
@@ -95,82 +108,11 @@ class NoneBotSource implements ImMessageSource {
     }
   }
 
-  Future<void> _startForwardWs(String wsUrl) async {
-    final headers = <String, dynamic>{};
-    if (config.accessToken != null && config.accessToken!.isNotEmpty) {
-      headers['Authorization'] = 'Bearer ${config.accessToken}';
-    }
-
-    _ws = await WebSocket.connect(wsUrl, headers: headers.isNotEmpty ? headers : null);
-    _wsSubscription = _ws!.listen(
-      (data) {
-        if (data is String) {
-          try {
-            final json = jsonDecode(data) as Map<String, dynamic>;
-            ingestEvent(json);
-          } catch (_) {}
-        }
-      },
-      onError: (_) {
-        _statusController.add(ConnectionStatus.failed);
-      },
-      onDone: () {
-        _statusController.add(ConnectionStatus.disconnected);
-      },
-    );
-  }
-
-  Future<void> _startReverseWs(String listenUrl) async {
-    final uri = Uri.parse(listenUrl);
-    final host = uri.host.isNotEmpty ? uri.host : '127.0.0.1';
-    final port = uri.port != 0 ? uri.port : 6199;
-    final path = uri.path.isNotEmpty ? uri.path : '/ws';
-
-    _wsServer = await HttpServer.bind(InternetAddress(host), port);
-    _wsServerSubscription = _wsServer!.listen((request) async {
-      if (request.uri.path != path) {
-        request.response
-          ..statusCode = HttpStatus.notFound
-          ..close();
-        return;
-      }
-
-      final token = config.accessToken;
-      if (token != null && token.isNotEmpty) {
-        final auth = request.headers.value('Authorization');
-        if (auth != 'Bearer $token') {
-          request.response
-            ..statusCode = HttpStatus.unauthorized
-            ..close();
-          return;
-        }
-      }
-
-      final socket = await WebSocketTransformer.upgrade(request);
-      socket.listen(
-        (data) {
-          if (data is String) {
-            try {
-              final json = jsonDecode(data) as Map<String, dynamic>;
-              ingestEvent(json);
-            } catch (_) {}
-          }
-        },
-        onError: (_) {},
-        onDone: () {},
-      );
-    });
-  }
-
   @override
   void disconnect() {
-    _wsSubscription?.cancel();
-    _ws?.close();
-    _wsServerSubscription?.cancel();
-    _wsServer?.close();
-
+    _eventSubscription?.cancel();
+    _client?.disconnect();
     _statusController.add(ConnectionStatus.disconnected);
-
     for (final c in _conversationControllers.values) {
       c.close();
     }
@@ -182,47 +124,19 @@ class NoneBotSource implements ImMessageSource {
   @override
   Future<String?> testConnection() async {
     if (_mock) return null;
-
-    final wsUrl = config.wsEndpoint;
-    if (wsUrl == null || wsUrl.isEmpty) {
-      return 'No WebSocket endpoint configured';
-    }
-
     try {
-      if (config.wsMode == OneBotWsMode.reverse) {
-        final uri = Uri.parse(wsUrl);
-        final port = uri.port != 0 ? uri.port : 6199;
-        final host = uri.host.isNotEmpty ? uri.host : '127.0.0.1';
-        // For reverse mode, just check if the port is available to bind
-        final server = await HttpServer.bind(InternetAddress(host), port);
-        await server.close();
-        return null;
-      } else {
-        final headers = <String, dynamic>{};
-        if (config.accessToken != null && config.accessToken!.isNotEmpty) {
-          headers['Authorization'] = 'Bearer ${config.accessToken}';
-        }
-        final ws = await WebSocket.connect(
-          wsUrl,
-          headers: headers.isNotEmpty ? headers : null,
-        ).timeout(const Duration(seconds: 5));
-        await ws.close();
-        return null;
-      }
-    } on TimeoutException {
-      return 'Connection timed out after 5s';
+      final client = OneBotClient(config: config);
+      final result = await client.testConnection();
+      client.disconnect();
+      return result;
+    } on OneBotException catch (e) {
+      return e.message;
     } on SocketException catch (e) {
       return 'Socket error: ${e.message}';
-    } on HandshakeException catch (e) {
-      return 'Handshake failed: ${e.message}';
     } catch (e) {
       return 'Connection failed: $e';
     }
   }
-
-  // -----------------------------------------------------------------
-  // ImMessageSource
-  // -----------------------------------------------------------------
 
   @override
   Future<ImUser> getCurrentUser() async => _users[_selfId]!;
@@ -251,9 +165,8 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
-  Future<ImConversation?> getConversation(String conversationId) async {
-    return _conversations[conversationId];
-  }
+  Future<ImConversation?> getConversation(String conversationId) async =>
+      _conversations[conversationId];
 
   @override
   Future<ImMessage> sendTextMessage({
@@ -314,93 +227,71 @@ class NoneBotSource implements ImMessageSource {
   }
 
   // -----------------------------------------------------------------
-  // Event ingestion (for connected mode)
+  // Event ingestion (connected mode)
   // -----------------------------------------------------------------
 
-  /// Feed a raw OneBot event into the source so it updates internal state.
-  /// Call this from your WebSocket / HTTP listener in connected mode.
-  void ingestEvent(Map<String, dynamic> raw) {
-    final postType = raw['post_type'] as String?;
-    switch (postType) {
-      case 'message':
-        _ingestMessageEvent(raw);
-      case 'notice':
-        // notices can be handled here (e.g. friend-add → new conversation)
-        break;
-    }
+  void _ingestPrivateEvent(OneBotPrivateMessageEvent event) {
+    final convId = oneBotConversationId(selfId: _selfId, userId: event.userId);
+    final imUser = oneBotSenderToImUser(event.sender, avatarResolver: _avatarResolver);
+    _users[imUser.id] = imUser;
+
+    final msg = oneBotPrivateMessageToImMessage(
+      event: event,
+      conversationId: convId,
+      selfId: _selfId,
+    );
+
+    _conversations.putIfAbsent(
+      convId,
+      () => oneBotPrivateEventToConversation(
+        event: event,
+        conversationId: convId,
+        selfId: _selfId,
+        peer: imUser,
+        subtitle: msg.text,
+        updatedAt: msg.sentAt,
+        avatarAssetPath: _avatarResolver(event.userId),
+      ),
+    );
+
+    _messages.putIfAbsent(convId, () => []).add(msg);
+    _emitMessages(convId);
+    _emitConversations();
   }
 
-  void _ingestMessageEvent(Map<String, dynamic> raw) {
-    final messageType = raw['message_type'] as String?;
+  void _ingestGroupEvent(OneBotGroupMessageEvent event) {
+    final convId = oneBotConversationId(selfId: _selfId, groupId: event.groupId);
+    final imUser = oneBotSenderToImUser(event.sender, avatarResolver: _avatarResolver);
+    _users[imUser.id] = imUser;
 
-    if (messageType == 'private') {
-      final event = OneBotPrivateMessageEvent.fromJson(raw);
-      final convId = oneBotConversationId(
-        selfId: _selfId,
-        userId: event.userId,
+    final msg = oneBotGroupMessageToImMessage(
+      event: event,
+      conversationId: convId,
+      selfId: _selfId,
+    );
+
+    final existing = _conversations[convId];
+    if (existing != null) {
+      _conversations[convId] = existing.copyWith(
+        subtitle: '$imUser.displayName: ${msg.text}',
+        updatedAt: msg.sentAt,
+        unreadCount: existing.unreadCount + 1,
       );
-      final imUser = oneBotSenderToImUser(event.sender);
-      _users[imUser.id] = imUser;
-
-      final msg = oneBotPrivateMessageToImMessage(
+    } else {
+      _conversations[convId] = oneBotGroupEventToConversation(
         event: event,
         conversationId: convId,
         selfId: _selfId,
+        title: 'Group ${event.groupId}',
+        participantIds: [_selfId],
+        subtitle: '$imUser.displayName: ${msg.text}',
+        updatedAt: msg.sentAt,
       );
-
-      _conversations.putIfAbsent(
-        convId,
-        () => oneBotPrivateEventToConversation(
-          event: event,
-          conversationId: convId,
-          selfId: _selfId,
-          peer: imUser,
-          subtitle: msg.text,
-          updatedAt: msg.sentAt,
-        ),
-      );
-
-      _messages.putIfAbsent(convId, () => []).add(msg);
-      _emitMessages(convId);
-      _emitConversations();
-    } else if (messageType == 'group') {
-      final event = OneBotGroupMessageEvent.fromJson(raw);
-      final convId = oneBotConversationId(
-        selfId: _selfId,
-        groupId: event.groupId,
-      );
-      final imUser = oneBotSenderToImUser(event.sender);
-      _users[imUser.id] = imUser;
-
-      final msg = oneBotGroupMessageToImMessage(
-        event: event,
-        conversationId: convId,
-        selfId: _selfId,
-      );
-
-      final existing = _conversations[convId];
-      if (existing != null) {
-        _conversations[convId] = existing.copyWith(
-          subtitle: '${imUser.displayName}: ${msg.text}',
-          updatedAt: msg.sentAt,
-          unreadCount: existing.unreadCount + 1,
-        );
-      } else {
-        _conversations[convId] = oneBotGroupEventToConversation(
-          event: event,
-          conversationId: convId,
-          selfId: _selfId,
-          title: 'Group ${event.groupId}',
-          participantIds: [_selfId],
-          subtitle: '${imUser.displayName}: ${msg.text}',
-          updatedAt: msg.sentAt,
-        );
-      }
-
-      _messages.putIfAbsent(convId, () => []).add(msg);
-      _emitMessages(convId);
-      _emitConversations();
     }
+
+    _messages.putIfAbsent(convId, () => []).add(msg);
+    _emitMessages(convId);
+    _emitConversations();
   }
 
   // -----------------------------------------------------------------
@@ -435,35 +326,35 @@ class NoneBotSource implements ImMessageSource {
       _selfId: ImUser(
         id: _selfId,
         displayName: 'Proxy',
-        avatarAssetPath: AppAssets.characterWise,
+        avatarAssetPath: _avatarResolver(_selfId),
         isOnline: true,
       ),
-      'belle': const ImUser(
+      'belle': ImUser(
         id: 'belle',
         displayName: 'Belle',
-        avatarAssetPath: AppAssets.characterBelle,
+        avatarAssetPath: _avatarResolver('belle'),
         isOnline: true,
       ),
-      'wise': const ImUser(
+      'wise': ImUser(
         id: 'wise',
         displayName: 'Wise',
-        avatarAssetPath: AppAssets.characterWise,
+        avatarAssetPath: _avatarResolver('wise'),
       ),
       'nicole': ImUser(
         id: 'nicole',
         displayName: 'Nicole Demara',
-        avatarAssetPath: AppAssets.character('NicoleDemara.png'),
+        avatarAssetPath: _avatarResolver('nicole'),
         isOnline: true,
       ),
       'anby': ImUser(
         id: 'anby',
         displayName: 'Anby Demara',
-        avatarAssetPath: AppAssets.character('AnbyDemara.png'),
+        avatarAssetPath: _avatarResolver('anby'),
       ),
       'fairy': ImUser(
         id: 'fairy',
         displayName: 'Fairy',
-        avatarAssetPath: AppAssets.character('temp/Fairy.png'),
+        avatarAssetPath: _avatarResolver('fairy'),
       ),
     });
 
@@ -474,7 +365,7 @@ class NoneBotSource implements ImMessageSource {
         type: ImConversationType.direct,
         title: 'Belle',
         participantIds: [_selfId, 'belle'],
-        avatarAssetPath: AppAssets.characterBelle,
+        avatarAssetPath: _avatarResolver('belle'),
         subtitle: 'See you at Sixth Street!',
         updatedAt: now.subtract(const Duration(minutes: 3)),
         unreadCount: 2,
@@ -487,7 +378,7 @@ class NoneBotSource implements ImMessageSource {
         type: ImConversationType.direct,
         title: 'Wise',
         participantIds: [_selfId, 'wise'],
-        avatarAssetPath: AppAssets.characterWise,
+        avatarAssetPath: _avatarResolver('wise'),
         subtitle: "Don't forget the commission.",
         updatedAt: now.subtract(const Duration(hours: 1)),
       ),
@@ -498,7 +389,7 @@ class NoneBotSource implements ImMessageSource {
         type: ImConversationType.group,
         title: 'Cunning Hares',
         participantIds: [_selfId, 'nicole', 'anby', 'belle'],
-        avatarAssetPath: AppAssets.character('NicoleDemara.png'),
+        avatarAssetPath: _avatarResolver('nicole'),
         subtitle: 'Nicole: Pay up, buddy.',
         updatedAt: now.subtract(const Duration(hours: 5)),
         unreadCount: 5,
@@ -510,7 +401,7 @@ class NoneBotSource implements ImMessageSource {
         type: ImConversationType.direct,
         title: 'Nicole Demara',
         participantIds: [_selfId, 'nicole'],
-        avatarAssetPath: AppAssets.character('NicoleDemara.png'),
+        avatarAssetPath: _avatarResolver('nicole'),
         subtitle: 'Interest is compounding.',
         updatedAt: now.subtract(const Duration(days: 1)),
       ),
@@ -521,16 +412,18 @@ class NoneBotSource implements ImMessageSource {
         type: ImConversationType.direct,
         title: 'Fairy · System',
         participantIds: [_selfId, 'fairy'],
-        avatarAssetPath: AppAssets.character('temp/Fairy.png'),
+        avatarAssetPath: _avatarResolver('fairy'),
         subtitle: 'Power inspection scheduled.',
         updatedAt: now.subtract(const Duration(days: 2)),
       ),
     );
 
     _putMessages('dm_belle', [
-      _mockMsg('m1', 'dm_belle', 'belle', 'Proxy, are you still at the video store?',
+      _mockMsg('m1', 'dm_belle', 'belle',
+          'Proxy, are you still at the video store?',
           now.subtract(const Duration(minutes: 18))),
-      _mockMsg('m2', 'dm_belle', _selfId, 'Yeah, sorting the new Hollow Observer tapes.',
+      _mockMsg('m2', 'dm_belle', _selfId,
+          'Yeah, sorting the new Hollow Observer tapes.',
           now.subtract(const Duration(minutes: 12))),
       _mockMsg('m3', 'dm_belle', 'belle', 'See you at Sixth Street!',
           now.subtract(const Duration(minutes: 3))),
@@ -563,7 +456,13 @@ class NoneBotSource implements ImMessageSource {
     ]);
   }
 
-  ImMessage _mockMsg(String id, String convId, String senderId, String text, DateTime sentAt) {
+  ImMessage _mockMsg(
+    String id,
+    String convId,
+    String senderId,
+    String text,
+    DateTime sentAt,
+  ) {
     return ImMessage(
       id: id,
       conversationId: convId,
