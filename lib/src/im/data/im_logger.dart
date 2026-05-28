@@ -61,7 +61,8 @@ class ImLogger {
   static void ingestMessage(String convId, String senderId, String kind,
       String text, {int? segCount}) {
     final s = segCount != null ? ' ($segCount segs)' : '';
-    _log(ingest, 'msg conv=$convId from=$senderId kind=$kind text="${_truncate(text, 80)}"$s');
+    final max = kind == 'json' ? 500 : 120;
+    _log(ingest, 'msg conv=$convId from=$senderId kind=$kind text="${_truncate(text, max)}"$s');
   }
 
   static void ingestData(String phase, Map<String, dynamic> data) {

@@ -1024,8 +1024,9 @@ String _eventSummary(Map<String, dynamic> json) {
       final uid = json['user_id'] ?? json['group_id'] ?? '?';
       final raw = '${json['raw_message'] ?? json['message'] ?? '?'}';
       final sub = json['sub_type'];
+      final maxLen = raw.contains('[CQ:json') ? 2000 : 200;
       return '↓ $mt${sub != null ? '/$sub' : ''} uid=$uid '
-          '"${_truncateLog(raw.toString(), 120)}"';
+          '"${_truncateLog(raw.toString(), maxLen)}"';
     case 'notice':
       final nt = json['notice_type'] ?? '?';
       final sub = json['sub_type'];

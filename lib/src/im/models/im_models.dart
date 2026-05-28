@@ -24,6 +24,7 @@ enum ImMessageKind {
   share,
   music,
   contact,
+  json,
   system,
   poke,
 }

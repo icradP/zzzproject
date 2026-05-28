@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../models/im_models.dart';
 import 'nonebot_models.dart';
 
@@ -65,8 +67,10 @@ String oneBotSegmentsToDisplayText(
         buf.write('[回复]');
       case 'forward':
         buf.write('[合并转发]');
+      case 'json':
+        buf.write(_parseJsonCard(seg.data['data'] as String?).text);
       case 'file':
-        buf.write('[文件]');
+        buf.write(seg.data['name'] ?? seg.data['file'] ?? '[文件]');
       default:
         buf.write('[${seg.type}]');
     }
@@ -101,6 +105,8 @@ ImMessageKind oneBotSegmentToMessageKind(OneBotMessageSegment seg) {
       return ImMessageKind.music;
     case 'contact':
       return ImMessageKind.contact;
+    case 'json':
+      return ImMessageKind.json;
     default:
       return ImMessageKind.text;
   }
@@ -118,11 +124,16 @@ ImMessageKind oneBotPrimaryKind(List<OneBotMessageSegment> segments) {
 }
 
 /// Extracts media metadata from a segment for caching / storage.
-({String? fileId, String? url}) oneBotExtractMedia(
+({String? fileId, String? url, int? size}) oneBotExtractMedia(
   OneBotMessageSegment seg,
 ) {
   final d = seg.data;
-  return (fileId: d['file']?.toString(), url: d['url']?.toString());
+  final sizeRaw = d['size']?.toString();
+  return (
+    fileId: d['file']?.toString(),
+    url: d['url']?.toString(),
+    size: sizeRaw != null ? int.tryParse(sizeRaw) : null,
+  );
 }
 
 /// Converts a private-message event into one or more [ImMessage]s.
@@ -244,6 +255,12 @@ List<ImMessage> _buildSplitMessages({
   for (final seg in mediaSegs) {
     final kind = oneBotSegmentToMessageKind(seg);
     final media = oneBotExtractMedia(seg);
+    String? previewUrl = media.url;
+    int? fileSize = media.size;
+    if (seg.type == 'json') {
+      final card = _parseJsonCard(seg.data['data'] as String?);
+      previewUrl = card.previewUrl;
+    }
     results.add(ImMessage(
       id: '${baseId}_$idx',
       conversationId: conversationId,
@@ -253,12 +270,43 @@ List<ImMessage> _buildSplitMessages({
       kind: kind,
       isMine: isMine,
       segments: [seg],
-      mediaUrl: media.url,
+      mediaUrl: previewUrl,
+      mediaSize: fileSize,
     ));
     idx++;
   }
 
   return results;
+}
+
+({String text, String? previewUrl}) _parseJsonCard(String? raw) {
+  if (raw == null || raw.isEmpty) return (text: '[小程序]', previewUrl: null);
+  try {
+    final obj = jsonDecode(raw) as Map<String, dynamic>;
+    final meta = obj['meta'] as Map<String, dynamic>?;
+    final detail1 = meta?['detail_1'] as Map<String, dynamic>?;
+    final preview = (obj['preview'] as String?) ??
+        (detail1?['preview'] as String?) ??
+        (detail1?['qqdocurl'] as String?);
+    // Build a rich display string from available fields.
+    final parts = <String>[];
+    final appName = detail1?['title'] as String?;
+    if (appName != null && appName.isNotEmpty) parts.add(appName);
+    final prompt = obj['prompt'] as String?;
+    if (prompt != null && prompt.isNotEmpty && !prompt.startsWith('[QQ小程序]')) {
+      parts.add(prompt);
+    } else {
+      final desc = detail1?['desc'] as String?;
+      if (desc != null && desc.isNotEmpty) parts.add(desc);
+    }
+    final host = detail1?['host'] as Map<String, dynamic>?;
+    final nick = host?['nick'] as String?;
+    if (nick != null && nick.isNotEmpty) parts.add('来自 $nick');
+    if (parts.isEmpty) parts.add('[小程序]');
+    return (text: parts.join('\n'), previewUrl: preview);
+  } catch (_) {
+    return (text: '[小程序]', previewUrl: null);
+  }
 }
 
 String? _extractReplyId(List<OneBotMessageSegment> segments) {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:onebot_flutter/onebot_flutter.dart' show OneBotClient, OneBotException;
@@ -517,6 +518,42 @@ class NoneBotSource implements ImMessageSource {
           convId, '', 'reaction',
           'msg=$messageId likes=${likes.map((l) => '${l.emojiId}x${l.count}').join(',')}',
         );
+      case OneBotGroupUploadNotice(
+           :final groupId,
+           :final userId,
+           :final file):
+        final convId = oneBotConversationId(
+          selfId: _selfId,
+          groupId: groupId,
+        );
+        final senderName = _users[userId]?.displayName ?? userId;
+        final sizeLabel = file.size > 0
+            ? ' (${_formatBytes(file.size)})'
+            : '';
+        final msg = ImMessage(
+          id: 'file_${event.time}',
+          conversationId: convId,
+          senderId: userId,
+          text: file.name,
+          sentAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
+          kind: ImMessageKind.file,
+          mediaSize: file.size,
+        );
+        if (!_conversations.containsKey(convId)) {
+          _conversations[convId] = ImConversation(
+            id: convId,
+            type: ImConversationType.group,
+            title: _groupNames[groupId] ?? 'Group $groupId',
+            participantIds: _groupMemberIds[groupId] ?? [_selfId],
+            subtitle: '$senderName uploaded ${file.name}$sizeLabel',
+            updatedAt: msg.sentAt,
+            avatarLocalPath: _groupAvatarPaths[groupId],
+          );
+          _emitConversations();
+        }
+        _messages.putIfAbsent(convId, () => []).add(msg);
+        _saveMsg(msg);
+        _emitMessages(convId);
       case OneBotPokeNotice(:final groupId, :final userId, :final targetId):
         final isGroup = groupId != null;
         final convId = isGroup
@@ -658,6 +695,15 @@ class NoneBotSource implements ImMessageSource {
     return _users[qq]?.displayName ?? qq;
   }
 
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
   /// Downloads the group avatar for [groupId] and applies it to the
   /// matching conversation (or stores it for later).
   void _fetchGroupAvatar(String groupId) {
@@ -688,6 +734,20 @@ class NoneBotSource implements ImMessageSource {
     });
   }
 
+  /// Parses a mini-program json payload for the preview image URL.
+  String? _parseJsonPreview(String raw) {
+    try {
+      final obj = jsonDecode(raw) as Map<String, dynamic>;
+      final meta = obj['meta'] as Map<String, dynamic>?;
+      final detail1 = meta?['detail_1'] as Map<String, dynamic>?;
+      return (obj['preview'] as String?) ??
+          (detail1?['preview'] as String?) ??
+          (detail1?['qqdocurl'] as String?);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Downloads media for [msg] in the background and updates the message
   /// once the local file is ready.
   void _downloadMedia(ImMessage msg) {
@@ -697,17 +757,32 @@ class NoneBotSource implements ImMessageSource {
 
     for (final seg in segs) {
       final media = oneBotExtractMedia(seg);
-      final fileId = media.fileId;
-      if (fileId == null || fileId.isEmpty) continue;
+      var fileId = media.fileId;
+      var url = media.url;
+
+      // For json mini-program cards, extract preview URL from the payload.
+      if (seg.type == 'json') {
+        final raw = seg.data['data'] as String?;
+        if (raw != null && raw.isNotEmpty) {
+          url = _parseJsonPreview(raw);
+          fileId = url;
+        }
+      }
+
+      if ((fileId == null || fileId.isEmpty) &&
+          (url == null || url.isEmpty)) {
+        continue;
+      }
+      final dlId = fileId ?? url!;
 
       Future<CachedMedia> future;
       switch (seg.type) {
         case 'image':
-          future = _mediaCache!.downloadImage(fileId: fileId, url: media.url);
+          future = _mediaCache!.downloadImage(fileId: dlId, url: url);
         case 'record':
-          future = _mediaCache!.downloadRecord(fileId: fileId, url: media.url);
+          future = _mediaCache!.downloadRecord(fileId: dlId, url: url);
         default:
-          future = _mediaCache!.downloadFile(fileId: fileId, url: media.url);
+          future = _mediaCache!.downloadFile(fileId: dlId, url: url);
       }
 
       future.then((cached) {
