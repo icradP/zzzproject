@@ -33,39 +33,243 @@ String oneBotConversationId({
   return 'dm_${sorted[0]}_${sorted[1]}';
 }
 
-/// Converts a private-message event to an [ImMessage].
+/// Converts OneBot message segments into human-readable display text.
+///
+/// [CQ:at,qq=xxx] segments are resolved to `@displayName` via [resolveName].
+/// Other non-text segments use a short placeholder.
+String oneBotSegmentsToDisplayText(
+  List<OneBotMessageSegment> segments, {
+  required String Function(String qq) resolveName,
+}) {
+  final buf = StringBuffer();
+  for (final seg in segments) {
+    switch (seg.type) {
+      case 'text':
+        buf.write(seg.data['text'] ?? '');
+      case 'at':
+        final qq = seg.data['qq'] as String?;
+        if (qq != null && qq != 'all') {
+          buf.write('@${resolveName(qq)} ');
+        } else {
+          buf.write('@全体成员 ');
+        }
+      case 'face':
+        buf.write('[表情]');
+      case 'image':
+        buf.write('[图片]');
+      case 'record':
+        buf.write('[语音]');
+      case 'video':
+        buf.write('[视频]');
+      case 'reply':
+        buf.write('[回复]');
+      case 'forward':
+        buf.write('[合并转发]');
+      case 'file':
+        buf.write('[文件]');
+      default:
+        buf.write('[${seg.type}]');
+    }
+  }
+  return buf.toString().trim();
+}
+
+/// Maps a OneBot segment type to the corresponding [ImMessageKind].
+ImMessageKind oneBotSegmentToMessageKind(OneBotMessageSegment seg) {
+  switch (seg.type) {
+    case 'text':
+      return ImMessageKind.text;
+    case 'image':
+      return ImMessageKind.image;
+    case 'record':
+      return ImMessageKind.record;
+    case 'video':
+      return ImMessageKind.video;
+    case 'face':
+      return ImMessageKind.face;
+    case 'at':
+      return ImMessageKind.at;
+    case 'reply':
+      return ImMessageKind.reply;
+    case 'forward':
+      return ImMessageKind.forward;
+    case 'location':
+      return ImMessageKind.location;
+    case 'share':
+      return ImMessageKind.share;
+    case 'music':
+      return ImMessageKind.music;
+    case 'contact':
+      return ImMessageKind.contact;
+    default:
+      return ImMessageKind.text;
+  }
+}
+
+/// Determines the primary [ImMessageKind] from a list of segments.
+///
+/// The first non-text segment wins; otherwise [ImMessageKind.text].
+ImMessageKind oneBotPrimaryKind(List<OneBotMessageSegment> segments) {
+  for (final s in segments) {
+    final k = oneBotSegmentToMessageKind(s);
+    if (k != ImMessageKind.text) return k;
+  }
+  return ImMessageKind.text;
+}
+
+/// Extracts media metadata from a segment for caching / storage.
+({String? fileId, String? url}) oneBotExtractMedia(
+  OneBotMessageSegment seg,
+) {
+  final d = seg.data;
+  return (fileId: d['file']?.toString(), url: d['url']?.toString());
+}
+
+/// Converts a private-message event into one or more [ImMessage]s.
+///
+/// When the message has both text and media segments they are split into
+/// separate bubbles that share the same sender / timestamp / avatar.
+List<ImMessage> oneBotPrivateMessageToImMessages({
+  required OneBotPrivateMessageEvent event,
+  required String conversationId,
+  required String selfId,
+  required String Function(String qq) resolveName,
+}) {
+  return _buildSplitMessages(
+    baseId: '${event.messageId}',
+    conversationId: conversationId,
+    senderId: event.userId,
+    isMine: event.userId == selfId,
+    time: event.time,
+    segments: event.message,
+    resolveName: resolveName,
+  );
+}
+
+/// Converts a group-message event into one or more [ImMessage]s.
+List<ImMessage> oneBotGroupMessageToImMessages({
+  required OneBotGroupMessageEvent event,
+  required String conversationId,
+  required String selfId,
+  required String Function(String qq) resolveName,
+}) {
+  return _buildSplitMessages(
+    baseId: '${event.messageId}',
+    conversationId: conversationId,
+    senderId: event.userId,
+    isMine: event.userId == selfId,
+    time: event.time,
+    segments: event.message,
+    resolveName: resolveName,
+  );
+}
+
+// -- Legacy single-message converters (kept for backward compat) ----------
+
+/// @deprecated Use [oneBotPrivateMessageToImMessages] instead.
 ImMessage oneBotPrivateMessageToImMessage({
   required OneBotPrivateMessageEvent event,
   required String conversationId,
   required String selfId,
+  required String Function(String qq) resolveName,
 }) {
-  return ImMessage(
-    id: '${event.messageId}',
+  return oneBotPrivateMessageToImMessages(
+    event: event,
     conversationId: conversationId,
-    senderId: event.userId,
-    text: event.rawMessage.isNotEmpty ? event.rawMessage : event.plainText,
-    sentAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
-    kind: ImMessageKind.text,
-    isMine: event.userId == selfId,
-  );
+    selfId: selfId,
+    resolveName: resolveName,
+  ).first;
 }
 
-/// Converts a group-message event to an [ImMessage].
+/// @deprecated Use [oneBotGroupMessageToImMessages] instead.
 ImMessage oneBotGroupMessageToImMessage({
   required OneBotGroupMessageEvent event,
   required String conversationId,
   required String selfId,
+  required String Function(String qq) resolveName,
 }) {
-  return ImMessage(
-    id: '${event.messageId}',
+  return oneBotGroupMessageToImMessages(
+    event: event,
     conversationId: conversationId,
-    senderId: event.userId,
-    text: event.rawMessage.isNotEmpty ? event.rawMessage : event.plainText,
-    sentAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
-    kind: ImMessageKind.text,
-    isMine: event.userId == selfId,
-  );
+    selfId: selfId,
+    resolveName: resolveName,
+  ).first;
 }
+
+// -- Internal -------------------------------------------------------------
+
+List<ImMessage> _buildSplitMessages({
+  required String baseId,
+  required String conversationId,
+  required String senderId,
+  required bool isMine,
+  required int time,
+  required List<OneBotMessageSegment> segments,
+  required String Function(String qq) resolveName,
+}) {
+  final replyId = _extractReplyId(segments);
+
+  // Separate text segments and media segments.
+  final textSegs = <OneBotMessageSegment>[];
+  final mediaSegs = <OneBotMessageSegment>[];
+  for (final s in segments) {
+    if (s.type == 'text' || s.type == 'at' || s.type == 'face' || s.type == 'reply') {
+      textSegs.add(s);
+    } else {
+      mediaSegs.add(s);
+    }
+  }
+
+  final results = <ImMessage>[];
+  final sentAt = DateTime.fromMillisecondsSinceEpoch(time * 1000);
+  var idx = 0;
+
+  // Text bubble (if any).
+  if (textSegs.isNotEmpty) {
+    results.add(ImMessage(
+      id: '${baseId}_$idx',
+      conversationId: conversationId,
+      senderId: senderId,
+      text: oneBotSegmentsToDisplayText(textSegs, resolveName: resolveName),
+      sentAt: sentAt,
+      kind: ImMessageKind.text,
+      isMine: isMine,
+      segments: textSegs,
+      replyToMessageId: replyId,
+    ));
+    idx++;
+  }
+
+  // Media bubbles (one per media segment).
+  for (final seg in mediaSegs) {
+    final kind = oneBotSegmentToMessageKind(seg);
+    final media = oneBotExtractMedia(seg);
+    results.add(ImMessage(
+      id: '${baseId}_$idx',
+      conversationId: conversationId,
+      senderId: senderId,
+      text: oneBotSegmentsToDisplayText([seg], resolveName: resolveName),
+      sentAt: sentAt,
+      kind: kind,
+      isMine: isMine,
+      segments: [seg],
+      mediaUrl: media.url,
+    ));
+    idx++;
+  }
+
+  return results;
+}
+
+String? _extractReplyId(List<OneBotMessageSegment> segments) {
+  for (final s in segments) {
+    if (s.type == 'reply') {
+      return s.data['id']?.toString();
+    }
+  }
+  return null;
+}
+
 
 /// Builds an [ImConversation] from a private message event.
 ImConversation oneBotPrivateEventToConversation({

@@ -2,42 +2,24 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 import 'onebot_models.dart';
 
 /// Connection state for a [OneBotClient].
 enum OneBotConnectionStatus { disconnected, connecting, connected, failed }
 
+/// Signature for log callbacks on [OneBotClient].
+typedef OneBotLogCallback = void Function(String tag, String message);
+
 /// An event-driven client for the OneBot v11 protocol.
-///
-/// Supports forward WebSocket (client connects to server), reverse WebSocket
-/// (client listens for server connections), and HTTP API fallback. Events are
-/// exposed as a broadcast stream; all 37 standard OneBot v11 API actions are
-/// available as typed methods.
-///
-/// ```dart
-/// final client = OneBotClient(
-///   config: OneBotConfig(
-///     wsEndpoint: 'ws://127.0.0.1:6199/ws',
-///     accessToken: 'token',
-///     selfId: '10001000',
-///   ),
-/// );
-///
-/// client.eventStream.listen((e) {
-///   if (e is OneBotMessageEvent && e.isPrivate) {
-///     print('PM: ${e.event!.plainText}');
-///   }
-/// });
-///
-/// await client.connect();
-/// final friends = await client.getFriendList();
-/// await client.sendPrivateMsg(userId: '10001000', message: [OneBotMessageSegment.plain('Hi')]);
-/// client.disconnect();
-/// ```
 class OneBotClient {
-  OneBotClient({required this.config});
+  OneBotClient({required this.config, this.onLog});
 
   final OneBotConfig config;
+
+  /// Optional callback for debug logging (API calls, events, transport).
+  final OneBotLogCallback? onLog;
 
   // -----------------------------------------------------------------------
   // Public streams
@@ -57,6 +39,8 @@ class OneBotClient {
   // Internal transport
   WebSocket? _ws;
   HttpServer? _wsServer;
+  HttpServer? _httpPostServer;
+  String? _httpPostSecret;
   StreamSubscription? _wsSubscription;
   StreamSubscription? _serverSubscription;
   HttpClient? _httpClient;
@@ -100,6 +84,7 @@ class OneBotClient {
     _ws?.close();
     _serverSubscription?.cancel();
     _wsServer?.close();
+    _httpPostServer?.close();
     _httpClient?.close();
     _setStatus(OneBotConnectionStatus.disconnected);
     for (final c in _echoCompleters.values) {
@@ -143,6 +128,127 @@ class OneBotClient {
     }
   }
 
+  /// Start an HTTP server to receive OneBot events via HTTP POST.
+  ///
+  /// OneBot pushes events as POST requests with JSON bodies. The server
+  /// parses incoming events and feeds them into [eventStream]. Responds with
+  /// 204 No Content (no quick operation) by default.
+  ///
+  /// Set [secret] to enable HMAC SHA1 verification of the `X-Signature`
+  /// header on each request. Invalid signatures are rejected with 403.
+  ///
+  /// [quickOpCallback] can return a quick-operation map (e.g. `{"reply":
+  /// "got it"}`) which will be sent back as the HTTP response body; return
+  /// `null` to send 204 instead.
+  Future<HttpServer> listenForHttpPostEvents({
+    String host = '127.0.0.1',
+    int port = 8080,
+    String? secret,
+    FutureOr<Map<String, dynamic>?> Function(
+      OneBotEvent event,
+      Map<String, dynamic> raw,
+    )?
+    quickOpCallback,
+  }) async {
+    _httpPostSecret = secret;
+    _httpPostServer = await HttpServer.bind(InternetAddress(host), port);
+    _httpPostServer!.listen((request) async {
+      try {
+        if (request.method != 'POST') {
+          request.response
+            ..statusCode = HttpStatus.methodNotAllowed
+            ..close();
+          return;
+        }
+
+        // Verify HMAC signature if a secret is configured.
+        if (_httpPostSecret != null && _httpPostSecret!.isNotEmpty) {
+          if (!await _verifyHmacSignature(request)) {
+            request.response
+              ..statusCode = HttpStatus.forbidden
+              ..close();
+            return;
+          }
+        }
+
+        final body = await utf8.decoder.bind(request).join();
+        final json = jsonDecode(body) as Map<String, dynamic>;
+
+        // Dispatch event.
+        final postType = json['post_type'] as String?;
+        if (postType != null) {
+          OneBotEvent? event;
+          switch (postType) {
+            case 'message':
+              event = OneBotMessageEvent.fromJson(json);
+            case 'notice':
+              event = OneBotNoticeEventWrapper(
+                OneBotNoticeEvent.fromJson(json),
+              );
+            case 'request':
+              event = OneBotRequestEventWrapper(
+                OneBotRequestEvent.fromJson(json),
+              );
+            case 'meta_event':
+              event = OneBotMetaEventWrapper(
+                OneBotMetaEvent.fromJson(json),
+              );
+          }
+
+          if (event != null) {
+            _eventController.add(event);
+
+            // Handle quick operation callback.
+            if (quickOpCallback != null) {
+              final op = await quickOpCallback(event, json);
+              if (op != null && op.isNotEmpty) {
+                request.response
+                  ..statusCode = HttpStatus.ok
+                  ..headers.contentType = ContentType.json
+                  ..write(jsonEncode(op));
+                await request.response.close();
+                return;
+              }
+            }
+          }
+        }
+
+        request.response
+          ..statusCode = HttpStatus.noContent
+          ..close();
+      } catch (_) {
+        // Avoid crashing the server on malformed requests.
+        try {
+          request.response
+            ..statusCode = HttpStatus.badRequest
+            ..close();
+        } catch (_) {}
+      }
+    });
+    return _httpPostServer!;
+  }
+
+  /// Stop a previously started HTTP POST server.
+  Future<void> stopHttpPostServer() async {
+    await _httpPostServer?.close();
+    _httpPostServer = null;
+  }
+
+  Future<bool> _verifyHmacSignature(HttpRequest request) async {
+    final sigHeader = request.headers.value('x-signature');
+    if (sigHeader == null || !sigHeader.startsWith('sha1=')) return false;
+    final receivedSig = sigHeader.substring(5);
+
+    final bytes = await request.fold<List<int>>(
+      <int>[],
+      (prev, chunk) => prev..addAll(chunk),
+    );
+
+    final hmac = Hmac(sha1, utf8.encode(_httpPostSecret!));
+    final digest = hmac.convert(bytes);
+    return digest.toString() == receivedSig;
+  }
+
   // -----------------------------------------------------------------------
   // Transport: forward WS
   // -----------------------------------------------------------------------
@@ -177,10 +283,12 @@ class OneBotClient {
         return;
       }
 
+      // Check access token in Authorization header or query parameter.
       final token = config.accessToken;
       if (token != null && token.isNotEmpty) {
         final auth = request.headers.value('Authorization');
-        if (auth != 'Bearer $token') {
+        final queryToken = request.uri.queryParameters['access_token'];
+        if (auth != 'Bearer $token' && queryToken != token) {
           request.response
             ..statusCode = HttpStatus.unauthorized
             ..close();
@@ -188,15 +296,77 @@ class OneBotClient {
         }
       }
 
+      // Parse X-Client-Role header (API, Event, Universal).
+      final role = request.headers.value('x-client-role') ?? 'Universal';
+
       final socket = await WebSocketTransformer.upgrade(request);
       socket.listen(
         (data) {
-          if (data is String) _onMessage(data);
+          if (data is String) {
+            switch (role.toLowerCase()) {
+              case 'api':
+                _onApiMessage(data);
+              case 'event':
+                _onEventMessage(data);
+              default:
+                _onMessage(data);
+            }
+          }
         },
         onError: (_) {},
         onDone: () {},
       );
     });
+  }
+
+  /// Parses only API responses (echo completers), suppressing event dispatch.
+  void _onApiMessage(String raw) {
+    Map<String, dynamic>? json;
+    try {
+      json = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    if (json.containsKey('echo') && json['echo'] != null) {
+      final echo = json['echo'];
+      final completer = _echoCompleters.remove(echo);
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(OneBotApiResponse(
+          status: json['status'] as String? ?? 'failed',
+          retcode: json['retcode'] as int? ?? -1,
+          data: json['data'],
+          echo: echo,
+        ));
+      }
+    }
+  }
+
+  /// Parses only events, suppressing echo-completer handling.
+  void _onEventMessage(String raw) {
+    Map<String, dynamic>? json;
+    try {
+      json = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    final postType = json['post_type'] as String?;
+    if (postType == null) return;
+    switch (postType) {
+      case 'message':
+        _eventController.add(OneBotMessageEvent.fromJson(json));
+      case 'notice':
+        _eventController.add(
+          OneBotNoticeEventWrapper(OneBotNoticeEvent.fromJson(json)),
+        );
+      case 'request':
+        _eventController.add(
+          OneBotRequestEventWrapper(OneBotRequestEvent.fromJson(json)),
+        );
+      case 'meta_event':
+        _eventController.add(
+          OneBotMetaEventWrapper(OneBotMetaEvent.fromJson(json)),
+        );
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -242,6 +412,8 @@ class OneBotClient {
     // It's an event
     final postType = json['post_type'] as String?;
     if (postType == null) return;
+
+    onLog?.call('EVENT', _eventSummary(json));
 
     switch (postType) {
       case 'message':
@@ -303,9 +475,14 @@ class OneBotClient {
 
     final completer = Completer<OneBotApiResponse>();
     _echoCompleters[echo] = completer;
-    _ws!.add(jsonEncode(payload));
+    final rawPayload = jsonEncode(payload);
+    onLog?.call('API', '→ $action ${_truncateLog(rawPayload, 300)}');
+    _ws!.add(rawPayload);
 
-    return completer.future.timeout(
+    return completer.future.then((r) {
+      onLog?.call('API', '← $action ret=${r.retcode}');
+      return r;
+    }).timeout(
       const Duration(seconds: 30),
       onTimeout: () {
         _echoCompleters.remove(echo);
@@ -326,7 +503,9 @@ class OneBotClient {
       request.headers.set('Authorization', 'Bearer $token');
     }
     request.headers.set('Content-Type', 'application/json');
-    request.write(jsonEncode(params ?? {}));
+    final rawParams = jsonEncode(params ?? {});
+    onLog?.call('API', '→ HTTP $action ${_truncateLog(rawParams, 200)}');
+    request.write(rawParams);
     final response = await request.close().timeout(
       const Duration(seconds: 30),
     );
@@ -832,4 +1011,30 @@ class OneBotException implements Exception {
   final String message;
   @override
   String toString() => 'OneBotException: $message';
+}
+
+String _truncateLog(String s, int max) =>
+    s.length <= max ? s : '${s.substring(0, max)}…';
+
+String _eventSummary(Map<String, dynamic> json) {
+  final pt = json['post_type'] ?? '?';
+  switch (pt) {
+    case 'message':
+      final mt = json['message_type'] ?? '?';
+      final uid = json['user_id'] ?? json['group_id'] ?? '?';
+      final raw = '${json['raw_message'] ?? json['message'] ?? '?'}';
+      final sub = json['sub_type'];
+      return '↓ $mt${sub != null ? '/$sub' : ''} uid=$uid '
+          '"${_truncateLog(raw.toString(), 120)}"';
+    case 'notice':
+      final nt = json['notice_type'] ?? '?';
+      final sub = json['sub_type'];
+      return '↓ notice $nt${sub != null ? '/$sub' : ''}';
+    case 'request':
+      return '↓ request ${json['request_type'] ?? '?'}';
+    case 'meta_event':
+      return '↓ meta ${json['meta_event_type'] ?? '?'}';
+    default:
+      return _truncateLog('$json', 200);
+  }
 }

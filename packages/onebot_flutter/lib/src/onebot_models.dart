@@ -191,8 +191,11 @@ class OneBotMessageSegment {
   static OneBotMessageSegment shake() =>
       const OneBotMessageSegment(type: 'shake', data: {});
 
-  static OneBotMessageSegment poke({String type_ = '1', String id = '1'}) =>
-      OneBotMessageSegment(type: 'poke', data: {'type': type_, 'id': id});
+  static OneBotMessageSegment poke({String type_ = '1', String id = '1', String? name}) {
+    final d = <String, dynamic>{'type': type_, 'id': id};
+    if (name != null) d['name'] = name;
+    return OneBotMessageSegment(type: 'poke', data: d);
+  }
 
   static OneBotMessageSegment reply(int messageId) =>
       OneBotMessageSegment(type: 'reply', data: {'id': '$messageId'});
@@ -211,6 +214,9 @@ class OneBotMessageSegment {
 
   static OneBotMessageSegment contact({required String type_, required String id}) =>
       OneBotMessageSegment(type: 'contact', data: {'type': type_, 'id': id});
+
+  static OneBotMessageSegment groupContact(String groupId) =>
+      OneBotMessageSegment(type: 'contact', data: {'type': 'group', 'id': groupId});
 
   static OneBotMessageSegment location({
     required double lat,
@@ -442,6 +448,7 @@ class OneBotGroupMessageEvent {
     this.subType,
     this.anonymous,
     this.font,
+    this.messageSeq,
   });
 
   final int time;
@@ -455,6 +462,7 @@ class OneBotGroupMessageEvent {
   final String? subType;
   final OneBotAnonymous? anonymous;
   final int? font;
+  final int? messageSeq;
 
   String get plainText => oneBotPlainText(message);
 
@@ -473,55 +481,371 @@ class OneBotGroupMessageEvent {
           ? OneBotAnonymous.fromJson(json['anonymous'] as Map<String, dynamic>)
           : null,
       font: json['font'] as int?,
+      messageSeq: json['message_seq'] as int?,
     );
   }
 }
 
-class OneBotNoticeEvent {
+sealed class OneBotNoticeEvent {
   const OneBotNoticeEvent({
     required this.time,
     required this.selfId,
-    required this.noticeType,
-    this.subType,
-    this.userId,
-    this.groupId,
-    this.operatorId,
-    this.targetId,
-    this.duration,
-    this.file,
-    this.messageId,
-    this.honorType,
   });
 
   final int time;
   final String selfId;
-  final String noticeType;
-  final String? subType;
-  final String? userId;
-  final String? groupId;
-  final String? operatorId;
-  final String? targetId;
-  final int? duration;
-  final OneBotFileInfo? file;
-  final int? messageId;
-  final String? honorType;
+
+  String get noticeType;
 
   factory OneBotNoticeEvent.fromJson(Map<String, dynamic> json) {
-    return OneBotNoticeEvent(
-      time: json['time'] as int,
-      selfId: '${json['self_id']}',
-      noticeType: json['notice_type'] as String,
-      subType: json['sub_type'] as String?,
-      userId: json['user_id']?.toString(),
-      groupId: json['group_id']?.toString(),
-      operatorId: json['operator_id']?.toString(),
-      targetId: json['target_id']?.toString(),
-      duration: json['duration'] as int?,
-      file: json['file'] != null
-          ? OneBotFileInfo.fromJson(json['file'] as Map<String, dynamic>)
-          : null,
-      messageId: json['message_id'] as int?,
-      honorType: json['honor_type'] as String?,
+    final type = json['notice_type'] as String;
+    final subType = json['sub_type'] as String?;
+    final time = json['time'] as int;
+    final selfId = json['self_id'].toString();
+
+    switch (type) {
+      case 'group_upload':
+        return OneBotGroupUploadNotice(
+          time: time,
+          selfId: selfId,
+          groupId: json['group_id'].toString(),
+          userId: json['user_id'].toString(),
+          file: OneBotFileInfo.fromJson(
+            json['file'] as Map<String, dynamic>,
+          ),
+        );
+      case 'group_admin':
+        return OneBotGroupAdminNotice(
+          time: time,
+          selfId: selfId,
+          subType: subType!,
+          groupId: json['group_id'].toString(),
+          userId: json['user_id'].toString(),
+        );
+      case 'group_decrease':
+        return OneBotGroupDecreaseNotice(
+          time: time,
+          selfId: selfId,
+          subType: subType!,
+          groupId: json['group_id'].toString(),
+          operatorId: json['operator_id'].toString(),
+          userId: json['user_id'].toString(),
+        );
+      case 'group_increase':
+        return OneBotGroupIncreaseNotice(
+          time: time,
+          selfId: selfId,
+          subType: subType!,
+          groupId: json['group_id'].toString(),
+          operatorId: json['operator_id'].toString(),
+          userId: json['user_id'].toString(),
+        );
+      case 'group_ban':
+        return OneBotGroupBanNotice(
+          time: time,
+          selfId: selfId,
+          subType: subType!,
+          groupId: json['group_id'].toString(),
+          operatorId: json['operator_id'].toString(),
+          userId: json['user_id'].toString(),
+          duration: json['duration'] as int,
+        );
+      case 'friend_add':
+        return OneBotFriendAddNotice(
+          time: time,
+          selfId: selfId,
+          userId: json['user_id'].toString(),
+        );
+      case 'group_recall':
+        return OneBotGroupRecallNotice(
+          time: time,
+          selfId: selfId,
+          groupId: json['group_id'].toString(),
+          userId: json['user_id'].toString(),
+          operatorId: json['operator_id'].toString(),
+          messageId: json['message_id'] as int,
+        );
+      case 'friend_recall':
+        return OneBotFriendRecallNotice(
+          time: time,
+          selfId: selfId,
+          userId: json['user_id'].toString(),
+          messageId: json['message_id'] as int,
+        );
+      case 'group_msg_emoji_like':
+        return OneBotEmojiLikeNotice(
+          time: time,
+          selfId: selfId,
+          groupId: json['group_id'].toString(),
+          userId: json['user_id'].toString(),
+          messageId: json['message_id'] as int,
+          likes: (json['likes'] as List<dynamic>?)
+                  ?.map(
+                    (e) => OneBotEmojiLikeEntry.fromJson(
+                      e as Map<String, dynamic>,
+                    ),
+                  )
+                  .toList() ??
+              const [],
+        );
+      case 'notify':
+        switch (subType) {
+          case 'poke':
+            return OneBotPokeNotice(
+              time: time,
+              selfId: selfId,
+              groupId: json['group_id']?.toString(),
+              userId: json['user_id'].toString(),
+              targetId: json['target_id'].toString(),
+            );
+          case 'lucky_king':
+            return OneBotLuckyKingNotice(
+              time: time,
+              selfId: selfId,
+              groupId: json['group_id'].toString(),
+              userId: json['user_id'].toString(),
+              targetId: json['target_id'].toString(),
+            );
+          case 'honor':
+            return OneBotHonorNotice(
+              time: time,
+              selfId: selfId,
+              groupId: json['group_id'].toString(),
+              userId: json['user_id'].toString(),
+              honorType: json['honor_type'] as String,
+            );
+          default:
+            return _OneBotUnknownNotice(
+              time: time,
+              selfId: selfId,
+              noticeType: type,
+              raw: json,
+            );
+        }
+      default:
+        return _OneBotUnknownNotice(
+          time: time,
+          selfId: selfId,
+          noticeType: type,
+          raw: json,
+        );
+    }
+  }
+}
+
+/// Unknown or unsupported notice event.
+class _OneBotUnknownNotice extends OneBotNoticeEvent {
+  const _OneBotUnknownNotice({
+    required super.time,
+    required super.selfId,
+    required this.noticeType,
+    required this.raw,
+  });
+  @override
+  final String noticeType;
+  final Map<String, dynamic> raw;
+}
+
+// ---------------------------------------------------------------------------
+// Typed notice sub-classes
+// ---------------------------------------------------------------------------
+
+class OneBotGroupUploadNotice extends OneBotNoticeEvent {
+  const OneBotGroupUploadNotice({
+    required super.time,
+    required super.selfId,
+    required this.groupId,
+    required this.userId,
+    required this.file,
+  });
+  @override
+  String get noticeType => 'group_upload';
+  final String groupId;
+  final String userId;
+  final OneBotFileInfo file;
+}
+
+class OneBotGroupAdminNotice extends OneBotNoticeEvent {
+  const OneBotGroupAdminNotice({
+    required super.time,
+    required super.selfId,
+    required this.subType,
+    required this.groupId,
+    required this.userId,
+  });
+  @override
+  String get noticeType => 'group_admin';
+  final String subType;
+  final String groupId;
+  final String userId;
+}
+
+class OneBotGroupDecreaseNotice extends OneBotNoticeEvent {
+  const OneBotGroupDecreaseNotice({
+    required super.time,
+    required super.selfId,
+    required this.subType,
+    required this.groupId,
+    required this.operatorId,
+    required this.userId,
+  });
+  @override
+  String get noticeType => 'group_decrease';
+  final String subType;
+  final String groupId;
+  final String operatorId;
+  final String userId;
+}
+
+class OneBotGroupIncreaseNotice extends OneBotNoticeEvent {
+  const OneBotGroupIncreaseNotice({
+    required super.time,
+    required super.selfId,
+    required this.subType,
+    required this.groupId,
+    required this.operatorId,
+    required this.userId,
+  });
+  @override
+  String get noticeType => 'group_increase';
+  final String subType;
+  final String groupId;
+  final String operatorId;
+  final String userId;
+}
+
+class OneBotGroupBanNotice extends OneBotNoticeEvent {
+  const OneBotGroupBanNotice({
+    required super.time,
+    required super.selfId,
+    required this.subType,
+    required this.groupId,
+    required this.operatorId,
+    required this.userId,
+    required this.duration,
+  });
+  @override
+  String get noticeType => 'group_ban';
+  final String subType;
+  final String groupId;
+  final String operatorId;
+  final String userId;
+  final int duration;
+}
+
+class OneBotFriendAddNotice extends OneBotNoticeEvent {
+  const OneBotFriendAddNotice({
+    required super.time,
+    required super.selfId,
+    required this.userId,
+  });
+  @override
+  String get noticeType => 'friend_add';
+  final String userId;
+}
+
+class OneBotGroupRecallNotice extends OneBotNoticeEvent {
+  const OneBotGroupRecallNotice({
+    required super.time,
+    required super.selfId,
+    required this.groupId,
+    required this.userId,
+    required this.operatorId,
+    required this.messageId,
+  });
+  @override
+  String get noticeType => 'group_recall';
+  final String groupId;
+  final String userId;
+  final String operatorId;
+  final int messageId;
+}
+
+class OneBotFriendRecallNotice extends OneBotNoticeEvent {
+  const OneBotFriendRecallNotice({
+    required super.time,
+    required super.selfId,
+    required this.userId,
+    required this.messageId,
+  });
+  @override
+  String get noticeType => 'friend_recall';
+  final String userId;
+  final int messageId;
+}
+
+class OneBotPokeNotice extends OneBotNoticeEvent {
+  const OneBotPokeNotice({
+    required super.time,
+    required super.selfId,
+    required this.groupId,
+    required this.userId,
+    required this.targetId,
+  });
+  @override
+  String get noticeType => 'notify';
+  final String? groupId;
+  final String userId;
+  final String targetId;
+}
+
+class OneBotLuckyKingNotice extends OneBotNoticeEvent {
+  const OneBotLuckyKingNotice({
+    required super.time,
+    required super.selfId,
+    required this.groupId,
+    required this.userId,
+    required this.targetId,
+  });
+  @override
+  String get noticeType => 'notify';
+  final String groupId;
+  final String userId;
+  final String targetId;
+}
+
+class OneBotHonorNotice extends OneBotNoticeEvent {
+  const OneBotHonorNotice({
+    required super.time,
+    required super.selfId,
+    required this.groupId,
+    required this.userId,
+    required this.honorType,
+  });
+  @override
+  String get noticeType => 'notify';
+  final String groupId;
+  final String userId;
+  final String honorType;
+}
+
+/// NapCatQQ extended notice: emoji reaction on a group message.
+class OneBotEmojiLikeNotice extends OneBotNoticeEvent {
+  const OneBotEmojiLikeNotice({
+    required super.time,
+    required super.selfId,
+    required this.groupId,
+    required this.userId,
+    required this.messageId,
+    required this.likes,
+  });
+  @override
+  String get noticeType => 'group_msg_emoji_like';
+  final String groupId;
+  final String userId;
+  final int messageId;
+  final List<OneBotEmojiLikeEntry> likes;
+}
+
+class OneBotEmojiLikeEntry {
+  const OneBotEmojiLikeEntry({required this.emojiId, required this.count});
+  final String emojiId;
+  final int count;
+
+  factory OneBotEmojiLikeEntry.fromJson(Map<String, dynamic> json) {
+    return OneBotEmojiLikeEntry(
+      emojiId: json['emoji_id'] as String,
+      count: json['count'] as int? ?? 1,
     );
   }
 }

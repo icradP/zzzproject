@@ -3,10 +3,16 @@ import 'package:flutter/material.dart';
 import '../assets/app_assets.dart';
 
 class ZzzBackground extends StatelessWidget {
-  const ZzzBackground({required this.controller, required this.animated, super.key});
+  const ZzzBackground({
+    required this.controller,
+    required this.animated,
+    this.backdropLines = const ['ZERO ZONE', 'ZENLESS', 'ZONE ZERO'],
+    super.key,
+  });
 
   final Animation<double> controller;
   final bool animated;
+  final List<String> backdropLines;
 
   @override
   Widget build(BuildContext context) {
@@ -33,12 +39,10 @@ class ZzzBackground extends StatelessWidget {
                   ),
                 );
               },
-              child: const Column(
+              child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _BackdropText('ZERO ZONE'),
-                  _BackdropText('ZENLESS'),
-                  _BackdropText('ZONE ZERO'),
+                  for (final line in backdropLines) _BackdropText(line),
                 ],
               ),
             ),

@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
-
 import 'package:go_router/go_router.dart';
 
 import '../../../core/routes/index.dart';
 import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
+import '../data/im_animation_config.dart';
+import '../data/im_backdrop_config.dart';
 import '../data/im_repository.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
@@ -25,6 +26,7 @@ class ImHomePage extends StatefulWidget {
 class _ImHomePageState extends State<ImHomePage>
     with SingleTickerProviderStateMixin {
   String? _selectedConversationId;
+  String? _previousConversationId;
   ImConversation? _pendingConversation;
   bool _showContacts = false;
   late final AnimationController _backgroundController;
@@ -46,6 +48,10 @@ class _ImHomePageState extends State<ImHomePage>
 
   void _selectConversation(ImConversation conversation) {
     setState(() {
+      if (_selectedConversationId != null &&
+          _selectedConversationId != conversation.id) {
+        _previousConversationId = _selectedConversationId;
+      }
       _selectedConversationId = conversation.id;
       _pendingConversation = conversation;
     });
@@ -54,7 +60,10 @@ class _ImHomePageState extends State<ImHomePage>
   }
 
   void _clearSelection() {
-    setState(() => _selectedConversationId = null);
+    setState(() {
+      _selectedConversationId = null;
+      _previousConversationId = null;
+    });
     ImScope.interactionsOf(context).onConversationClosed();
   }
 
@@ -93,12 +102,22 @@ class _ImHomePageState extends State<ImHomePage>
     return user?.displayName ?? 'Unknown';
   }
 
+  ImMessage? _findMessage(String id, List<ImMessage> messages) {
+    // Exact match first.
+    try {
+      return messages.firstWhere((m) => m.id == id);
+    } catch (_) {}
+    // Split messages use ids like "1234567_0" — try any prefix match.
+    for (final m in messages) {
+      if (m.id.startsWith('${id}_')) return m;
+    }
+    return null;
+  }
+
   Future<ImageProvider> _resolveUserAvatar(String userId) async {
     final user = await ImScope.repositoryOf(context).getUser(userId);
-    if (user?.avatarBytes != null) {
-      return MemoryImage(user!.avatarBytes!);
-    }
-    return AssetImage(user?.avatarAssetPath ?? AppAssets.characterWise);
+    return user?.avatarImage(AppAssets.characterWise) ??
+        AssetImage(AppAssets.characterWise);
   }
 
   @override
@@ -112,6 +131,7 @@ class _ImHomePageState extends State<ImHomePage>
           ZzzBackground(
             controller: _backgroundController,
             animated: true,
+            backdropLines: ImBackdropConfig.instance.lines,
           ),
           SafeArea(
             child: LayoutBuilder(
@@ -282,26 +302,64 @@ class _ImHomePageState extends State<ImHomePage>
             }
           }
 
+          // Determine slide direction and distance from the conversation
+          // list order so the panel slides in from the right direction.
+          final prevIdx = _previousConversationId != null
+              ? conversations.indexWhere(
+                  (c) => c.id == _previousConversationId)
+              : -1;
+          final curIdx = conversations.indexWhere(
+              (c) => c.id == selected!.id);
+          final rawDelta = curIdx >= 0 && prevIdx >= 0 ? prevIdx - curIdx : 0;
+          final delta = rawDelta.clamp(-4, 4);
+
           return StreamBuilder<List<ImMessage>>(
             stream: repository.watchMessages(selected.id),
             builder: (context, messageSnapshot) {
               final messages = messageSnapshot.data ?? const [];
-              return ImChatRoomView(
-                conversation: selected!,
-                messages: messages,
-                onBack: showBack ? _clearSelection : null,
-                resolveUserName: _resolveUserName,
-                resolveUserAvatar: _resolveUserAvatar,
-                onSend: (text) async {
-                  await ImScope.interactionsOf(context).onSendMessage(
-                    conversation: selected!,
-                    text: text,
-                  );
-                  await repository.sendTextMessage(
-                    conversationId: selected.id,
-                    text: text,
+              final animDuration = ImAnimationConfig.instance.chatPanelSlide
+                  ? const Duration(milliseconds: 350)
+                  : Duration.zero;
+              return AnimatedSwitcher(
+                duration: animDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  final begin = Offset(0, delta * 0.3);
+                  final offset = Tween<Offset>(
+                    begin: begin,
+                    end: Offset.zero,
+                  ).animate(CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  ));
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: offset,
+                      child: child,
+                    ),
                   );
                 },
+                child: ImChatRoomView(
+                  key: ValueKey(selected!.id),
+                  conversation: selected!,
+                  messages: messages,
+                  onBack: showBack ? _clearSelection : null,
+                  resolveUserName: _resolveUserName,
+                  resolveUserAvatar: _resolveUserAvatar,
+                  resolveMessage: (id) => _findMessage(id, messages),
+                  onSend: (text) async {
+                    await ImScope.interactionsOf(context).onSendMessage(
+                      conversation: selected!,
+                      text: text,
+                    );
+                    await repository.sendTextMessage(
+                      conversationId: selected.id,
+                      text: text,
+                    );
+                  },
+                ),
               );
             },
           );

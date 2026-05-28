@@ -6,7 +6,10 @@ import '../im/adapters/im_message_source.dart';
 import '../im/adapters/nonebot/nonebot_models.dart';
 import '../im/adapters/nonebot/nonebot_source.dart';
 import '../im/adapters/source_repository.dart';
+import '../im/data/im_animation_config.dart';
+import '../im/data/im_backdrop_config.dart';
 import '../im/data/im_connection_config.dart';
+import '../im/data/im_storage_config.dart';
 import '../im/data/im_interaction_handler.dart';
 import '../im/data/im_repository.dart';
 import '../im/data/mock_im_repository.dart';
@@ -32,7 +35,10 @@ class _ZzzAppState extends State<ZzzApp> {
 
   Future<void> _initRepository() async {
     final config = await ImConnectionConfig.loadOrDefault();
-    final repo = _buildRepository(config);
+    final storageConfig = await ImStorageConfig.load();
+    await ImAnimationConfig.load();
+    await ImBackdropConfig.load();
+    final repo = _buildRepository(config, storageConfig);
     Stream<ConnectionStatus>? status;
     if (repo is SourceBackedRepository) {
       status = repo.connectionStatus;
@@ -45,20 +51,23 @@ class _ZzzAppState extends State<ZzzApp> {
     }
   }
 
-  ImRepository _buildRepository(ImConnectionConfig config) {
+  ImRepository _buildRepository(
+    ImConnectionConfig config,
+    ImStorageConfig storageConfig,
+  ) {
     if (config.isNoneBot && config.wsEndpoint != null) {
-      return SourceBackedRepository(
-        NoneBotSource.connected(
-          config: OneBotConfig(
-            selfId: config.selfId,
-            httpEndpoint: config.httpEndpoint,
-            wsEndpoint: config.wsEndpoint,
-            wsMode: config.wsMode,
-            accessToken: config.accessToken,
-          ),
-          avatarResolver: _zzzAvatarResolver,
+      final source = NoneBotSource.connected(
+        config: OneBotConfig(
+          selfId: config.selfId,
+          httpEndpoint: config.httpEndpoint,
+          wsEndpoint: config.wsEndpoint,
+          wsMode: config.wsMode,
+          accessToken: config.accessToken,
         ),
+        avatarResolver: _zzzAvatarResolver,
       );
+      source.storageConfig = storageConfig;
+      return SourceBackedRepository(source);
     }
     return MockImRepository();
   }
@@ -76,8 +85,15 @@ class _ZzzAppState extends State<ZzzApp> {
       case 'fairy':
         return AppAssets.character('temp/Fairy.png');
       default:
-        return AppAssets.characterWise;
+        return _randomAvatarForId(userId);
     }
+  }
+
+  /// Deterministically picks an avatar from [AppAssets.avatarPool] for [id].
+  static String _randomAvatarForId(String id) {
+    final hash = id.codeUnits.fold<int>(0, (prev, c) => prev * 31 + c);
+    final index = hash.abs() % AppAssets.avatarPool.length;
+    return AppAssets.avatarPool[index];
   }
 
   @override

@@ -17,7 +17,7 @@ class ContactTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarPath = user.avatarAssetPath ?? AppAssets.characterWise;
+    final avatarImage = user.avatarImage(AppAssets.characterWise);
 
     return Material(
       color: Colors.transparent,
@@ -28,7 +28,7 @@ class ContactTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              ZzzAvatar(image: AssetImage(avatarPath), size: 46),
+              ZzzAvatar(image: avatarImage, size: 46),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -69,8 +69,7 @@ class GroupTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarPath =
-        conversation.avatarAssetPath ?? AppAssets.characterWise;
+    final avatarImage = conversation.avatarImage(AppAssets.characterWise);
 
     return Material(
       color: Colors.transparent,
@@ -84,7 +83,7 @@ class GroupTile extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  ZzzAvatar(image: AssetImage(avatarPath), size: 46),
+                  ZzzAvatar(image: avatarImage, size: 46),
                   Positioned(
                     right: -2,
                     bottom: -2,

@@ -43,6 +43,25 @@ class AppAssets {
   static const String characterWise = '${_characters}Wise.png';
   static const String characterBelle = '${_characters}Belle.png';
 
+  /// Pool of available avatar paths for random assignment.
+  static const List<String> avatarPool = [
+    '${_characters}AnbyDemara.png',
+    '${_characters}AntonIvanov.png',
+    '${_characters}Belle.png',
+    '${_characters}BenBigger.png',
+    '${_characters}BillyKid.png',
+    '${_characters}CorinWickes.png',
+    '${_characters}JaneDoe.png',
+    '${_characters}Lucy.png',
+    '${_characters}NicoleDemara.png',
+    '${_characters}PiperWheel.png',
+    '${_characters}Qingyi.png',
+    '${_characters}TsukishiroYanagi.png',
+    '${_characters}VonLycaon.png',
+    '${_characters}Wise.png',
+    '${_characters}ZhuYuan.png',
+  ];
+
   /// Path under [assets/characters/] for a file or nested relative path.
   static String character(String relativePath) => '$_characters$relativePath';
 }

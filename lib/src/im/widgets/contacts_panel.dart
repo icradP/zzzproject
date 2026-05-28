@@ -77,6 +77,7 @@ class _ContactsPanelState extends State<ContactsPanel> {
       title: user.displayName,
       participantIds: [self.id, user.id],
       avatarAssetPath: user.avatarAssetPath,
+      avatarLocalPath: user.avatarLocalPath,
     );
     if (mounted) widget.onConversationSelected(conversation);
   }

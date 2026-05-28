@@ -3,6 +3,7 @@ part of '../zzz_components.dart';
 class ZzzTextInput extends StatefulWidget {
   const ZzzTextInput({
     this.controller,
+    this.focusNode,
     this.hintText,
     this.prefixIcon,
     this.minLines = 1,
@@ -18,6 +19,7 @@ class ZzzTextInput extends StatefulWidget {
   });
 
   final TextEditingController? controller;
+  final FocusNode? focusNode;
   final String? hintText;
   final Widget? prefixIcon;
   final int minLines;
@@ -41,7 +43,7 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
   @override
   void initState() {
     super.initState();
-    _focusNode = FocusNode();
+    _focusNode = widget.focusNode ?? FocusNode();
     _focusNode.addListener(() {
       if (_focusNode.hasFocus != _focused) {
         setState(() => _focused = _focusNode.hasFocus);
@@ -51,7 +53,7 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
 
   @override
   void dispose() {
-    _focusNode.dispose();
+    if (widget.focusNode == null) _focusNode.dispose();
     super.dispose();
   }
 

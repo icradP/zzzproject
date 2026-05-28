@@ -19,39 +19,37 @@ class ConversationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarPath =
-        conversation.avatarAssetPath ?? AppAssets.characterWise;
+    final avatarImage = conversation.avatarImage(AppAssets.characterWise);
     final timeLabel = _formatTime(conversation.updatedAt);
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(36),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color:
-                selected
-                    ? ZzzColors.yellow.withValues(alpha: 0.12)
-                    : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: selected ? ZzzColors.yellow : Colors.transparent,
-              width: 1.5,
-            ),
+            color: selected ? ZzzColors.yellow : Colors.transparent,
+            borderRadius: BorderRadius.circular(36),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: ZzzColors.yellow.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             children: [
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  ZzzAvatar(
-                    image: AssetImage(avatarPath),
-                    size: 52,
-                  ),
+                  ZzzAvatar(image: avatarImage, size: 52),
                   if (conversation.isGroup)
                     Positioned(
                       right: -2,
@@ -85,6 +83,7 @@ class ConversationTile extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
+                              color: selected ? Colors.black : null,
                               fontWeight:
                                   conversation.unreadCount > 0
                                       ? FontWeight.w800
@@ -96,8 +95,10 @@ class ConversationTile extends StatelessWidget {
                         if (timeLabel != null)
                           Text(
                             timeLabel,
-                            style: const TextStyle(
-                              color: Colors.white38,
+                            style: TextStyle(
+                              color: selected
+                                  ? Colors.black.withValues(alpha: 0.48)
+                                  : Colors.white38,
                               fontSize: 12,
                             ),
                           ),
@@ -112,8 +113,9 @@ class ConversationTile extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color:
-                                  conversation.unreadCount > 0
+                              color: selected
+                                  ? Colors.black.withValues(alpha: 0.48)
+                                  : conversation.unreadCount > 0
                                       ? Colors.white70
                                       : Colors.white38,
                               fontSize: 13,
@@ -128,15 +130,19 @@ class ConversationTile extends StatelessWidget {
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: ZzzColors.yellow,
+                              color: selected
+                                  ? Colors.black
+                                  : ZzzColors.yellow,
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
                               conversation.unreadCount > 99
                                   ? '99+'
                                   : '${conversation.unreadCount}',
-                              style: const TextStyle(
-                                color: Colors.black,
+                              style: TextStyle(
+                                color: selected
+                                    ? ZzzColors.yellow
+                                    : Colors.black,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w800,
                               ),

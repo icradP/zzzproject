@@ -3,6 +3,11 @@ import 'dart:io';
 
 import 'package:onebot_flutter/onebot_flutter.dart' show OneBotClient, OneBotException;
 
+import '../../data/im_avatar_cache.dart';
+import '../../data/im_logger.dart';
+import '../../data/im_media_cache.dart';
+import '../../data/im_message_store.dart';
+import '../../data/im_storage_config.dart';
 import '../../models/im_models.dart';
 import '../im_message_source.dart';
 import 'nonebot_mapper.dart';
@@ -54,13 +59,27 @@ class NoneBotSource implements ImMessageSource {
   final OneBotConfig config;
   final bool _mock;
   final AvatarResolver _avatarResolver;
+  ImStorageConfig? _storageConfig;
+
+  /// Pass an [ImStorageConfig] to redirect media / avatar / database
+  /// directories away from the default app documents location.
+  set storageConfig(ImStorageConfig? v) => _storageConfig = v;
+
+  /// Optional media cache for downloading OneBot images / records / videos.
+  set mediaCache(ImMediaCache? v) => _mediaCache = v;
 
   late String _selfId;
   OneBotClient? _client;
+  ImMediaCache? _mediaCache;
+  ImAvatarCache? _avatarCache;
+  ImMessageStore? _store;
   StreamSubscription? _eventSubscription;
 
   final _users = <String, ImUser>{};
+  final _friendIds = <String>{};
   final _groupNames = <String, String>{};
+  final _groupMemberIds = <String, List<String>>{};
+  final _groupAvatarPaths = <String, String>{};
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
   final _conversationControllers =
@@ -89,8 +108,23 @@ class NoneBotSource implements ImMessageSource {
 
     _statusController.add(ConnectionStatus.connecting);
     try {
-      _client = OneBotClient(config: config);
+      _client = OneBotClient(
+        config: config,
+        onLog: ImLogger.logRaw,
+      );
       await _client!.connect();
+      ImLogger.ingestCount('connected', 0); // just mark connected
+      _mediaCache = ImMediaCache(
+        client: _client!,
+        storageConfig: _storageConfig,
+      );
+      _avatarCache = ImAvatarCache(storageConfig: _storageConfig);
+      _store = ImMessageStore(
+        selfId: _selfId,
+        storageConfig: _storageConfig,
+      );
+      await _store!.open();
+      await _loadHistory();
 
       _eventSubscription = _client!.eventStream.listen((event) {
         if (event is OneBotMessageEvent) {
@@ -119,6 +153,9 @@ class NoneBotSource implements ImMessageSource {
   void disconnect() {
     _eventSubscription?.cancel();
     _client?.disconnect();
+    _mediaCache = null;
+    _store?.close();
+    _store = null;
     _statusController.add(ConnectionStatus.disconnected);
     for (final c in _conversationControllers.values) {
       c.close();
@@ -199,6 +236,7 @@ class NoneBotSource implements ImMessageSource {
     final list = _messages.putIfAbsent(conversationId, () => []);
     list.add(message);
     _emitMessages(conversationId);
+    _saveMsg(message);
 
     final conv = _conversations[conversationId];
     if (conv != null) {
@@ -212,19 +250,25 @@ class NoneBotSource implements ImMessageSource {
       final parsed = parseConversationId(conversationId, _selfId);
       final user = _users[parsed.targetId];
       final dmTitle = user?.displayName;
+      final participantIds = parsed.isGroup
+          ? (_groupMemberIds[parsed.targetId] ?? [_selfId])
+          : [_selfId, parsed.targetId];
       _conversations[conversationId] = ImConversation(
         id: conversationId,
         type: parsed.isGroup ? ImConversationType.group : ImConversationType.direct,
         title: parsed.isGroup
             ? (_groupNames[parsed.targetId] ?? 'Group ${parsed.targetId}')
             : ((dmTitle != null && dmTitle.isNotEmpty) ? dmTitle : parsed.targetId),
-        participantIds: parsed.isGroup ? [_selfId] : [_selfId, parsed.targetId],
+        participantIds: participantIds,
         subtitle: trimmed,
         updatedAt: message.sentAt,
         avatarAssetPath:
             parsed.isGroup ? null : (user?.avatarAssetPath ?? _avatarResolver(parsed.targetId)),
+        avatarLocalPath:
+            parsed.isGroup ? _groupAvatarPaths[parsed.targetId] : null,
       );
     }
+    _saveConv(_conversations[conversationId]!);
     _emitConversations();
 
     // In connected mode, send via OneBot API
@@ -295,7 +339,11 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<List<ImUser>> getUsers() async {
-    return _users.values.where((u) => u.id != _selfId).toList();
+    return _friendIds
+        .map((id) => _users[id])
+        .where((u) => u != null)
+        .cast<ImUser>()
+        .toList();
   }
 
   @override
@@ -305,7 +353,8 @@ class NoneBotSource implements ImMessageSource {
         id: oneBotConversationId(selfId: _selfId, groupId: e.key),
         type: ImConversationType.group,
         title: e.value,
-        participantIds: [_selfId],
+        participantIds: _groupMemberIds[e.key] ?? [_selfId],
+        avatarLocalPath: _groupAvatarPaths[e.key],
       );
     }).toList();
   }
@@ -324,49 +373,84 @@ class NoneBotSource implements ImMessageSource {
   void _ingestPrivateEvent(OneBotPrivateMessageEvent event) {
     final convId = oneBotConversationId(selfId: _selfId, userId: event.userId);
     final imUser = oneBotSenderToImUser(event.sender, avatarResolver: _avatarResolver);
+    final isNewUser = !_users.containsKey(imUser.id);
     _users.putIfAbsent(imUser.id, () => imUser);
+    if (isNewUser) _fetchUserAvatar(imUser.id);
 
-    final msg = oneBotPrivateMessageToImMessage(
+    final msgs = oneBotPrivateMessageToImMessages(
       event: event,
       conversationId: convId,
       selfId: _selfId,
+      resolveName: _resolveNameForAt,
     );
 
-    _conversations.putIfAbsent(
-      convId,
-      () => oneBotPrivateEventToConversation(
+    final lastText = msgs.last.text;
+    final existing = _conversations[convId];
+    if (existing != null) {
+      _conversations[convId] = existing.copyWith(
+        subtitle: lastText,
+        updatedAt: msgs.last.sentAt,
+        unreadCount: existing.unreadCount + 1,
+      );
+    } else {
+      _conversations[convId] = oneBotPrivateEventToConversation(
         event: event,
         conversationId: convId,
         selfId: _selfId,
         peer: imUser,
-        subtitle: msg.text,
-        updatedAt: msg.sentAt,
+        subtitle: lastText,
+        updatedAt: msgs.last.sentAt,
         avatarAssetPath: _avatarResolver(event.userId),
-      ),
-    );
+      );
+    }
+    _saveConv(_conversations[convId]!);
 
-    _messages.putIfAbsent(convId, () => []).add(msg);
+    final list = _messages.putIfAbsent(convId, () => []);
+    for (final msg in msgs) {
+      list.add(msg);
+      _saveMsg(msg);
+      _downloadMedia(msg);
+    }
     _emitMessages(convId);
     _emitConversations();
+    ImLogger.ingestMessage(
+      convId, msgs.first.senderId, msgs.first.kind.name,
+      msgs.map((m) => m.text).join(' | '),
+      segCount: msgs.first.segments?.length,
+    );
   }
 
   void _ingestGroupEvent(OneBotGroupMessageEvent event) {
     final convId = oneBotConversationId(selfId: _selfId, groupId: event.groupId);
     final imUser = oneBotSenderToImUser(event.sender, avatarResolver: _avatarResolver);
+    final isNewGroupUser = !_users.containsKey(imUser.id);
     _users.putIfAbsent(imUser.id, () => imUser);
+    if (isNewGroupUser) _fetchUserAvatar(imUser.id);
 
-    final msg = oneBotGroupMessageToImMessage(
+    final msgs = oneBotGroupMessageToImMessages(
       event: event,
       conversationId: convId,
       selfId: _selfId,
+      resolveName: _resolveNameForAt,
     );
+
+    // Use cached member IDs if available, otherwise lazy-fetch.
+    final memberIds = _groupMemberIds[event.groupId] ?? [_selfId];
+    final senderName = imUser.displayName;
+    final subtitle = '$senderName: ${msgs.last.text}';
 
     final existing = _conversations[convId];
     if (existing != null) {
       _conversations[convId] = existing.copyWith(
-        subtitle: '$imUser.displayName: ${msg.text}',
-        updatedAt: msg.sentAt,
+        subtitle: subtitle,
+        updatedAt: msgs.last.sentAt,
         unreadCount: existing.unreadCount + 1,
+        participantIds:
+            existing.participantIds.length <= 1 && memberIds.length > 1
+                ? memberIds
+                : existing.participantIds,
+        avatarLocalPath:
+            existing.avatarLocalPath ?? _groupAvatarPaths[event.groupId],
       );
     } else {
       _conversations[convId] = oneBotGroupEventToConversation(
@@ -374,69 +458,147 @@ class NoneBotSource implements ImMessageSource {
         conversationId: convId,
         selfId: _selfId,
         title: _groupNames[event.groupId] ?? 'Group ${event.groupId}',
-        participantIds: [_selfId],
-        subtitle: '$imUser.displayName: ${msg.text}',
-        updatedAt: msg.sentAt,
-      );
-      // Lazily resolve the real group name if not cached
+        participantIds: memberIds,
+        subtitle: subtitle,
+        updatedAt: msgs.last.sentAt,
+      ).copyWith(avatarLocalPath: _groupAvatarPaths[event.groupId]);
+      // Lazily resolve group name and members if not cached.
+      _fetchGroupAvatar(event.groupId);
       if (!_groupNames.containsKey(event.groupId)) {
         _resolveGroupName(event.groupId);
+      } else if (memberIds.length <= 1) {
+        _populateGroupMembers(event.groupId);
       }
     }
 
-    _messages.putIfAbsent(convId, () => []).add(msg);
+    final list = _messages.putIfAbsent(convId, () => []);
+    for (final msg in msgs) {
+      list.add(msg);
+      _saveMsg(msg);
+      _downloadMedia(msg);
+    }
     _emitMessages(convId);
     _emitConversations();
+    _saveConv(_conversations[convId]!);
+    ImLogger.ingestMessage(
+      convId, msgs.first.senderId, msgs.first.kind.name,
+      msgs.map((m) => m.text).join(' | '),
+      segCount: msgs.first.segments?.length,
+    );
   }
 
   void _ingestNoticeEvent(OneBotNoticeEvent event) {
-    if (event.subType != 'poke') return;
-    final pokerId = event.userId;
-    final targetId = event.targetId;
-    if (pokerId == null || targetId == null) return;
+    switch (event) {
+      case OneBotEmojiLikeNotice(
+           :final groupId,
+           :final messageId,
+           :final likes):
+        final convId = oneBotConversationId(
+          selfId: _selfId,
+          groupId: groupId,
+        );
+        final list = _messages[convId];
+        if (list == null) return;
+        final idx = list.indexWhere((m) => m.id == '$messageId');
+        if (idx < 0) return;
+        final msg = list[idx];
+        final current = Map<String, int>.fromEntries(
+          (msg.reactions ?? const []).map((r) => MapEntry(r.emojiId, r.count)),
+        );
+        for (final like in likes) {
+          current[like.emojiId] = like.count;
+        }
+        final updated = current.entries
+            .map((e) => ImReaction(emojiId: e.key, count: e.value))
+            .toList();
+        list[idx] = msg.copyWith(reactions: updated);
+        _emitMessages(convId);
+        ImLogger.ingestMessage(
+          convId, '', 'reaction',
+          'msg=$messageId likes=${likes.map((l) => '${l.emojiId}x${l.count}').join(',')}',
+        );
+      case OneBotPokeNotice(:final groupId, :final userId, :final targetId):
+        final isGroup = groupId != null;
+        final convId = isGroup
+            ? oneBotConversationId(selfId: _selfId, groupId: groupId)
+            : oneBotConversationId(selfId: _selfId, userId: userId);
 
-    final isGroup = event.groupId != null;
-    final convId = isGroup
-        ? oneBotConversationId(selfId: _selfId, groupId: event.groupId)
-        : oneBotConversationId(selfId: _selfId, userId: pokerId);
+        final pokerName = _users[userId]?.displayName ?? userId;
+        final targetName = targetId == _selfId
+            ? '你'
+            : (_users[targetId]?.displayName ?? targetId);
+        final text = '$pokerName 戳了戳 $targetName';
 
-    final pokerName = _users[pokerId]?.displayName ?? pokerId;
-    final targetName = targetId == _selfId
-        ? '你'
-        : (_users[targetId]?.displayName ?? targetId);
-    final text = '$pokerName 戳了戳 $targetName';
+        final msg = ImMessage(
+          id: 'poke_${event.time}',
+          conversationId: convId,
+          senderId: userId,
+          text: text,
+          sentAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
+          kind: ImMessageKind.poke,
+        );
 
-    final msg = ImMessage(
-      id: 'poke_${event.time}',
-      conversationId: convId,
-      senderId: pokerId,
-      text: text,
-      sentAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
-      kind: ImMessageKind.poke,
-    );
+        _messages.putIfAbsent(convId, () => []).add(msg);
+        _emitMessages(convId);
 
-    _messages.putIfAbsent(convId, () => []).add(msg);
-    _emitMessages(convId);
-
-    // Ensure a conversation entry exists for the poke.
-    if (!_conversations.containsKey(convId)) {
-      _conversations[convId] = ImConversation(
-        id: convId,
-        type: isGroup ? ImConversationType.group : ImConversationType.direct,
-        title: isGroup
-            ? (_groupNames[event.groupId!] ?? 'Group ${event.groupId}')
-            : pokerName,
-        participantIds: isGroup ? [_selfId] : [_selfId, pokerId],
-        subtitle: text,
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
-      );
-      _emitConversations();
+        if (!_conversations.containsKey(convId)) {
+          final pokeParticipantIds = isGroup
+              ? (_groupMemberIds[groupId] ?? [_selfId])
+              : [_selfId, userId];
+          _conversations[convId] = ImConversation(
+            id: convId,
+            type: isGroup ? ImConversationType.group : ImConversationType.direct,
+            title: isGroup
+                ? (_groupNames[groupId] ?? 'Group $groupId')
+                : pokerName,
+            participantIds: pokeParticipantIds,
+            avatarLocalPath: isGroup ? _groupAvatarPaths[groupId] : null,
+            subtitle: text,
+            updatedAt: DateTime.fromMillisecondsSinceEpoch(event.time * 1000),
+          );
+          _emitConversations();
+        }
+      default:
+        // Other notice events (group_upload, group_admin, etc.)
+        // are ignored for now.
+        break;
     }
   }
 
   // -----------------------------------------------------------------
   // Name resolution (connected mode)
   // -----------------------------------------------------------------
+
+  /// Load previously persisted conversations and messages from SQLite.
+  Future<void> _loadHistory() async {
+    if (_store == null) return;
+    try {
+      final convs = await _store!.getConversations();
+      for (final c in convs) {
+        _conversations[c.id] = c;
+        // Restore group names from persisted conversations.
+        if (c.isGroup) {
+          final parsed = parseConversationId(c.id, _selfId);
+          _groupNames.putIfAbsent(parsed.targetId, () => c.title);
+        }
+        final msgs = await _store!.getMessages(c.id, limit: 30);
+        if (msgs.isNotEmpty) {
+          _messages[c.id] = msgs;
+        }
+      }
+      _emitConversations();
+    } catch (_) {}
+  }
+
+  /// Persist a message to SQLite (fire-and-forget).
+  void _saveMsg(ImMessage msg) {
+    _store?.insertMessage(msg);
+  }
+
+  /// Persist a conversation to SQLite.
+  void _saveConv(ImConversation conv) {
+    _store?.upsertConversation(conv);
+  }
 
   Future<void> _populateInitialData() async {
     if (_client == null) return;
@@ -456,32 +618,113 @@ class NoneBotSource implements ImMessageSource {
     // Resolve friend nicknames.
     try {
       final friends = await _client!.getFriendList();
+      ImLogger.ingestCount('friends loaded', friends.length);
       for (final f in friends) {
         final id = f.userId;
         final name = f.remark.isNotEmpty ? f.remark : f.nickname;
+        _friendIds.add(id);
         _users[id] = ImUser(
           id: id,
           displayName: name,
           avatarAssetPath: _avatarResolver(id),
           isOnline: true,
         );
+        _fetchUserAvatar(id);
       }
     } catch (_) {}
 
-    // Resolve group names.
+    // Resolve group names and member lists.
     try {
       final groups = await _client!.getGroupList();
+      ImLogger.ingestCount('groups loaded', groups.length);
       for (final g in groups) {
         _groupNames[g.groupId] = g.groupName;
+        // Fetch group avatar.
+        _fetchGroupAvatar(g.groupId);
         // Update existing conversation title if present.
         final convId = oneBotConversationId(selfId: _selfId, groupId: g.groupId);
         final conv = _conversations[convId];
         if (conv != null) {
           _conversations[convId] = conv.copyWith(title: g.groupName);
         }
+        // Fetch member list for this group.
+        await _populateGroupMembers(g.groupId);
       }
       _emitConversations();
     } catch (_) {}
+  }
+
+  String _resolveNameForAt(String qq) {
+    return _users[qq]?.displayName ?? qq;
+  }
+
+  /// Downloads the group avatar for [groupId] and applies it to the
+  /// matching conversation (or stores it for later).
+  void _fetchGroupAvatar(String groupId) {
+    if (_avatarCache == null) return;
+    ImLogger.avatarFetch('group:$groupId');
+    _avatarCache!.getGroup(groupId).then((path) {
+      if (path == null) return;
+      _groupAvatarPaths[groupId] = path;
+      ImLogger.avatarReady('group:$groupId', path);
+      final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
+      final conv = _conversations[convId];
+      if (conv == null) return;
+      _conversations[convId] = conv.copyWith(avatarLocalPath: path);
+      _emitConversations();
+    });
+  }
+
+  /// Downloads the QQ avatar for [userId] and updates [ImUser.avatarLocalPath].
+  void _fetchUserAvatar(String userId) {
+    if (_avatarCache == null) return;
+    ImLogger.avatarFetch(userId);
+    _avatarCache!.get(userId).then((path) {
+      if (path == null) return;
+      final u = _users[userId];
+      if (u == null) return;
+      _users[userId] = u.copyWith(avatarLocalPath: path);
+      ImLogger.avatarReady(userId, path);
+    });
+  }
+
+  /// Downloads media for [msg] in the background and updates the message
+  /// once the local file is ready.
+  void _downloadMedia(ImMessage msg) {
+    if (_mediaCache == null || _client == null) return;
+    final segs = msg.segments;
+    if (segs == null) return;
+
+    for (final seg in segs) {
+      final media = oneBotExtractMedia(seg);
+      final fileId = media.fileId;
+      if (fileId == null || fileId.isEmpty) continue;
+
+      Future<CachedMedia> future;
+      switch (seg.type) {
+        case 'image':
+          future = _mediaCache!.downloadImage(fileId: fileId, url: media.url);
+        case 'record':
+          future = _mediaCache!.downloadRecord(fileId: fileId, url: media.url);
+        default:
+          future = _mediaCache!.downloadFile(fileId: fileId, url: media.url);
+      }
+
+      future.then((cached) {
+        final path = cached.localPath;
+        if (path == null) return;
+        final list = _messages[msg.conversationId];
+        if (list == null) return;
+        final idx = list.indexWhere((m) => m.id == msg.id);
+        if (idx < 0) return;
+        final updated = list[idx].copyWith(mediaPath: path);
+        list[idx] = updated;
+        _emitMessages(msg.conversationId);
+        _saveMsg(updated); // persist media path to store
+        ImLogger.mediaReady(path, size: cached.size);
+      });
+      break; // only process the first media segment
+    }
   }
 
   Future<void> _resolveGroupName(String groupId) async {
@@ -493,6 +736,43 @@ class NoneBotSource implements ImMessageSource {
       final conv = _conversations[convId];
       if (conv != null) {
         _conversations[convId] = conv.copyWith(title: info.groupName);
+        _emitConversations();
+      }
+    } catch (_) {}
+    _fetchGroupAvatar(groupId);
+    // Also try to populate members.
+    await _populateGroupMembers(groupId);
+  }
+
+  /// Fetches the member list for [groupId] from OneBot and updates
+  /// `_users`, `_groupMemberIds`, and any existing conversation's
+  /// `participantIds`.
+  Future<void> _populateGroupMembers(String groupId) async {
+    if (_client == null) return;
+    try {
+      final members = await _client!.getGroupMemberList(groupId: groupId);
+      final ids = <String>[_selfId];
+      for (final m in members) {
+        if (m.userId == _selfId) continue; // self already in list
+        ids.add(m.userId);
+        if (!_users.containsKey(m.userId)) {
+          final displayName =
+              (m.card != null && m.card!.isNotEmpty) ? m.card! : m.nickname;
+          _users[m.userId] = ImUser(
+            id: m.userId,
+            displayName: displayName,
+            avatarAssetPath: _avatarResolver(m.userId),
+            isOnline: true,
+          );
+          _fetchUserAvatar(m.userId);
+        }
+      }
+      _groupMemberIds[groupId] = ids;
+      // Update existing conversation participantIds.
+      final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
+      final conv = _conversations[convId];
+      if (conv != null && conv.participantIds.length <= 1) {
+        _conversations[convId] = conv.copyWith(participantIds: ids);
         _emitConversations();
       }
     } catch (_) {}
@@ -526,6 +806,7 @@ class NoneBotSource implements ImMessageSource {
   // -----------------------------------------------------------------
 
   void _seedMockData() {
+    _friendIds.addAll(['belle', 'wise', 'nicole', 'anby', 'fairy']);
     _users.addAll({
       _selfId: ImUser(
         id: _selfId,
