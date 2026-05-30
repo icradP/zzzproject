@@ -10,7 +10,10 @@ class SourceBackedRepository implements ImRepository {
   SourceBackedRepository(this._source) {
     // Fire-and-forget: connect in the background so the UI can show
     // connection status while data begins flowing.
-    _source.connect();
+    _source.connect().catchError((_) {
+      // Connection failures are surfaced via connectionStatus stream;
+      // no need to crash the app.
+    });
   }
 
   final ImMessageSource _source;
@@ -60,6 +63,13 @@ class SourceBackedRepository implements ImRepository {
   @override
   Future<void> ensureConversation(ImConversation conversation) =>
       _source.ensureConversation(conversation);
+
+  @override
+  Future<void> deleteConversation(String conversationId) =>
+      _source.deleteConversation(conversationId);
+
+  @override
+  Future<void> clearAvatarCache() => _source.clearAvatarCache();
 
   @override
   void dispose() => _source.disconnect();

@@ -5,28 +5,187 @@ import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
 
-class ConversationTile extends StatelessWidget {
+class ConversationTile extends StatefulWidget {
   const ConversationTile({
     required this.conversation,
     required this.selected,
     required this.onTap,
+    this.onDelete,
     super.key,
   });
 
   final ImConversation conversation;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
+
+  @override
+  State<ConversationTile> createState() => _ConversationTileState();
+}
+
+class _ConversationTileState extends State<ConversationTile>
+    with TickerProviderStateMixin {
+  late final AnimationController _slideCtrl;
+  late final Animation<Offset> _slide;
+  late final AnimationController _exitCtrl;
+  late final Animation<double> _exitSlide;
+  late final Animation<double> _exitFade;
+  bool _exiting = false;
+
+  static const _btnWidth = 80.0;
+  static const _snapThreshold = 0.4;
+
+  @override
+  void initState() {
+    super.initState();
+    _slideCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _slide = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(-_btnWidth, 0),
+    ).animate(CurvedAnimation(
+      parent: _slideCtrl,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _exitCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _exitSlide = CurvedAnimation(
+      parent: _exitCtrl,
+      curve: Curves.easeInCubic,
+    );
+    _exitFade = Tween<double>(begin: 1, end: 0).animate(
+      CurvedAnimation(parent: _exitCtrl, curve: const Interval(0.3, 1.0)),
+    );
+    _exitCtrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        widget.onDelete?.call();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _slideCtrl.dispose();
+    _exitCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isOpen => _slideCtrl.value > 0.5;
+
+  void _close() {
+    if (_isOpen) _slideCtrl.reverse();
+  }
+
+  void _onHideTap() {
+    setState(() => _exiting = true);
+    _exitCtrl.forward();
+  }
+
+  void _handleTapDown(TapDownDetails details) {
+    if (_exiting) return;
+    final w = context.size?.width ?? 0;
+    if (_isOpen && details.localPosition.dx > w - _btnWidth) {
+      _onHideTap();
+    } else if (_isOpen) {
+      _close();
+    } else {
+      widget.onTap();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final avatarImage = conversation.avatarImage(AppAssets.characterWise);
-    final timeLabel = _formatTime(conversation.updatedAt);
+    if (widget.onDelete == null) {
+      return _buildTileContent();
+    }
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
+    if (_exiting) {
+      return AnimatedBuilder(
+        animation: _exitCtrl,
+        builder: (context, child) {
+          return Opacity(
+            opacity: _exitFade.value,
+            child: Transform.translate(
+              offset: Offset(-_exitSlide.value * MediaQuery.of(context).size.width, 0),
+              child: child,
+            ),
+          );
+        },
+        child: _buildTileContent(),
+      );
+    }
+
+    return GestureDetector(
+      onTapDown: _handleTapDown,
+      onHorizontalDragUpdate: (details) {
+        if (_exiting) return;
+        final newValue =
+            (_slideCtrl.value - details.delta.dx / _btnWidth)
+                .clamp(0.0, 1.0);
+        _slideCtrl.value = newValue;
+      },
+      onHorizontalDragEnd: (details) {
+        if (_exiting) return;
+        final velocity = details.primaryVelocity ?? 0;
+        if (_slideCtrl.value > _snapThreshold || velocity < -800) {
+          _slideCtrl.forward();
+        } else {
+          _slideCtrl.reverse();
+        }
+      },
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(36),
+        child: Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            // Fixed hide button behind the content.
+            Positioned.fill(
+              child: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 20),
+                decoration: BoxDecoration(
+                  color: ZzzColors.yellow,
+                  borderRadius: BorderRadius.circular(36),
+                ),
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: Colors.black,
+                  size: 28,
+                ),
+              ),
+            ),
+            // Sliding content overlay.
+            AnimatedBuilder(
+              animation: _slide,
+              builder: (context, child) {
+                return Transform.translate(
+                  offset: Offset(_slide.value.dx, 0),
+                  child: child,
+                );
+              },
+              child: _buildTileContent(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTileContent() {
+    final avatarImage =
+        widget.conversation.avatarImage(AppAssets.characterWise);
+    final timeLabel = _formatTime(widget.conversation.updatedAt);
+    final selected = widget.selected;
+
+    return Container(
+      color: Colors.black,
+      child: Material(
+        color: Colors.transparent,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
@@ -50,7 +209,7 @@ class ConversationTile extends StatelessWidget {
                 clipBehavior: Clip.none,
                 children: [
                   ZzzAvatar(image: avatarImage, size: 52),
-                  if (conversation.isGroup)
+                  if (widget.conversation.isGroup)
                     Positioned(
                       right: -2,
                       bottom: -2,
@@ -79,13 +238,13 @@ class ConversationTile extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            conversation.title,
+                            widget.conversation.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: selected ? Colors.black : null,
                               fontWeight:
-                                  conversation.unreadCount > 0
+                                  widget.conversation.unreadCount > 0
                                       ? FontWeight.w800
                                       : FontWeight.w600,
                               fontSize: 16,
@@ -109,20 +268,20 @@ class ConversationTile extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            conversation.subtitle ?? 'No messages yet',
+                            widget.conversation.subtitle ?? 'No messages yet',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: selected
                                   ? Colors.black.withValues(alpha: 0.48)
-                                  : conversation.unreadCount > 0
+                                  : widget.conversation.unreadCount > 0
                                       ? Colors.white70
                                       : Colors.white38,
                               fontSize: 13,
                             ),
                           ),
                         ),
-                        if (conversation.unreadCount > 0)
+                        if (widget.conversation.unreadCount > 0)
                           Container(
                             margin: const EdgeInsets.only(left: 8),
                             padding: const EdgeInsets.symmetric(
@@ -136,9 +295,9 @@ class ConversationTile extends StatelessWidget {
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
-                              conversation.unreadCount > 99
+                              widget.conversation.unreadCount > 99
                                   ? '99+'
-                                  : '${conversation.unreadCount}',
+                                  : '${widget.conversation.unreadCount}',
                               style: TextStyle(
                                 color: selected
                                     ? ZzzColors.yellow

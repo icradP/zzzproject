@@ -1,9 +1,9 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 
-import 'package:onebot_flutter/onebot_flutter.dart';
+import 'package:onebot_flutter/src/onebot_models.dart' show OneBotMessageSegment;
+import 'im_platform_image_provider.dart';
 
 enum ImConversationType { direct, group }
 
@@ -52,7 +52,7 @@ class ImUser {
   /// Builds an [ImageProvider] for this user's avatar, trying local file
   /// cache first, then asset path, then [fallbackAsset].
   ImageProvider avatarImage(String fallbackAsset) {
-    if (avatarLocalPath != null) return FileImage(File(avatarLocalPath!));
+    if (avatarLocalPath != null) return createFileImageProvider(avatarLocalPath!);
     if (avatarBytes != null) return MemoryImage(avatarBytes!);
     return AssetImage(avatarAssetPath ?? fallbackAsset);
   }
@@ -108,7 +108,7 @@ class ImConversation {
   /// Builds an [ImageProvider] for this conversation's avatar, checking
   /// local file cache first, then asset path.
   ImageProvider avatarImage(String fallbackAsset) {
-    if (avatarLocalPath != null) return FileImage(File(avatarLocalPath!));
+    if (avatarLocalPath != null) return createFileImageProvider(avatarLocalPath!);
     return AssetImage(avatarAssetPath ?? fallbackAsset);
   }
 

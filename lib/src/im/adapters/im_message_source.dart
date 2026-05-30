@@ -41,6 +41,10 @@ abstract class ImMessageSource {
   /// Ensure a conversation appears in [watchConversations], adding it if absent.
   Future<void> ensureConversation(ImConversation conversation);
 
+  /// Delete a conversation and its messages locally. This does NOT affect
+  /// the remote server — it only removes the local copy.
+  Future<void> deleteConversation(String conversationId);
+
   /// Establish the connection to the platform. No-op for offline / mock sources.
   Future<void> connect();
 
@@ -49,4 +53,7 @@ abstract class ImMessageSource {
 
   /// Verify connectivity. Returns null on success, or an error message.
   Future<String?> testConnection();
+
+  /// Delete all cached avatar files so they are re-downloaded on next use.
+  Future<void> clearAvatarCache();
 }

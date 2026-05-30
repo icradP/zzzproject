@@ -386,6 +386,18 @@ class MockImRepository implements ImRepository {
     _emitConversations();
   }
 
+  @override
+  Future<void> deleteConversation(String conversationId) async {
+    _conversations.remove(conversationId);
+    // Keep _messages so history survives a re-show.
+    _emitConversations();
+  }
+
+  @override
+  Future<void> clearAvatarCache() async {
+    // Mock repository uses asset images; nothing to clear.
+  }
+
   String _resolveDisplayName(String conversationId) {
     if (!conversationId.startsWith('dm_')) return conversationId;
     final parts = conversationId.substring(3).split('_');

@@ -110,11 +110,48 @@ class OneBotClient {
         final server = await HttpServer.bind(InternetAddress(host), port);
         await server.close();
       } else {
-        final ws = await WebSocket.connect(
-          wsUrl,
-          headers: _authHeaders(),
-        ).timeout(const Duration(seconds: 5));
-        await ws.close();
+        final uri = Uri.parse(wsUrl);
+        final host = uri.host.isNotEmpty ? uri.host : '127.0.0.1';
+        final port = uri.port != 0 ? uri.port : 80;
+
+        // Diagnostic: raw TCP probe first.
+        final tcpMsg = StringBuffer();
+        try {
+          print("host=$host");
+          print("port=$port");
+          print("wsUrl=$wsUrl");
+          print("authHeaders=${jsonEncode(_authHeaders())}");
+          final sock = await Socket.connect(
+            host,
+            port,
+            timeout: const Duration(seconds: 5),
+          );
+          tcpMsg.write('TCP OK (${sock.address.address}:${sock.port})');
+          sock.destroy();
+        } on SocketException catch (e) {
+          tcpMsg.write('TCP FAIL: ${e.message} (osError=${e.osError})');
+        } on TimeoutException {
+          tcpMsg.write('TCP TIMEOUT');
+        } catch (e) {
+          tcpMsg.write('TCP ERROR: $e');
+        }
+
+        // Now try WebSocket upgrade.
+        try {
+          final ws = await WebSocket.connect(
+            wsUrl,
+            headers: _authHeaders(),
+          ).timeout(const Duration(seconds: 5));
+          await ws.close();
+        } on TimeoutException {
+          return 'TCP: $tcpMsg | WS: timed out after 5s';
+        } on SocketException catch (e) {
+          return 'TCP: $tcpMsg | WS socket error: ${e.message}';
+        } on HandshakeException catch (e) {
+          return 'TCP: $tcpMsg | WS handshake failed: ${e.message}';
+        } catch (e) {
+          return 'TCP: $tcpMsg | WS connection failed: $e';
+        }
       }
       return null;
     } on TimeoutException {

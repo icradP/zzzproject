@@ -7,7 +7,9 @@ import '../adapters/nonebot/nonebot_models.dart';
 import '../data/im_animation_config.dart';
 import '../data/im_backdrop_config.dart';
 import '../data/im_connection_config.dart';
+import '../data/im_nsfw_config.dart';
 import '../data/im_storage_config.dart';
+import '../im_scope.dart';
 
 class ImSettingsPage extends StatefulWidget {
   const ImSettingsPage({super.key});
@@ -33,9 +35,11 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   bool _testSuccess = false;
   bool _loaded = false;
   bool _migrating = false;
+  bool _clearingCache = false;
   ImAnimationConfig _animConfig = ImAnimationConfig();
   ImBackdropConfig _backdropConfig = ImBackdropConfig();
   final _backdropControllers = <TextEditingController>[];
+  ImNsfwConfig _nsfwConfig = ImNsfwConfig();
   late final AnimationController _bgController;
 
   final _platformItems = const [
@@ -82,6 +86,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     _selfIdController.dispose();
     _storagePathController.dispose();
     _bgController.dispose();
+    for (final c in _nsfwControllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -93,6 +100,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     final backdrop = await ImBackdropConfig.load();
     _backdropConfig = backdrop;
     _rebuildBackdropControllers();
+    final nsfw = await ImNsfwConfig.load();
+    _nsfwConfig = nsfw;
+    _refreshNsfwControllers();
     setState(() {
       _platform = config.platform;
       _wsMode = config.wsMode;
@@ -100,8 +110,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       _wsController.text = config.wsEndpoint ?? '';
       _tokenController.text = config.accessToken ?? '';
       _selfIdController.text = config.selfId;
-      _storagePathController.text =
-          storage.basePath ?? ImStorageConfig.defaultBasePath;
+      _storagePathController.text = storage.basePath ?? '';
       _loaded = true;
     });
   }
@@ -132,6 +141,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       await storage.save();
       await _animConfig.save();
       await _backdropConfig.save();
+      await _nsfwConfig.save();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -169,8 +179,8 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       ),
     );
 
-    final error = await client.testConnection();
-    client.disconnect();
+    client.disconnect();    final error = await client.testConnection();
+
 
     if (mounted) {
       setState(() {
@@ -185,7 +195,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     final newPath = _storagePathController.text.trim();
     if (newPath.isEmpty) return;
     final oldConfig = await ImStorageConfig.load();
-    final oldPath = oldConfig.basePath ?? ImStorageConfig.defaultBasePath;
+    final oldPath = oldConfig.basePath ?? '';
     if (oldPath == newPath) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -222,6 +232,33 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       }
     } finally {
       if (mounted) setState(() => _migrating = false);
+    }
+  }
+
+  Future<void> _clearAvatarCache() async {
+    setState(() => _clearingCache = true);
+    try {
+      await ImScope.repositoryOf(context).clearAvatarCache();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Avatar cache cleared.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed: $e'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _clearingCache = false);
     }
   }
 
@@ -277,6 +314,13 @@ class _ImSettingsPageState extends State<ImSettingsPage>
                           subtitle: 'Scrolling background text lines',
                           initiallyExpanded: false,
                           child: _buildBackdropEditor(),
+                        ),
+                        const SizedBox(height: 12),
+                        ZzzExpandableSection(
+                          title: 'NSFW Detection',
+                          subtitle: 'Content filtering with NudeNet ONNX',
+                          initiallyExpanded: false,
+                          child: _buildNsfwFields(),
                         ),
                         const SizedBox(height: 12),
                         ZzzExpandableSection(
@@ -525,7 +569,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       children: [
         ZzzTextInput(
           controller: _storagePathController,
-          hintText: ImStorageConfig.defaultBasePath,
+          hintText: 'Storage path (default: App Documents/ZZZIM)',
           prefixIcon: const Icon(Icons.folder_outlined),
           fillColor: Colors.white.withValues(alpha: 0.06),
           foregroundColor: Colors.white,
@@ -550,6 +594,148 @@ class _ImSettingsPageState extends State<ImSettingsPage>
             foregroundColor: Colors.white54,
             side: const BorderSide(color: Colors.white12),
             padding: const EdgeInsets.symmetric(vertical: 10),
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _clearingCache ? null : _clearAvatarCache,
+          icon: _clearingCache
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.delete_sweep_outlined, size: 18),
+          label: Text(_clearingCache ? 'Clearing...' : 'Clear avatar cache'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white54,
+            side: const BorderSide(color: Colors.white12),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // NSFW section
+  // -----------------------------------------------------------------------
+
+  final _nsfwControllers =
+      List.generate(18, (i) => TextEditingController(text: '20'));
+
+  void _refreshNsfwControllers() {
+    for (var i = 0; i < 18; i++) {
+      final pct = (_nsfwConfig.thresholdFor(i) * 100).round();
+      final text = pct.toString();
+      if (_nsfwControllers[i].text != text) {
+        _nsfwControllers[i].text = text;
+      }
+    }
+  }
+
+  Widget _buildNsfwFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Master toggle
+        ZzzSwitchTile(
+          value: _nsfwConfig.enabled,
+          title: 'Enable NSFW detection',
+          subtitle: _nsfwConfig.enabled
+              ? 'Images will be blurred until long-pressed'
+              : 'All images shown without filtering',
+          onChanged: (v) =>
+              setState(() => _nsfwConfig = _nsfwConfig.copyWith(enabled: v)),
+        ),
+        const SizedBox(height: 12),
+
+        // Per-class thresholds
+        if (_nsfwConfig.enabled) ...[
+          const Text(
+            'Detection thresholds',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < ImNsfwConfig.labels.length; i++)
+            Padding(
+              padding:
+                  EdgeInsets.only(bottom: i < ImNsfwConfig.labels.length - 1 ? 8 : 0),
+              child: _buildClassRow(i),
+            ),
+        ],
+
+        const SizedBox(height: 8),
+        const Divider(color: Colors.white10, height: 1),
+        const SizedBox(height: 8),
+
+        // Reveal persistence
+        ZzzSwitchTile(
+          value: _nsfwConfig.persistReveal,
+          title: 'Remember revealed images',
+          subtitle: 'Revealed images stay unblurred after app restart',
+          onChanged: (v) => setState(
+              () => _nsfwConfig = _nsfwConfig.copyWith(persistReveal: v)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClassRow(int classIndex) {
+    final label = ImNsfwConfig.labels[classIndex];
+    final enabled = _nsfwConfig.isClassEnabled(classIndex);
+    return Row(
+      children: [
+        SizedBox(
+          width: 24,
+          child: Checkbox(
+            value: enabled,
+            onChanged: (v) {
+              if (v == true) {
+                final pct = double.tryParse(
+                    _nsfwControllers[classIndex].text.trim());
+                _nsfwConfig.setThreshold(
+                    classIndex, pct != null ? pct / 100 : 0.2);
+              } else {
+                _nsfwConfig.setThreshold(classIndex, null);
+              }
+              setState(() {});
+            },
+            fillColor: WidgetStateProperty.resolveWith((s) =>
+                s.contains(WidgetState.selected)
+                    ? Colors.pinkAccent
+                    : null),
+            side: const BorderSide(color: Colors.white24),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: enabled ? Colors.white : Colors.white30,
+              fontSize: 13,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 64,
+          child: ZzzTextInput(
+            controller: _nsfwControllers[classIndex],
+            hintText: '20',
+            fillColor: Colors.white.withValues(alpha: 0.06),
+            foregroundColor: Colors.white,
+            onChanged: (v) {
+              final pct = double.tryParse(v.trim());
+              if (pct != null) {
+                _nsfwConfig.setThreshold(classIndex, pct / 100);
+              }
+            },
           ),
         ),
       ],

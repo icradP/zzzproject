@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:onebot_flutter/onebot_flutter.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/im_models.dart';
 import 'im_storage_config.dart';
@@ -24,32 +24,37 @@ class ImMessageStore {
 
   static const _version = 3;
 
+  static bool _ffiInitialized = false;
+
+  static void _ensureFfi() {
+    if (_ffiInitialized) return;
+    _ffiInitialized = true;
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
+
   Future<void> open() async {
+    _ensureFfi();
     if (_db != null) return;
-    if (debugDbPath != null) {
-      _db = await openDatabase(
-        debugDbPath!,
-        version: _version,
-        onCreate: _onCreate,
-        onUpgrade: _onUpgrade,
-      );
-      return;
-    }
-    String dbDirPath;
-    if (storageConfig != null) {
-      dbDirPath = (await storageConfig!.resolveDatabaseDir()).path;
-    } else {
-      final appDir = await getApplicationDocumentsDirectory();
-      dbDirPath = '${appDir.path}/im_data';
-      final d = Directory(dbDirPath);
-      if (!await d.exists()) await d.create(recursive: true);
-    }
+
+    final dbDirPath = await _resolveDbDir();
     _db = await openDatabase(
       '$dbDirPath/im_${_safeId(selfId)}.db',
       version: _version,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
+  }
+
+  Future<String> _resolveDbDir() async {
+    if (debugDbPath != null) return debugDbPath!;
+    if (storageConfig != null) {
+      return (await storageConfig!.resolveDatabaseDir()).path;
+    }
+    final appDir = await getApplicationDocumentsDirectory();
+    final dir = Directory('${appDir.path}/im_data');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
   }
 
   Future<void> close() async {
@@ -129,12 +134,20 @@ class ImMessageStore {
     }
   }
 
+  Database get _db_ => _db!; // safe after open(); use _dbOrNull for writes
+
+  /// Returns the database if already opened, otherwise `null`.
+  /// Write methods use this so they are no-ops until [open] completes.
+  Database? get _dbOrNull => _db;
+
   // -----------------------------------------------------------------------
   // Conversations
   // -----------------------------------------------------------------------
 
   Future<void> upsertConversation(ImConversation c) async {
-    await _db!.insert(
+    final db = _dbOrNull;
+    if (db == null) return;
+    await db.insert(
       'conversations',
       _convToRow(c),
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -142,7 +155,7 @@ class ImMessageStore {
   }
 
   Future<List<ImConversation>> getConversations() async {
-    final rows = await _db!.query(
+    final rows = await _db_.query(
       'conversations',
       orderBy: 'is_pinned DESC, updated_at DESC',
     );
@@ -150,7 +163,7 @@ class ImMessageStore {
   }
 
   Future<ImConversation?> getConversation(String id) async {
-    final rows = await _db!.query(
+    final rows = await _db_.query(
       'conversations',
       where: 'id = ?',
       whereArgs: [id],
@@ -160,8 +173,8 @@ class ImMessageStore {
   }
 
   Future<void> deleteConversation(String id) async {
-    await _db!.delete('conversations', where: 'id = ?', whereArgs: [id]);
-    await _db!.delete('messages', where: 'conversation_id = ?', whereArgs: [id]);
+    await _db_.delete('conversations', where: 'id = ?', whereArgs: [id]);
+    await _db_.delete('messages', where: 'conversation_id = ?', whereArgs: [id]);
   }
 
   // -----------------------------------------------------------------------
@@ -169,7 +182,8 @@ class ImMessageStore {
   // -----------------------------------------------------------------------
 
   Future<void> insertMessage(ImMessage m) async {
-    final db = _db!;
+    final db = _dbOrNull;
+    if (db == null) return;
     await db.insert(
       'messages',
       _msgToRow(m),
@@ -184,7 +198,9 @@ class ImMessageStore {
   }
 
   Future<void> insertMessages(List<ImMessage> batch) async {
-    final batchOp = _db!.batch();
+    final db = _dbOrNull;
+    if (db == null) return;
+    final batchOp = db.batch();
     for (final m in batch) {
       batchOp.insert('messages', _msgToRow(m),
           conflictAlgorithm: ConflictAlgorithm.replace);
@@ -197,7 +213,7 @@ class ImMessageStore {
     int limit = 50,
     int offset = 0,
   }) async {
-    final rows = await _db!.query(
+    final rows = await _db_.query(
       'messages',
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
@@ -211,8 +227,7 @@ class ImMessageStore {
   Future<List<ImMessage>> getLatestMessages({
     int perConversation = 1,
   }) async {
-    // Get the latest message for each conversation.
-    final rows = await _db!.rawQuery('''
+    final rows = await _db_.rawQuery('''
       SELECT m.* FROM messages m
       INNER JOIN (
         SELECT conversation_id, MAX(sent_at) AS max_sent
@@ -228,8 +243,7 @@ class ImMessageStore {
   Future<List<ImMessage>> loadAllMessages({
     int limitPerConv = 30,
   }) async {
-    // Load recent messages for all conversations.
-    final convRows = await _db!.query('conversations');
+    final convRows = await _db_.query('conversations');
     final result = <ImMessage>[];
     for (final c in convRows) {
       final msgs = await getMessages(
@@ -246,7 +260,9 @@ class ImMessageStore {
     required String conversationId,
     required ImMessageStatus status,
   }) async {
-    await _db!.update(
+    final db = _dbOrNull;
+    if (db == null) return;
+    await db.update(
       'messages',
       {'status': status.name},
       where: 'id = ? AND conversation_id = ?',
@@ -255,7 +271,9 @@ class ImMessageStore {
   }
 
   Future<void> deleteMessage(String id, String conversationId) async {
-    await _db!.delete(
+    final db = _dbOrNull;
+    if (db == null) return;
+    await db.delete(
       'messages',
       where: 'id = ? AND conversation_id = ?',
       whereArgs: [id, conversationId],
@@ -266,7 +284,9 @@ class ImMessageStore {
     String query, {
     int limit = 30,
   }) async {
-    final rows = await _db!.query(
+    final db = _dbOrNull;
+    if (db == null) return [];
+    final rows = await db.query(
       'messages',
       where: 'text LIKE ?',
       whereArgs: ['%$query%'],

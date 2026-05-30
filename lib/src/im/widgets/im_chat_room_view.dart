@@ -1,12 +1,17 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:super_sliver_list/super_sliver_list.dart';
 
 import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
+import '../data/im_logger.dart';
+import '../data/im_nsfw_checker.dart';
+import '../im_scope.dart';
 import '../models/im_models.dart';
+import 'im_nsfw_overlay.dart';
+import 'im_platform_image_widget.dart';
 
 class ImMessageBubble extends StatelessWidget {
   const ImMessageBubble({
@@ -128,24 +133,27 @@ class ImMessageBubble extends StatelessWidget {
           ),
         );
       }
-      // Mini-program card: image + text, fixed to image width.
+      // Mini-program card: image + text, adaptive width.
       if (isJsonCard) {
-        return SizedBox(
-          width: 200,
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 250),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(14)),
-                child: Image.file(
-                  File(message.mediaPath!),
-                  fit: BoxFit.cover,
-                  width: 200,
-                  errorBuilder: (context, error, stack) {
-                    return const SizedBox.shrink();
-                  },
+              _NsfwGuard(
+                messageId: message.id,
+                mediaPath: message.mediaPath!,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(14)),
+                  child: platformImageWidget(
+                    message.mediaPath!,
+                    fit: BoxFit.scaleDown,
+                    errorBuilder: (context, error, stack) {
+                      return const SizedBox.shrink();
+                    },
+                  ),
                 ),
               ),
               Container(
@@ -183,23 +191,34 @@ class ImMessageBubble extends StatelessWidget {
           ),
         );
       }
-      // Plain image.
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(isImageOnly ? 18 : 12),
-        child: Image.file(
-          File(message.mediaPath!),
-          fit: BoxFit.cover,
-          width: 180,
-          errorBuilder: (context, error, stack) {
-            return Text(
-              message.text,
-              style: TextStyle(
-                color: isMine ? Colors.white : Colors.black87,
-                fontSize: 15,
-                height: 1.35,
-              ),
-            );
-          },
+      // Plain image — adaptive sizing via scaleDown.
+      // Small stickers/emojis display at natural size, large images
+      // (photos, screenshots) scale down to fit the constraints.
+      return _NsfwGuard(
+        messageId: message.id,
+        mediaPath: message.mediaPath!,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(isImageOnly ? 18 : 12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 250,
+              maxHeight: 400,
+            ),
+            child: platformImageWidget(
+              message.mediaPath!,
+              fit: BoxFit.scaleDown,
+              errorBuilder: (context, error, stack) {
+                return Text(
+                  message.text,
+                  style: TextStyle(
+                    color: isMine ? Colors.white : Colors.black87,
+                    fontSize: 15,
+                    height: 1.35,
+                  ),
+                );
+              },
+            ),
+          ),
         ),
       );
     }
@@ -532,38 +551,42 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildHeader(),
-                if (widget.conversation.isGroup)
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 280),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.topCenter,
-                    child:
-                        _showMembers
-                            ? Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  maxHeight: maxPanelHeight,
+            GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => _composerFocus.unfocus(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildHeader(),
+                  if (widget.conversation.isGroup)
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topCenter,
+                      child:
+                          _showMembers
+                              ? Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxHeight: maxPanelHeight,
+                                  ),
+                                  child: _MemberGrid(
+                                    participantIds:
+                                        widget.conversation.participantIds,
+                                    resolveUserName: widget.resolveUserName,
+                                    resolveUserAvatar: widget.resolveUserAvatar,
+                                  ),
                                 ),
-                                child: _MemberGrid(
-                                  participantIds:
-                                      widget.conversation.participantIds,
-                                  resolveUserName: widget.resolveUserName,
-                                  resolveUserAvatar: widget.resolveUserAvatar,
-                                ),
-                              ),
-                            )
-                            : const SizedBox.shrink(),
-                  ),
-                const Divider(height: 20, thickness: 1, color: Colors.white12),
-                Expanded(child: _buildMessages()),
-                const SizedBox(height: 10),
-                _buildComposer(),
-              ],
+                              )
+                              : const SizedBox.shrink(),
+                    ),
+                  const Divider(height: 20, thickness: 1, color: Colors.white12),
+                  Expanded(child: _buildMessages()),
+                  const SizedBox(height: 10),
+                  _buildComposer(),
+                ],
+              ),
             ),
           ],
         );
@@ -645,7 +668,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       );
     }
 
-    return ListView.builder(
+    return SuperListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.only(bottom: 8),
       itemCount: widget.messages.length,
@@ -719,9 +742,9 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
           child: ZzzTextInput(
             controller: _composerController,
             focusNode: _composerFocus,
-            hintText: 'Message ${widget.conversation.title}',
+            hintText: 'Message something...',
             minLines: 1,
-            maxLines: 4,
+            maxLines: 3,
             textInputAction: TextInputAction.send,
             fillColor: Colors.white.withValues(alpha: 0.08),
             foregroundColor: Colors.white,
@@ -1302,6 +1325,79 @@ class _ReactionChips extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Wraps an image child with NSFW blur protection when the checker flags it.
+class _NsfwGuard extends StatefulWidget {
+  const _NsfwGuard({required this.messageId, required this.mediaPath, required this.child});
+
+  final String messageId;
+  final String mediaPath;
+  final Widget child;
+
+  @override
+  State<_NsfwGuard> createState() => _NsfwGuardState();
+}
+
+class _NsfwGuardState extends State<_NsfwGuard> {
+  bool _checking = false;
+  bool _didCheck = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_didCheck) {
+      _didCheck = true;
+      _maybeCheck();
+    }
+  }
+
+  void _maybeCheck() {
+    final state = ImScope.nsfwStateCacheOf(context).get(widget.messageId);
+    if (state.checked) return; // already checked
+    if (_checking) return;
+    _checking = true;
+
+    final checker = ImScope.nsfwCheckerOf(context);
+    if (!checker.isAvailable) {
+      ImLogger.nsfwUnavailable(widget.messageId);
+      _checking = false;
+      return;
+    }
+
+    ImLogger.nsfwCheck(widget.messageId, widget.mediaPath);
+    checker.check(widget.mediaPath).then((nsfw) {
+      if (!mounted) return;
+      ImLogger.nsfwResult(widget.messageId, nsfw);
+      ImScope.nsfwStateCacheOf(context).put(
+        widget.messageId,
+        NsfwState(checked: true, nsfw: nsfw),
+      );
+      setState(() {}); // rebuild with overlay
+    }).whenComplete(() {
+      _checking = false;
+    });
+  }
+
+  void _reveal() {
+    final cache = ImScope.nsfwStateCacheOf(context);
+    final state = cache.get(widget.messageId);
+    cache.put(widget.messageId, state.copyWith(revealed: true));
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ImScope.nsfwStateCacheOf(context).get(widget.messageId);
+    final shouldBlur = state.checked && state.nsfw == true && !state.revealed;
+    if (!shouldBlur) return widget.child;
+
+    return ImNsfwOverlay(
+      label: 'Sensitive content',
+      onReveal: _reveal,
+      child: widget.child,
     );
   }
 }

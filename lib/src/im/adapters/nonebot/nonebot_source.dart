@@ -115,18 +115,10 @@ class NoneBotSource implements ImMessageSource {
       );
       await _client!.connect();
       ImLogger.ingestCount('connected', 0); // just mark connected
-      _mediaCache = ImMediaCache(
-        client: _client!,
-        storageConfig: _storageConfig,
-      );
-      _avatarCache = ImAvatarCache(storageConfig: _storageConfig);
-      _store = ImMessageStore(
-        selfId: _selfId,
-        storageConfig: _storageConfig,
-      );
-      await _store!.open();
-      await _loadHistory();
 
+      // Subscribe to events IMMEDIATELY after connect, before any DB or
+      // network operations.  This guarantees events are processed even if
+      // a later step (storage, history, populate) fails.
       _eventSubscription = _client!.eventStream.listen((event) {
         if (event is OneBotMessageEvent) {
           if (event.isPrivate && event.event != null) {
@@ -138,6 +130,18 @@ class NoneBotSource implements ImMessageSource {
           _ingestNoticeEvent(event.event);
         }
       });
+
+      _mediaCache = ImMediaCache(
+        client: _client!,
+        storageConfig: _storageConfig,
+      );
+      _avatarCache = ImAvatarCache(storageConfig: _storageConfig);
+      _store = ImMessageStore(
+        selfId: _selfId,
+        storageConfig: _storageConfig,
+      );
+      await _store!.open();
+      await _loadHistory();
 
       // Best-effort: pre-populate friend & group names on connect.
       // Failures here are silent — names will be resolved lazily.
@@ -164,6 +168,11 @@ class NoneBotSource implements ImMessageSource {
     for (final c in _messageControllers.values) {
       c.close();
     }
+  }
+
+  @override
+  Future<void> clearAvatarCache() async {
+    await _avatarCache?.clear();
   }
 
   @override
@@ -358,6 +367,15 @@ class NoneBotSource implements ImMessageSource {
         avatarLocalPath: _groupAvatarPaths[e.key],
       );
     }).toList();
+  }
+
+  @override
+  Future<void> deleteConversation(String conversationId) async {
+    // Only hide from the conversation list.  Keep messages and the
+    // message stream alive so history is preserved if the conversation
+    // reappears via a new incoming event.
+    _conversations.remove(conversationId);
+    _emitConversations();
   }
 
   @override

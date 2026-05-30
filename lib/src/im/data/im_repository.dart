@@ -40,6 +40,12 @@ abstract class ImRepository {
   /// Ensure a conversation appears in [watchConversations], adding it if absent.
   Future<void> ensureConversation(ImConversation conversation);
 
+  /// Delete a conversation and its messages locally.
+  Future<void> deleteConversation(String conversationId);
+
+  /// Delete all cached avatar files. They will be re-downloaded on next use.
+  Future<void> clearAvatarCache();
+
   /// Release streams and subscriptions.
   void dispose();
 }

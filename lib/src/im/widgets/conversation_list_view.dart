@@ -24,6 +24,7 @@ class ConversationListView extends StatefulWidget {
 class _ConversationListViewState extends State<ConversationListView> {
   final _searchController = TextEditingController();
   String _query = '';
+  List<ImConversation>? _cachedConversations;
 
   @override
   void dispose() {
@@ -53,8 +54,10 @@ class _ConversationListViewState extends State<ConversationListView> {
         Expanded(
           child: StreamBuilder<List<ImConversation>>(
             stream: repository.watchConversations(),
+            initialData: _cachedConversations,
             builder: (context, snapshot) {
               final conversations = snapshot.data ?? const <ImConversation>[];
+              _cachedConversations = conversations;
               final filtered = _query.isEmpty
                   ? conversations
                   : conversations.where((conversation) {
@@ -99,6 +102,10 @@ class _ConversationListViewState extends State<ConversationListView> {
                       conversation: conv,
                       selected: conv.id == widget.selectedConversationId,
                       onTap: () => widget.onConversationSelected(conv),
+                      onDelete: () {
+                        ImScope.repositoryOf(context)
+                            .deleteConversation(conv.id);
+                      },
                     ),
                   );
                 },
@@ -138,7 +145,7 @@ class _AnimatedListItemState extends State<_AnimatedListItem>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 280),
+      duration: const Duration(milliseconds: 300),
     );
     _slide = Tween<Offset>(
       begin: Offset.zero,
@@ -153,13 +160,13 @@ class _AnimatedListItemState extends State<_AnimatedListItem>
   @override
   void didUpdateWidget(covariant _AnimatedListItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.index != oldWidget.index &&
-        _prevIndex >= 0 &&
-        ImAnimationConfig.instance.conversationListSlide) {
-      final rawDelta = _prevIndex - widget.index;
-      final delta = rawDelta.clamp(-4, 4);
+    final enabled = ImAnimationConfig.instance.conversationListSlide;
+    if (widget.index != _prevIndex && _prevIndex >= 0 && enabled) {
+      // Animate from the previous position to the current one.
+      // A positive delta means the item moved up in the list.
+      final delta = (_prevIndex - widget.index).clamp(-6, 6);
       _slide = Tween<Offset>(
-        begin: Offset(0, delta * 0.25),
+        begin: Offset(0, delta * 0.8),
         end: Offset.zero,
       ).animate(CurvedAnimation(
         parent: _controller,

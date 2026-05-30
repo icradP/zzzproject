@@ -22,6 +22,7 @@ class ImLogger {
   static const media = 'MEDIA';
   static const avatar = 'AVATAR';
   static const store = 'STORE';
+  static const nsfw = 'NSFW';
 
   /// Called by external code (e.g. OneBotClient callback) with a pre-built
   /// message. Bypasses the public helpers to avoid double-formatting.
@@ -101,6 +102,24 @@ class ImLogger {
     final d = detail != null ? ' $detail' : '';
     _log(store, '$op$d');
   }
+
+  // -- NSFW ---------------------------------------------------------------
+
+  static void nsfwInitStart() => _log(nsfw, 'initializing ONNX checker …');
+
+  static void nsfwInitOk() => _log(nsfw, 'ONNX checker ready');
+
+  static void nsfwInitFailed(Object error) =>
+      _log(nsfw, 'ONNX init failed: $error');
+
+  static void nsfwCheck(String messageId, String mediaPath) =>
+      _log(nsfw, 'checking $messageId → $mediaPath');
+
+  static void nsfwResult(String messageId, bool? isNsfw) =>
+      _log(nsfw, 'result msg=$messageId nsfw=$isNsfw');
+
+  static void nsfwUnavailable(String messageId) =>
+      _log(nsfw, 'checker unavailable, skip $messageId');
 
   // -- Helpers ------------------------------------------------------------
 

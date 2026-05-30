@@ -29,7 +29,12 @@ class _ImHomePageState extends State<ImHomePage>
   String? _previousConversationId;
   ImConversation? _pendingConversation;
   bool _showContacts = false;
+  double _dragOffset = 0.0;
   late final AnimationController _backgroundController;
+
+  /// Cached snapshot data so switching conversations doesn't flash empty.
+  final _conversationCache = <String, List<ImConversation>>{};
+  final _messageCache = <String, List<ImMessage>>{};
 
   @override
   void initState() {
@@ -61,6 +66,7 @@ class _ImHomePageState extends State<ImHomePage>
 
   void _clearSelection() {
     setState(() {
+      _dragOffset = 0.0;
       _selectedConversationId = null;
       _previousConversationId = null;
     });
@@ -141,8 +147,12 @@ class _ImHomePageState extends State<ImHomePage>
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     children: [
-                      _buildAppHeader(isWide: isWide),
-                      const SizedBox(height: 12),
+                      // Hide the "Messages" header when inside a conversation
+                      // on compact screens — the chat panel has its own header.
+                      if (!(!isWide && _selectedConversationId != null))
+                        _buildAppHeader(isWide: isWide),
+                      if (!(!isWide && _selectedConversationId != null))
+                        const SizedBox(height: 12),
                       Expanded(
                         child:
                             isWide
@@ -261,16 +271,65 @@ class _ImHomePageState extends State<ImHomePage>
   }
 
   Widget _buildCompactLayout(ImRepository repository) {
-    if (_selectedConversationId == null) {
-      return ZzzPanel(
+    final isInChat = _selectedConversationId != null;
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    Widget child;
+    if (!isInChat) {
+      child = ZzzPanel(
+        key: const ValueKey('inbox'),
         animateEntrance: true,
         child: ConversationListView(
           selectedConversationId: _selectedConversationId,
           onConversationSelected: _selectConversation,
         ),
       );
+    } else {
+      child = GestureDetector(
+        onHorizontalDragUpdate: (details) {
+          if (details.delta.dx > 0 || _dragOffset > 0) {
+            setState(() {
+              _dragOffset = (_dragOffset + details.delta.dx).clamp(0.0, screenWidth);
+            });
+          }
+        },
+        onHorizontalDragEnd: (details) {
+          final shouldDismiss =
+              _dragOffset > screenWidth * 0.25 ||
+              (details.primaryVelocity ?? 0) > 200;
+          if (shouldDismiss) {
+            _clearSelection();
+          }
+          setState(() => _dragOffset = 0.0);
+        },
+        child: Transform.translate(
+          offset: Offset(_dragOffset, 0),
+          child: _buildChatPanel(repository),
+        ),
+      );
     }
-    return _buildChatPanel(repository, showBack: true);
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0.3, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          )),
+          child: FadeTransition(
+            opacity: CurvedAnimation(parent: animation, curve: Curves.easeIn),
+            child: child,
+          ),
+        );
+      },
+      child: child,
+    );
   }
 
   Widget _buildChatPanel(ImRepository repository, {bool showBack = false}) {
@@ -283,8 +342,10 @@ class _ImHomePageState extends State<ImHomePage>
       ),
       child: StreamBuilder<List<ImConversation>>(
         stream: repository.watchConversations(),
+        initialData: _conversationCache['all'],
         builder: (context, conversationSnapshot) {
           final conversations = conversationSnapshot.data ?? const [];
+          _conversationCache['all'] = conversations;
           ImConversation? selected;
           for (final conversation in conversations) {
             if (conversation.id == _selectedConversationId) {
@@ -301,6 +362,8 @@ class _ImHomePageState extends State<ImHomePage>
               return _buildEmptyChatPlaceholder();
             }
           }
+          // Promote to non-null for use inside nested closures.
+          final conv = selected;
 
           // Determine slide direction and distance from the conversation
           // list order so the panel slides in from the right direction.
@@ -309,14 +372,16 @@ class _ImHomePageState extends State<ImHomePage>
                   (c) => c.id == _previousConversationId)
               : -1;
           final curIdx = conversations.indexWhere(
-              (c) => c.id == selected!.id);
+              (c) => c.id == conv.id);
           final rawDelta = curIdx >= 0 && prevIdx >= 0 ? prevIdx - curIdx : 0;
           final delta = rawDelta.clamp(-4, 4);
 
           return StreamBuilder<List<ImMessage>>(
-            stream: repository.watchMessages(selected.id),
+            stream: repository.watchMessages(conv.id),
+            initialData: _messageCache[conv.id],
             builder: (context, messageSnapshot) {
               final messages = messageSnapshot.data ?? const [];
+              _messageCache[conv.id] = messages;
               final animDuration = ImAnimationConfig.instance.chatPanelSlide
                   ? const Duration(milliseconds: 350)
                   : Duration.zero;
@@ -342,8 +407,8 @@ class _ImHomePageState extends State<ImHomePage>
                   );
                 },
                 child: ImChatRoomView(
-                  key: ValueKey(selected!.id),
-                  conversation: selected!,
+                  key: ValueKey(conv.id),
+                  conversation: conv,
                   messages: messages,
                   onBack: showBack ? _clearSelection : null,
                   resolveUserName: _resolveUserName,
@@ -351,11 +416,11 @@ class _ImHomePageState extends State<ImHomePage>
                   resolveMessage: (id) => _findMessage(id, messages),
                   onSend: (text) async {
                     await ImScope.interactionsOf(context).onSendMessage(
-                      conversation: selected!,
+                      conversation: conv,
                       text: text,
                     );
                     await repository.sendTextMessage(
-                      conversationId: selected.id,
+                      conversationId: conv.id,
                       text: text,
                     );
                   },

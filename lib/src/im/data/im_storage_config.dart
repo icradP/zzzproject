@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Persisted storage base directory for all IM data.
@@ -23,8 +24,6 @@ class ImStorageConfig {
 
   static const _key = 'im_storage_base_path';
 
-  static const defaultBasePath = 'D:\\ZZZIM';
-
   // -----------------------------------------------------------------------
   // Resolved directories
   // -----------------------------------------------------------------------
@@ -34,7 +33,7 @@ class ImStorageConfig {
   Future<Directory> resolveDatabaseDir() => _resolve('im_data');
 
   Future<Directory> _resolve(String subDir) async {
-    final base = basePath ?? defaultBasePath;
+    final base = basePath ?? (await getApplicationDocumentsDirectory()).path;
     final d = Directory('$base/$subDir');
     if (!await d.exists()) await d.create(recursive: true);
     return d;
@@ -57,6 +56,8 @@ class ImStorageConfig {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
     if (raw == null || raw.isEmpty) return ImStorageConfig();
+    // Migrate away from the legacy Windows-only default path.
+    if (raw == r'D:\ZZZIM') return ImStorageConfig();
     return ImStorageConfig(basePath: raw);
   }
 

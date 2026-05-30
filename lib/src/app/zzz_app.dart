@@ -3,14 +3,22 @@ import 'package:flutter/material.dart';
 import '../../../core/routes/index.dart';
 import '../assets/app_assets.dart';
 import '../im/adapters/im_message_source.dart';
-import '../im/adapters/nonebot/nonebot_models.dart';
-import '../im/adapters/nonebot/nonebot_source.dart';
+import '../im/adapters/nonebot/nonebot_models_web.dart'
+    if (dart.library.io) '../im/adapters/nonebot/nonebot_models.dart';
+import '../im/adapters/nonebot/nonebot_source_web.dart'
+    if (dart.library.io) '../im/adapters/nonebot/nonebot_source.dart';
 import '../im/adapters/source_repository.dart';
 import '../im/data/im_animation_config.dart';
 import '../im/data/im_backdrop_config.dart';
 import '../im/data/im_connection_config.dart';
-import '../im/data/im_storage_config.dart';
+import '../im/data/im_storage_config_web.dart'
+    if (dart.library.io) '../im/data/im_storage_config.dart';
 import '../im/data/im_interaction_handler.dart';
+import '../im/data/im_logger.dart';
+import '../im/data/im_nsfw_checker.dart';
+import '../im/data/im_nsfw_checker_onnx.dart';
+import '../im/data/im_nsfw_checker_stub.dart';
+import '../im/data/im_nsfw_config.dart';
 import '../im/data/im_repository.dart';
 import '../im/data/mock_im_repository.dart';
 import '../im/im_scope.dart';
@@ -26,6 +34,8 @@ class ZzzApp extends StatefulWidget {
 class _ZzzAppState extends State<ZzzApp> {
   ImRepository? _repository;
   Stream<ConnectionStatus>? _connectionStatus;
+  ImNsfwChecker? _nsfwChecker;
+  final _nsfwStateCache = NsfwStateCache();
 
   @override
   void initState() {
@@ -38,11 +48,26 @@ class _ZzzAppState extends State<ZzzApp> {
     final storageConfig = await ImStorageConfig.load();
     await ImAnimationConfig.load();
     await ImBackdropConfig.load();
+    await ImNsfwConfig.load();
+    if (ImNsfwConfig.instance.persistReveal) {
+      await _nsfwStateCache.loadRevealed();
+    }
     final repo = _buildRepository(config, storageConfig);
     Stream<ConnectionStatus>? status;
     if (repo is SourceBackedRepository) {
       status = repo.connectionStatus;
     }
+    // Initialise NSFW checker.  Use ONNX when available, stub otherwise.
+    ImLogger.nsfwInitStart();
+    final nsfw = OnnxNsfwChecker();
+    await nsfw.initialize();
+    if (nsfw.isAvailable) {
+      ImLogger.nsfwInitOk();
+      _nsfwChecker = nsfw;
+    } else {
+      _nsfwChecker = StubNsfwChecker();
+    }
+
     if (mounted) {
       setState(() {
         _repository = repo;
@@ -118,6 +143,8 @@ class _ZzzAppState extends State<ZzzApp> {
     return ImScope(
       repository: repo,
       interactions: const NoOpImInteractionHandler(),
+      nsfwChecker: _nsfwChecker!,
+      nsfwStateCache: _nsfwStateCache,
       connectionStatus: _connectionStatus,
       child: MaterialApp.router(
         routerConfig: appRouter,
