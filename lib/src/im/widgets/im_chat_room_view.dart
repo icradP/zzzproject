@@ -1,11 +1,18 @@
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
+import 'package:pasteboard/pasteboard.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
+import '../adapters/nonebot/napcat_api.dart';
 import '../data/im_logger.dart';
 import '../data/im_nsfw_checker.dart';
 import '../im_scope.dart';
@@ -60,6 +67,13 @@ class ImMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Recalled message — system-style collapsible banner.
+    if (message.recalled) {
+      return _RecalledBanner(
+        message: message,
+        senderName: senderName,
+      );
+    }
     if (message.kind == ImMessageKind.system) {
       return Center(
         child: Container(
@@ -110,9 +124,29 @@ class ImMessageBubble extends StatelessWidget {
         message.hasMedia &&
         (message.kind == ImMessageKind.image) &&
         (message.text.isEmpty || message.text == '[图片]');
+    final isRecordOnly =
+        message.hasMedia &&
+        (message.kind == ImMessageKind.record) &&
+        (message.text.isEmpty || message.text == '[语音]');
     final isJsonCard = message.kind == ImMessageKind.json;
+    final isForward = message.kind == ImMessageKind.forward;
 
     Widget buildBubbleContent() {
+      // Forward bubble — tap to open merged messages.
+      if (message.kind == ImMessageKind.forward) {
+        return _ForwardBubble(message: message);
+      }
+      // Voice bubble — downloads on play tap.
+      if (message.kind == ImMessageKind.record) {
+        final seg = message.segments?.firstOrNull;
+        return _VoiceBubble(
+          fileId: seg?.data['file']?.toString(),
+          url: seg?.data['url']?.toString(),
+          localPath: message.mediaPath,
+          isMine: isMine,
+          fileSize: message.mediaSize,
+        );
+      }
       // File card.
       if (message.kind == ImMessageKind.file) {
         return _FileCard(
@@ -239,7 +273,7 @@ class ImMessageBubble extends StatelessWidget {
               ),
               child: bubbleContent,
             )
-            : isImageOnly
+            : isImageOnly || isRecordOnly || isJsonCard || isForward
             ? Container(
               constraints: const BoxConstraints(maxWidth: 520),
               decoration: BoxDecoration(
@@ -393,7 +427,10 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   final _messageKeys = <String, GlobalKey>{};
   bool _sending = false;
   bool _showMembers = false;
+  bool _showAttach = false;
   String? _highlightMessageId;
+  final _pendingImages = <String>[];
+  ImMessageKind _pendingKind = ImMessageKind.image;
 
   @override
   void initState() {
@@ -426,6 +463,17 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 
   double _lastMaxExtent = 0;
+
+  void _toggleAttach() {
+    if (!_showAttach) {
+      _composerFocus.unfocus();
+      if (_showMembers) setState(() => _showMembers = false);
+    }
+    setState(() => _showAttach = !_showAttach);
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (mounted) _scrollToBottom();
+    });
+  }
 
   void _scrollToBottom() {
     bool done = false;
@@ -529,12 +577,19 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
 
   Future<void> _submit() async {
     final text = _composerController.text;
-    if (text.trim().isEmpty || _sending) return;
+    final hasText = text.trim().isNotEmpty;
+    final hasMedia = _pendingImages.isNotEmpty;
+    if ((!hasText && !hasMedia) || _sending) return;
     setState(() => _sending = true);
     try {
-      await widget.onSend(text);
-      _composerController.clear();
-      _composerFocus.requestFocus();
+      if (hasMedia) {
+        await _sendPending();
+      }
+      if (hasText) {
+        await widget.onSend(text);
+        _composerController.clear();
+        _composerFocus.requestFocus();
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -584,7 +639,9 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   const Divider(height: 20, thickness: 1, color: Colors.white12),
                   Expanded(child: _buildMessages()),
                   const SizedBox(height: 10),
+                  if (_pendingImages.isNotEmpty) _buildPendingPreview(),
                   _buildComposer(),
+                  _buildAttachPanel(),
                 ],
               ),
             ),
@@ -636,7 +693,12 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         if (widget.conversation.isGroup)
           IconButton(
             tooltip: 'More',
-            onPressed: () => setState(() => _showMembers = !_showMembers),
+            onPressed: () {
+              if (!_showMembers && _showAttach) {
+                setState(() => _showAttach = false);
+              }
+              setState(() => _showMembers = !_showMembers);
+            },
             icon: AnimatedRotation(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOutCubic,
@@ -735,20 +797,256 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     );
   }
 
+  Future<void> _pickAndStageMedia(String type) async {
+    setState(() => _showAttach = false);
+
+    String? path;
+    ImMessageKind kind;
+
+    switch (type) {
+      case 'Image':
+        final result = await FilePicker.pickFiles(
+          type: FileType.image,
+          allowMultiple: true,
+        );
+        if (result == null || result.files.isEmpty) return;
+        setState(() {
+          _pendingKind = ImMessageKind.image;
+          _pendingImages.addAll(result.files.map((f) => f.path!));
+        });
+        return;
+      case 'Voice':
+        final result = await FilePicker.pickFiles(type: FileType.audio);
+        if (result == null || result.files.isEmpty) return;
+        path = result.files.single.path!;
+        kind = ImMessageKind.record;
+        break;
+      case 'Video':
+        final result = await FilePicker.pickFiles(type: FileType.video);
+        if (result == null || result.files.isEmpty) return;
+        path = result.files.single.path!;
+        kind = ImMessageKind.video;
+        break;
+      case 'File':
+        final result = await FilePicker.pickFiles(allowMultiple: true);
+        if (result == null || result.files.isEmpty) return;
+        setState(() {
+          _pendingKind = ImMessageKind.file;
+          _pendingImages.addAll(result.files.map((f) => f.path!));
+        });
+        return;
+      case 'Location':
+        return;
+      default:
+        return;
+    }
+
+    setState(() {
+      _pendingImages.add(path!);
+      _pendingKind = kind;
+    });
+  }
+
+  Future<String?> _pasteFromClipboardWithLog() async {
+    try {
+      final bytes = await Pasteboard.image;
+      if (bytes != null && bytes.isNotEmpty) {
+        debugPrint(
+            '[Paste] clipboard image: ${bytes.length} bytes');
+        final tmp = Directory.systemTemp;
+        final name =
+            'zzz_clip_${DateTime.now().microsecondsSinceEpoch}.png';
+        final out = File('${tmp.path}/$name');
+        await out.writeAsBytes(bytes);
+        return out.path;
+      }
+      // No image — check for text.
+      final text = await Pasteboard.text;
+      if (text != null && text.isNotEmpty) {
+        debugPrint(
+            '[Paste] clipboard text: ${text.length} chars — "${text.substring(0, text.length.clamp(0, 80))}"');
+      } else {
+        debugPrint('[Paste] clipboard empty or unsupported');
+      }
+    } catch (e) {
+      debugPrint('[Paste] error: $e');
+    }
+    return null;
+  }
+
+  Future<void> _sendPending() async {
+    if (_pendingImages.isEmpty) return;
+    final images = List<String>.of(_pendingImages);
+    final kind = _pendingKind;
+    setState(() {
+      _pendingImages.clear();
+      _sending = true;
+    });
+    try {
+      final repo = ImScope.repositoryOf(context);
+      final convId = widget.conversation.id;
+      for (final path in images) {
+        await repo.sendMediaMessage(
+          conversationId: convId,
+          filePath: path,
+          kind: kind,
+        );
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _sending = false);
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (mounted) _scrollToBottom();
+    });
+  }
+
+  Widget _buildPendingPreview() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        height: 72,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _pendingImages.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) => Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(
+                        File(_pendingImages[i]),
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 56,
+                          height: 56,
+                          color: Colors.white10,
+                          child: const Icon(Icons.image,
+                              color: Colors.white38),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: -6,
+                      right: -6,
+                      child: GestureDetector(
+                        onTap: () => setState(
+                            () => _pendingImages.removeAt(i)),
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: const BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.close_rounded,
+                              size: 12, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${_pendingImages.length}',
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+            IconButton(
+              onPressed: () => setState(() => _pendingImages.clear()),
+              icon: const Icon(Icons.close_rounded, size: 20),
+              color: Colors.white54,
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttachPanel() {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: _showAttach
+          ? Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: ZzzColors.grayPanel, width: 3),
+                  
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 80),
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      alignment: WrapAlignment.spaceEvenly,
+                      children: [
+                        for (final item in _attachItems)
+                          _AttachButton(
+                            icon: item.icon,
+                            label: item.tooltip,
+                            onTap: item.tooltip == 'Location'
+                                ? null
+                                : () => _pickAndStageMedia(item.tooltip),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            )
+          : const SizedBox.shrink(),
+    );
+  }
+
   Widget _buildComposer() {
     return Row(
       children: [
         Expanded(
-          child: ZzzTextInput(
-            controller: _composerController,
-            focusNode: _composerFocus,
-            hintText: 'Message something...',
-            minLines: 1,
-            maxLines: 3,
-            textInputAction: TextInputAction.send,
-            fillColor: Colors.white.withValues(alpha: 0.08),
-            foregroundColor: Colors.white,
-            onSubmitted: (_) => _submit(),
+          child: Focus(
+            onKeyEvent: (_, event) {
+              if (event is KeyDownEvent &&
+                  event.logicalKey == LogicalKeyboardKey.keyV &&
+                  HardwareKeyboard.instance.isMetaPressed) {
+                _pasteFromClipboardWithLog().then((path) {
+                  if (path != null && mounted) {
+                    setState(() {
+                      _pendingImages.add(path);
+                      _pendingKind = ImMessageKind.image;
+                    });
+                  }
+                });
+              }
+              return KeyEventResult.ignored;
+            },
+            child: ZzzTextInput(
+              controller: _composerController,
+              focusNode: _composerFocus,
+              hintText: 'Message something...',
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.send,
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              foregroundColor: Colors.white,
+              onSubmitted: (_) => _submit(),
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -771,13 +1069,17 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         const SizedBox(width: 4),
         IconButton.filled(
           tooltip: 'Attach',
-          onPressed: () {},
+          onPressed: _toggleAttach,
           style: IconButton.styleFrom(
-            backgroundColor: Colors.white,
+            backgroundColor: _showAttach ? ZzzColors.yellow : Colors.white,
             foregroundColor: Colors.black,
             minimumSize: const Size(52, 52),
           ),
-          icon: Image.asset(AppAssets.iconPhoto, width: 22),
+          icon: AnimatedRotation(
+            turns: _showAttach ? 0.125 : 0,
+            duration: const Duration(milliseconds: 250),
+            child: const Icon(Icons.add_rounded, size: 26),
+          ),
         ),
       ],
     );
@@ -826,6 +1128,99 @@ const _attachItems = [
   _AttachItem(Icons.videocam_rounded, 'Video'),
   _AttachItem(Icons.location_on_rounded, 'Location'),
 ];
+
+/// Collapsible recalled-message banner — system-message style.
+class _RecalledBanner extends StatefulWidget {
+  const _RecalledBanner({required this.message, required this.senderName});
+  final ImMessage message;
+  final String senderName;
+
+  @override
+  State<_RecalledBanner> createState() => _RecalledBannerState();
+}
+
+class _RecalledBannerState extends State<_RecalledBanner> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  size: 16,
+                  color: Colors.white38,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${widget.senderName} recalled a message',
+                  style: const TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Opacity(
+              opacity: 0.6,
+              child: _RecalledContent(message: widget.message),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Renders recalled message content without the outer bubble (avoids
+/// recursion from [ImMessageBubble] checking `recalled` again).
+class _RecalledContent extends StatelessWidget {
+  const _RecalledContent({required this.message});
+  final ImMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    if (message.hasMedia && message.mediaPath != null) {
+      if (message.kind == ImMessageKind.image) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.file(File(message.mediaPath!),
+              width: 200, fit: BoxFit.cover),
+        );
+      }
+      if (message.kind == ImMessageKind.record) {
+        return _VoiceBubble(
+          fileId: null,
+          url: null,
+          localPath: message.mediaPath,
+          isMine: message.isMine,
+          fileSize: message.mediaSize,
+        );
+      }
+    }
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 250),
+      child: Text(
+        message.text,
+        style: const TextStyle(color: Colors.white54, fontSize: 13),
+      ),
+    );
+  }
+}
 
 /// A quarter-circle radial menu centered on the "+" button.
 class _AttachRadialMenu extends StatefulWidget {
@@ -1006,6 +1401,768 @@ class _AttachItem {
   const _AttachItem(this.icon, this.tooltip);
   final IconData icon;
   final String tooltip;
+}
+
+/// A single attach-function button (icon + label below).
+class _AttachButton extends StatelessWidget {
+  const _AttachButton({
+    required this.icon,
+    required this.label,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 64,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 24, color: ZzzColors.yellow),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 11,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Forward / combined message bubble — tap to open in a dialog.
+class _ForwardBubble extends StatefulWidget {
+  const _ForwardBubble({required this.message});
+  final ImMessage message;
+
+  @override
+  State<_ForwardBubble> createState() => _ForwardBubbleState();
+}
+
+class _ForwardBubbleState extends State<_ForwardBubble> {
+  List<String>? _preview;
+
+  String get _forwardId {
+    final seg = widget.message.segments?.firstOrNull;
+    return seg?.data['id']?.toString() ?? '';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => _loadPreview());
+  }
+
+  Future<void> _loadPreview() async {
+    final id = _forwardId;
+    if (id.isEmpty) return;
+    try {
+      final group = await ImScope.interactionsOf(context)
+          .getForwardMessages(id);
+      if (!mounted) return;
+      final lines = _collectPreview(group, 3);
+      if (!mounted) return;
+      setState(() => _preview = lines);
+    } catch (_) {}
+  }
+
+  List<String> _collectPreview(ForwardGroup g, int max) {
+    final lines = <String>[];
+    for (final msg in g.messages) {
+      if (lines.length >= max) break;
+      if (msg.text.isNotEmpty) {
+        final sender = msg.senderId.isNotEmpty ? msg.senderId : '';
+        lines.add(sender.isNotEmpty ? '$sender: ${msg.text}' : msg.text);
+      }
+    }
+    for (final child in g.children) {
+      if (lines.length >= max) break;
+      lines.addAll(_collectPreview(child, max - lines.length));
+    }
+    return lines;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _showForwardDialog(context),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF12121e).withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: ZzzColors.grayPanel, width: 3),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(width: 3, color: ZzzColors.yellow),
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 10, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.forward_rounded,
+                              size: 13, color: ZzzColors.yellow),
+                          SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              'Chat records',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: ZzzColors.yellow,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_preview != null && _preview!.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        ..._preview!.map(
+                          (l) => Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              l,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white54, fontSize: 11),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+
+  void _showForwardDialog(BuildContext context) {
+    final id = _forwardId;
+    if (id.isEmpty) return;
+    showDialog(
+      context: context,
+      builder: (_) => _ForwardDialog(forwardId: id),
+    );
+  }
+}
+
+class _ForwardDialog extends StatefulWidget {
+  const _ForwardDialog({required this.forwardId});
+  final String forwardId;
+
+  @override
+  State<_ForwardDialog> createState() => _ForwardDialogState();
+}
+
+class _ForwardDialogState extends State<_ForwardDialog> {
+  ForwardGroup? _group;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final g = await ImScope.interactionsOf(context)
+          .getForwardMessages(widget.forwardId);
+      if (mounted) setState(() => _group = g);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  List<Widget> _buildForwardChildren(ForwardGroup group, int depth) =>
+      _buildForwardList(group, depth);
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF12121e),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: 420,
+          maxHeight: 560,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Title bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.forward_rounded,
+                      size: 20, color: Colors.white54),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Chat records',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    color: Colors.white54,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Colors.white10),
+            // Message list
+            Flexible(
+              child: _error != null
+                  ? Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.error_outline,
+                              size: 32, color: Colors.white24),
+                          const SizedBox(height: 8),
+                          Text(_error!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: Colors.white38, fontSize: 12)),
+                        ],
+                      ),
+                    )
+                  : _group == null
+                      ? const Padding(
+                          padding: EdgeInsets.all(32),
+                          child:
+                              Center(child: CircularProgressIndicator()),
+                        )
+                      : _group!.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.all(32),
+                              child: Text('Empty',
+                                  style:
+                                      TextStyle(color: Colors.white38)),
+                            )
+                          : ListView(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              children:
+                                  _buildForwardChildren(_group!, 0),
+                            ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Collapsible nested forward group.
+class _NestedForwardGroup extends StatefulWidget {
+  const _NestedForwardGroup({required this.group, required this.depth});
+  final ForwardGroup group;
+  final int depth;
+
+  @override
+  State<_NestedForwardGroup> createState() => _NestedForwardGroupState();
+}
+
+class _NestedForwardGroupState extends State<_NestedForwardGroup> {
+  bool _expanded = false;
+  int? _msgCount;
+  List<String>? _previewLines;
+
+  int _countAll(ForwardGroup g) {
+    var c = g.messages.length;
+    for (final child in g.children) {
+      c += _countAll(child);
+    }
+    return c;
+  }
+
+  List<String> _buildPreview(ForwardGroup g, {int max = 3}) {
+    final lines = <String>[];
+    for (final msg in g.messages) {
+      if (lines.length >= max) break;
+      if (msg.text.isNotEmpty) {
+        final sender = msg.senderId.isNotEmpty ? msg.senderId : '';
+        lines.add(sender.isNotEmpty ? '$sender: ${msg.text}' : msg.text);
+      }
+    }
+    for (final child in g.children) {
+      if (lines.length >= max) break;
+      lines.addAll(_buildPreview(child, max: max - lines.length));
+    }
+    return lines;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _msgCount ??= _countAll(widget.group);
+    _previewLines ??= _buildPreview(widget.group);
+    return Padding(
+      padding:
+          EdgeInsets.only(left: 16.0 * widget.depth, top: 6, bottom: 2),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 14,
+                      color: Colors.white38,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.forward_rounded,
+                      size: 14, color: Colors.white38),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Chat records ($_msgCount msg${_msgCount == 1 ? '' : 's'})',
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 11),
+                        ),
+                        if (!_expanded && _previewLines!.isNotEmpty)
+                          ..._previewLines!.take(3).map(
+                                (l) => Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    l,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: Colors.white24,
+                                        fontSize: 10),
+                                  ),
+                                ),
+                              ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_expanded) ...[
+              const SizedBox(height: 6),
+              ..._buildForwardList(widget.group, widget.depth + 1),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+List<Widget> _buildForwardList(ForwardGroup group, int depth) {
+  final widgets = <Widget>[];
+  for (final msg in group.messages) {
+    widgets.add(_ForwardMsgTile(msg: msg));
+  }
+  for (final child in group.children) {
+    widgets.add(_NestedForwardGroup(group: child, depth: depth));
+  }
+  return widgets;
+}
+
+/// Renders a single forwarded message with sender avatar/name + content.
+class _ForwardMsgTile extends StatefulWidget {
+  const _ForwardMsgTile({required this.msg});
+  final ImMessage msg;
+
+  @override
+  State<_ForwardMsgTile> createState() => _ForwardMsgTileState();
+}
+
+class _ForwardMsgTileState extends State<_ForwardMsgTile> {
+  ImageProvider? _avatar;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => _loadAvatar());
+  }
+
+  Future<void> _loadAvatar() async {
+    final path = await ImScope.interactionsOf(context)
+        .getUserAvatarPath(widget.msg.senderId);
+    if (!mounted) return;
+    if (path != null) {
+      setState(() => _avatar = FileImage(File(path)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final msg = widget.msg;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: SizedBox(
+              width: 32,
+              height: 32,
+              child: CircleAvatar(
+                radius: 16,
+                backgroundImage: _avatar ??
+                    const AssetImage(
+                        'assets/icons/zzz_agent_profile_icon.png'),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  msg.senderId,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                ...msg.segments
+                        ?.map((s) =>
+                            _renderSegment(context, s)) ??
+                    [Text(msg.text,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 13))],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _renderSegment(BuildContext context, OneBotMessageSegment seg) {
+    switch (seg.type) {
+      case 'image':
+        final localPath = seg.data['_localPath'] as String?;
+        final url = seg.data['url'] as String?;
+        if (localPath != null) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: _NsfwGuard(
+              messageId: 'fw_${localPath.hashCode}',
+              mediaPath: localPath,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.file(
+                  File(localPath),
+                  width: 180,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(
+                      Icons.broken_image, size: 32, color: Colors.white24),
+                ),
+              ),
+            ),
+          );
+        }
+        if (url != null && url.isNotEmpty) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(url, width: 180, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(
+                      Icons.broken_image, size: 32, color: Colors.white24)),
+            ),
+          );
+        }
+        return const Icon(Icons.image, size: 32, color: Colors.white24);
+      case 'text':
+        return Text(
+          seg.data['text'] as String? ?? '',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        );
+      case 'forward':
+        // NapCat already expands nested forwards; the inner messages
+        // are in the outer response.  Just show a static label.
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.forward_rounded,
+                  size: 14, color: Colors.white38),
+              SizedBox(width: 6),
+              Text('Chat records',
+                  style:
+                      TextStyle(color: Colors.white38, fontSize: 11)),
+            ],
+          ),
+        );
+      default:
+        return Text(
+          '[${seg.type}]',
+          style: const TextStyle(color: Colors.white38, fontSize: 12),
+        );
+    }
+  }
+}
+
+/// Voice message bubble — play / pause button + duration display.
+class _VoiceBubble extends StatefulWidget {
+  const _VoiceBubble({
+    this.fileId,
+    this.url,
+    this.localPath,
+    required this.isMine,
+    this.fileSize,
+  });
+
+  final String? fileId;
+  final String? url;
+  final String? localPath;
+  final bool isMine;
+  final int? fileSize;
+
+  @override
+  State<_VoiceBubble> createState() => _VoiceBubbleState();
+}
+
+class _VoiceBubbleState extends State<_VoiceBubble> {
+  final _player = AudioPlayer();
+  PlayerState _playerState = PlayerState.stopped;
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  String? _resolvedPath;
+  bool _downloading = false;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player.onPlayerStateChanged.listen((s) {
+      if (mounted) setState(() => _playerState = s);
+    });
+    _player.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _duration = d);
+    });
+    _player.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _position = p);
+    });
+    _player.onPlayerComplete.listen((_) {
+      if (mounted) setState(() {});
+    });
+    if (widget.localPath != null && widget.localPath!.isNotEmpty) {
+      _resolvedPath = widget.localPath;
+      _initSource();
+    }
+  }
+
+  Future<void> _initSource() async {
+    if (_resolvedPath == null) return;
+    try {
+      await _player.setSourceDeviceFile(_resolvedPath!);
+      await _player.setReleaseMode(ReleaseMode.stop);
+      if (mounted) setState(() => _ready = true);
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _ensureDownloaded() async {
+    if (_resolvedPath != null) return;
+    if (_downloading) return;
+    final fid = widget.fileId;
+    if (fid == null || fid.isEmpty) return;
+    setState(() => _downloading = true);
+    try {
+      final path = await ImScope.interactionsOf(context).downloadRecord(
+        fileId: fid,
+        url: widget.url,
+      );
+      if (path != null && path.isNotEmpty) {
+        _resolvedPath = path;
+        await _initSource();
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  void _togglePlay() async {
+    if (!_ready) {
+      await _ensureDownloaded();
+      if (!_ready) return;
+    }
+    switch (_playerState) {
+      case PlayerState.playing:
+        _player.pause();
+        break;
+      case PlayerState.paused:
+        _player.resume();
+        break;
+      case PlayerState.stopped:
+      case PlayerState.completed:
+        _player.seek(Duration.zero);
+        _player.resume();
+        break;
+      case PlayerState.disposed:
+        break;
+    }
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  int get _estimatedSecs {
+    if (_duration > Duration.zero) return _duration.inSeconds;
+    final bytes = widget.fileSize;
+    if (bytes != null && bytes > 0) return (bytes / 2000).round();
+    return 0;
+  }
+
+  Duration get _total => _duration > Duration.zero
+      ? _duration
+      : Duration(seconds: _estimatedSecs);
+
+  @override
+  Widget build(BuildContext context) {
+    final isPlaying = _playerState == PlayerState.playing;
+    final label = '${_fmt(_position)} / ${_fmt(_total)}';
+    final icon = _downloading
+        ? Icons.downloading_rounded
+        : _ready
+            ? (isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded)
+            : Icons.play_arrow_rounded;
+
+    return SizedBox(
+      width: 200,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: widget.isMine
+              ? const Color(0xFF007AFF)
+              : const Color(0xFFe8e8ec),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: _downloading ? null : _togglePlay,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: widget.isMine
+                      ? Colors.white.withValues(alpha: 0.22)
+                      : Colors.black12,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  color: widget.isMine ? Colors.white : Colors.black87,
+                  size: 24,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: widget.isMine ? Colors.white : Colors.black87,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// File attachment card — follows the demo's `ZzzSystemMessageView`

@@ -47,6 +47,20 @@ class SourceBackedRepository implements ImRepository {
       _source.sendTextMessage(conversationId: conversationId, text: text);
 
   @override
+  Future<ImMessage> sendMediaMessage({
+    required String conversationId,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  }) =>
+      _source.sendMediaMessage(
+        conversationId: conversationId,
+        filePath: filePath,
+        kind: kind,
+        fileName: fileName,
+      );
+
+  @override
   Future<void> markConversationRead(String conversationId) =>
       _source.markConversationRead(conversationId);
 
@@ -70,6 +84,14 @@ class SourceBackedRepository implements ImRepository {
 
   @override
   Future<void> clearAvatarCache() => _source.clearAvatarCache();
+
+  @override
+  Future<void> saveForwardRaw(String forwardId, String rawJson) =>
+      _source.saveForwardRaw(forwardId, rawJson);
+
+  @override
+  Future<String?> loadForwardRaw(String forwardId) =>
+      _source.loadForwardRaw(forwardId);
 
   @override
   void dispose() => _source.disconnect();

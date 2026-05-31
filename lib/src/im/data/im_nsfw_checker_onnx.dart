@@ -154,12 +154,6 @@ class OnnxNsfwChecker implements ImNsfwChecker {
   // Postprocessing — YOLOv8 output
   // -----------------------------------------------------------------------
 
-  /// NudeNet 18 class labels (0-indexed).
-  /// See [ImNsfwConfig.labels] for the current list.
-  ///
-  /// Class indices 2,3,4,5,6,14 are the default NSFW candidates.
-  static const _nsfwClassIndices = {2, 3, 4, 5, 6, 14};
-
   /// YOLOv8 output shape: [1, 4 + numClasses, numDetections].
   /// For NudeNet 320n: [1, 22, 8400].
   ///
@@ -251,15 +245,15 @@ class OnnxNsfwChecker implements ImNsfwChecker {
     for (final b in survived) {
       final labels = ImNsfwConfig.labels;
       final label = b.ci >= 0 && b.ci < labels.length ? labels[b.ci] : '?';
-      final isNsfw = _nsfwClassIndices.contains(b.ci) ? ' *** NSFW ***' : '';
+      final isNsfw = config.isClassEnabled(b.ci) ? ' *** NSFW ***' : '';
       ImLogger.logRaw(ImLogger.nsfw,
           '  $label score=${b.score.toStringAsFixed(3)} '
           'box=[${b.cx.toInt()},${b.cy.toInt()},${b.w.toInt()},${b.h.toInt()}]$isNsfw');
     }
 
     // 4. NSFW only if a survivor belongs to an enabled NSFW class.
-    return survived.any(
-        (b) => _nsfwClassIndices.contains(b.ci) && config.isClassEnabled(b.ci));
+    // NSFW if any surviving detection belongs to a user-enabled class.
+    return survived.any((b) => config.isClassEnabled(b.ci));
   }
 }
 

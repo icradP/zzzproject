@@ -25,6 +25,14 @@ abstract class ImRepository {
     required String text,
   });
 
+  /// Send a media message (image, voice, video, file).
+  Future<ImMessage> sendMediaMessage({
+    required String conversationId,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  });
+
   /// Mark all messages in a conversation as read.
   Future<void> markConversationRead(String conversationId);
 
@@ -45,6 +53,12 @@ abstract class ImRepository {
 
   /// Delete all cached avatar files. They will be re-downloaded on next use.
   Future<void> clearAvatarCache();
+
+  /// Cache forwarded messages raw response for offline access.
+  Future<void> saveForwardRaw(String forwardId, String rawJson);
+
+  /// Load cached raw response, or null if not cached.
+  Future<String?> loadForwardRaw(String forwardId);
 
   /// Release streams and subscriptions.
   void dispose();

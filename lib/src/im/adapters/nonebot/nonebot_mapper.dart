@@ -384,3 +384,77 @@ List<OneBotMessageSegment> imMessageToOneBotChain(ImMessage message) {
   }
   return (targetId: conversationId, isGroup: false);
 }
+
+/// Converts a forward-message chain (from [get_forward_msg]) into
+/// displayable [ImMessage] objects.
+///
+/// Two formats are supported:
+/// - NapCat/LLOneBot: direct segments (image, text, etc.)
+///   → rendered as a single message.
+/// - Standard OneBot v11: each segment is a "node" with
+///   `{user_id, nickname, time, content}` → split into one message
+///   per node.
+List<ImMessage> oneBotChainToImMessages(List<OneBotMessageSegment> chain) {
+  if (chain.isEmpty) return [];
+
+  // NapCat format: direct segments (no node wrappers).
+  if (!chain.any((s) => s.type == 'node')) {
+    final text = oneBotSegmentsToDisplayText(
+      chain,
+      resolveName: (_) => '',
+    );
+    return [
+      ImMessage(
+        id: 'fw_0',
+        conversationId: '',
+        senderId: '',
+        text: text,
+        sentAt: DateTime.now(),
+        kind: ImMessageKind.text,
+        segments: chain,
+        isMine: false,
+      ),
+    ];
+  }
+
+  // Standard OneBot v11: node wrappers.
+  final messages = <ImMessage>[];
+  int idx = 0;
+  for (final seg in chain) {
+    if (seg.type != 'node') continue;
+    final data = seg.data;
+    final nickname = data['nickname'] as String? ?? 'User';
+    final time = data['time'] as int?;
+    final content = data['content'];
+    List<OneBotMessageSegment> inner;
+    if (content is List) {
+      inner = <OneBotMessageSegment>[];
+      for (final e in content) {
+        if (e is Map<String, dynamic>) {
+          try {
+            inner.add(OneBotMessageSegment.fromJson(e));
+          } catch (_) {}
+        }
+      }
+    } else if (content is String) {
+      inner = [OneBotMessageSegment.plain(content)];
+    } else {
+      inner = [OneBotMessageSegment.plain('[unknown]')];
+    }
+    final text = oneBotSegmentsToDisplayText(inner,
+        resolveName: (_) => nickname);
+    messages.add(ImMessage(
+      id: 'fw_${idx++}',
+      conversationId: '',
+      senderId: nickname,
+      text: text,
+      sentAt: time != null
+          ? DateTime.fromMillisecondsSinceEpoch(time * 1000)
+          : DateTime.now(),
+      kind: ImMessageKind.text,
+      segments: inner,
+      isMine: false,
+    ));
+  }
+  return messages;
+}

@@ -1,3 +1,4 @@
+import '../adapters/nonebot/napcat_api.dart';
 import '../models/im_models.dart';
 
 /// UI-level callbacks reserved for navigation and side effects.
@@ -20,6 +21,27 @@ abstract class ImInteractionHandler {
   void onSearchQueryChanged(String query);
 
   void onComposeNewChat();
+
+  /// Request download of a voice/record file.
+  /// Returns the local file path, or `null` if download failed.
+  Future<String?> downloadRecord({
+    required String fileId,
+    String? url,
+  });
+
+  /// Fetch a combined forward message by its ID.
+  Future<ForwardGroup> getForwardMessages(String forwardId);
+
+  /// Resolve a user avatar local path, or null if unavailable.
+  Future<String?> getUserAvatarPath(String userId);
+
+  /// Send a media file (image, voice, video, file).
+  Future<void> sendMedia({
+    required ImConversation conversation,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  });
 }
 
 /// Default no-op handler used until product flows are connected.
@@ -49,4 +71,25 @@ class NoOpImInteractionHandler implements ImInteractionHandler {
 
   @override
   void onUserAvatarTap(ImUser user) {}
+
+  @override
+  Future<ForwardGroup> getForwardMessages(String forwardId) async =>
+      const ForwardGroup();
+
+  @override
+  Future<String?> getUserAvatarPath(String userId) async => null;
+
+  @override
+  Future<String?> downloadRecord({
+    required String fileId,
+    String? url,
+  }) async => null;
+
+  @override
+  Future<void> sendMedia({
+    required ImConversation conversation,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  }) async {}
 }

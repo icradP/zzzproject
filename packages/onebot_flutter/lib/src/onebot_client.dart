@@ -626,7 +626,10 @@ class OneBotClient {
     return OneBotGetMsgResult.fromJson(r.data as Map<String, dynamic>);
   }
 
-  /// Get a forward message by ID.
+  /// Get a forward message by ID (standard OneBot v11).
+  ///
+  /// For NapCat-specific behaviour (e.g. `message_id` param, inline nested
+  /// forwards), use [NapCatApi] from the app layer instead.
   Future<OneBotForwardResult> getForwardMsg(String id) async {
     final r = await callApi('get_forward_msg', {'id': id});
     _checkResponse(r);

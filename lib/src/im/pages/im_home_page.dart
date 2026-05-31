@@ -221,7 +221,12 @@ class _ImHomePageState extends State<ImHomePage>
             IconButton(
               tooltip: 'New chat',
               onPressed: () => _onNewChatPressed(isWide),
-              icon: const Icon(Icons.edit_square, color: ZzzColors.yellow),
+              icon: Image.asset(
+                'assets/icons/zzz_agent_profile_icon.png',
+                width: 24,
+                height: 24,
+                color: ZzzColors.yellow,
+              ),
             ),
           IconButton(
             tooltip: 'Settings',

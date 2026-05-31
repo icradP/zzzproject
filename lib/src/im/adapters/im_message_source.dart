@@ -27,6 +27,13 @@ abstract class ImMessageSource {
     required String text,
   });
 
+  Future<ImMessage> sendMediaMessage({
+    required String conversationId,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  });
+
   Future<void> markConversationRead(String conversationId);
 
   Future<List<ImConversation>> searchConversations(String query);
@@ -56,4 +63,10 @@ abstract class ImMessageSource {
 
   /// Delete all cached avatar files so they are re-downloaded on next use.
   Future<void> clearAvatarCache();
+
+  /// Cache forwarded messages raw response.
+  Future<void> saveForwardRaw(String forwardId, String rawJson);
+
+  /// Load cached raw response.
+  Future<String?> loadForwardRaw(String forwardId);
 }

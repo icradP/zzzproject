@@ -156,6 +156,7 @@ class ImMessage {
     this.mediaMime,
     this.reactions,
     this.replyToMessageId,
+    this.recalled = false,
   });
 
   final String id;
@@ -193,6 +194,9 @@ class ImMessage {
   /// ID of the message this message is replying to (from OneBot `reply` segment).
   final String? replyToMessageId;
 
+  /// Whether this message has been recalled by the sender or an admin.
+  final bool recalled;
+
   bool get hasMedia => mediaPath != null;
   bool get isReply => replyToMessageId != null;
 
@@ -203,6 +207,7 @@ class ImMessage {
     String? mediaPath,
     String? thumbnailPath,
     List<ImReaction>? reactions,
+    bool? recalled,
   }) {
     return ImMessage(
       id: id ?? this.id,
@@ -221,6 +226,7 @@ class ImMessage {
       mediaMime: mediaMime,
       reactions: reactions ?? this.reactions,
       replyToMessageId: replyToMessageId ?? this.replyToMessageId,
+      recalled: recalled ?? this.recalled,
     );
   }
 }

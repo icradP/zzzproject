@@ -66,6 +66,10 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app connects to a OneBot server on your local network to send and receive messages.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Select images and videos to send in chat.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Select audio files to send as voice messages.</string>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

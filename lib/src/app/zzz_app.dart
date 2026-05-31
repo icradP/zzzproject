@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/index.dart';
@@ -5,6 +8,7 @@ import '../assets/app_assets.dart';
 import '../im/adapters/im_message_source.dart';
 import '../im/adapters/nonebot/nonebot_models_web.dart'
     if (dart.library.io) '../im/adapters/nonebot/nonebot_models.dart';
+import '../im/adapters/nonebot/napcat_api.dart';
 import '../im/adapters/nonebot/nonebot_source_web.dart'
     if (dart.library.io) '../im/adapters/nonebot/nonebot_source.dart';
 import '../im/adapters/source_repository.dart';
@@ -15,6 +19,8 @@ import '../im/data/im_storage_config_web.dart'
     if (dart.library.io) '../im/data/im_storage_config.dart';
 import '../im/data/im_interaction_handler.dart';
 import '../im/data/im_logger.dart';
+import '../im/data/im_media_cache.dart';
+import '../im/models/im_models.dart';
 import '../im/data/im_nsfw_checker.dart';
 import '../im/data/im_nsfw_checker_onnx.dart';
 import '../im/data/im_nsfw_checker_stub.dart';
@@ -42,6 +48,8 @@ class _ZzzAppState extends State<ZzzApp> {
     super.initState();
     _initRepository();
   }
+
+  NoneBotSource? _noneBotSource;
 
   Future<void> _initRepository() async {
     final config = await ImConnectionConfig.loadOrDefault();
@@ -92,9 +100,17 @@ class _ZzzAppState extends State<ZzzApp> {
         avatarResolver: _zzzAvatarResolver,
       );
       source.storageConfig = storageConfig;
+      _noneBotSource = source;
       return SourceBackedRepository(source);
     }
     return MockImRepository();
+  }
+
+  /// Interaction handler wired to the active source.
+  ImInteractionHandler _buildInteractionHandler() {
+    final source = _noneBotSource;
+    if (source == null) return const NoOpImInteractionHandler();
+    return _ZzzImInteractionHandler(source: source);
   }
 
   String? _zzzAvatarResolver(String userId) {
@@ -142,7 +158,7 @@ class _ZzzAppState extends State<ZzzApp> {
 
     return ImScope(
       repository: repo,
-      interactions: const NoOpImInteractionHandler(),
+      interactions: _buildInteractionHandler(),
       nsfwChecker: _nsfwChecker!,
       nsfwStateCache: _nsfwStateCache,
       connectionStatus: _connectionStatus,
@@ -163,4 +179,140 @@ class _ZzzAppState extends State<ZzzApp> {
       ),
     );
   }
+}
+
+/// Interaction handler that delegates record downloads to the source's
+/// media cache (on-demand, triggered by the voice bubble play button).
+class _ZzzImInteractionHandler implements ImInteractionHandler {
+  _ZzzImInteractionHandler({required this.source});
+
+  final NoneBotSource source;
+  ImMediaCache? _cache;
+
+  ImMediaCache? _getCache() {
+    final c = source.client;
+    if (c == null) return null;
+    return _cache ??= ImMediaCache(client: c);
+  }
+
+  @override
+  Future<String?> getUserAvatarPath(String userId) async {
+    // Try cached first.
+    final user = await source.getUser(userId);
+    if (user?.avatarLocalPath != null) return user!.avatarLocalPath;
+    if (user?.avatarAssetPath != null) return user!.avatarAssetPath;
+    // Not cached — fetch from QQ via OneBot API.
+    return source.fetchUserAvatar(userId);
+  }
+
+  @override
+  Future<ForwardGroup> getForwardMessages(String forwardId) async {
+    // 1. Try SQLite cache first — re-parse raw JSON to preserve tree.
+    final cachedRaw = await source.loadForwardRaw(forwardId);
+    if (cachedRaw != null) {
+      try {
+        final data = jsonDecode(cachedRaw) as Map<String, dynamic>;
+        final group = NapCatApi.parseResponse(data);
+        ImLogger.logRaw(ImLogger.event,
+            'forward from cache: ${group.messages.length} msgs + ${group.children.length} nested');
+        return group;
+      } catch (_) {}
+    }
+
+    // 2. Fetch via NapCat API.
+    final client = source.client;
+    if (client == null) return const ForwardGroup();
+    final api = NapCatApi(client);
+    final group = await api.getForwardGroup(forwardId);
+    ImLogger.logRaw(ImLogger.event,
+        'forward api: ${group.messages.length} msgs + ${group.children.length} nested');
+
+    // 3. Download images & persist raw response.
+    final flat = NapCatApi.flattenGroup(group);
+    await _cacheForwardImages(flat);
+    if (flat.isNotEmpty && api.lastRawData != null) {
+      await source.saveForwardRaw(forwardId, jsonEncode(api.lastRawData));
+    }
+    return group;
+  }
+
+  Future<void> _cacheForwardImages(List<ImMessage> msgs) async {
+    final client = source.client;
+    if (client == null) return;
+    for (final msg in msgs) {
+      final segs = msg.segments;
+      if (segs == null) continue;
+      for (final seg in segs) {
+        if (seg.type != 'image') continue;
+        final url = seg.data['url'] as String?;
+        final fileId = seg.data['file'] as String?;
+        if (url == null && fileId == null) continue;
+        try {
+          // Download to temp dir for local display + NSFW.
+          final tmp = File(
+              '${Directory.systemTemp.path}/zzz_fw_${url.hashCode}.jpg');
+          if (!tmp.existsSync()) {
+            if (url != null && url.isNotEmpty) {
+              final http = HttpClient();
+              final req = await http.getUrl(Uri.parse(url));
+              final res = await req.close();
+              await res.pipe(tmp.openWrite());
+              http.close();
+            } else if (fileId != null && fileId.isNotEmpty) {
+              final img = await client.getImage(file: fileId);
+              if (img.file != null) {
+                final src = File(img.file!);
+                if (src.existsSync()) await src.copy(tmp.path);
+              }
+            }
+          }
+          seg.data['_localPath'] = tmp.path;
+        } catch (_) {}
+      }
+    }
+  }
+
+  @override
+  Future<String?> downloadRecord({
+    required String fileId,
+    String? url,
+  }) async {
+    final cache = _getCache();
+    if (cache == null) return null;
+    try {
+      final cached = await cache.downloadRecord(
+        fileId: fileId,
+        url: url,
+      );
+      return cached.localPath;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> sendMedia({
+    required ImConversation conversation,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  }) async {}
+
+  @override
+  void onComposeNewChat() {}
+  @override
+  void onConversationClosed() {}
+  @override
+  void onConversationOpened(ImConversation conversation) {}
+  @override
+  void onMessageLongPress(ImMessage message) {}
+  @override
+  void onSearchQueryChanged(String query) {}
+  @override
+  Future<void> onSendMessage({
+    required ImConversation conversation,
+    required String text,
+  }) async {}
+  @override
+  void onUserAvatarTap(ImUser user) {}
 }

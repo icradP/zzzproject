@@ -336,6 +336,45 @@ class MockImRepository implements ImRepository {
   }
 
   @override
+  Future<ImMessage> sendMediaMessage({
+    required String conversationId,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  }) async {
+    final label = switch (kind) {
+      ImMessageKind.image => '[图片]',
+      ImMessageKind.record => '[语音]',
+      ImMessageKind.video => '[视频]',
+      ImMessageKind.file => '[文件]',
+      _ => '[媒体]',
+    };
+    final message = ImMessage(
+      id: 'local_${DateTime.now().microsecondsSinceEpoch}',
+      conversationId: conversationId,
+      senderId: _currentUserId,
+      text: label,
+      sentAt: DateTime.now(),
+      isMine: true,
+      kind: kind,
+      mediaPath: filePath,
+    );
+    final list = _messages.putIfAbsent(conversationId, () => []);
+    list.add(message);
+    _emitMessages(conversationId);
+    final conversation = _conversations[conversationId];
+    if (conversation != null) {
+      _conversations[conversationId] = conversation.copyWith(
+        subtitle: label,
+        updatedAt: message.sentAt,
+        unreadCount: 0,
+      );
+    }
+    _emitConversations();
+    return message;
+  }
+
+  @override
   Future<void> markConversationRead(String conversationId) async {
     final conversation = _conversations[conversationId];
     if (conversation == null || conversation.unreadCount == 0) return;
@@ -397,6 +436,12 @@ class MockImRepository implements ImRepository {
   Future<void> clearAvatarCache() async {
     // Mock repository uses asset images; nothing to clear.
   }
+
+  @override
+  Future<void> saveForwardRaw(String forwardId, String rawJson) async {}
+
+  @override
+  Future<String?> loadForwardRaw(String forwardId) async => null;
 
   String _resolveDisplayName(String conversationId) {
     if (!conversationId.startsWith('dm_')) return conversationId;

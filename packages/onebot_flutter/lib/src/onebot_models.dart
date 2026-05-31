@@ -1408,8 +1408,13 @@ class OneBotForwardResult {
   const OneBotForwardResult({required this.message});
   final List<OneBotMessageSegment> message;
 
-  factory OneBotForwardResult.fromJson(Map<String, dynamic> json) =>
-      OneBotForwardResult(message: _parseMessage(json['message']));
+  /// Standard OneBot v11 parser.  For NapCat's wrapper-array format
+  /// (including inline nested forwards), use `NapCatApi` from the app layer.
+  factory OneBotForwardResult.fromJson(Map<String, dynamic> json) {
+    final raw = json['messages'] ?? json['message'];
+    return OneBotForwardResult(
+        message: raw != null ? _parseMessage(raw) : []);
+  }
 }
 
 class OneBotCanSendResult {

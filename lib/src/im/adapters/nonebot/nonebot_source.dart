@@ -71,6 +71,15 @@ class NoneBotSource implements ImMessageSource {
 
   late String _selfId;
   OneBotClient? _client;
+
+  /// The connected OneBot client, or `null` in mock / disconnected mode.
+  OneBotClient? get client => _client;
+
+  /// Fetch + cache a user avatar. Returns the local path when ready.
+  Future<String?> fetchUserAvatar(String userId) async {
+    if (_avatarCache == null) return null;
+    return _avatarCache!.get(userId);
+  }
   ImMediaCache? _mediaCache;
   ImAvatarCache? _avatarCache;
   ImMessageStore? _store;
@@ -173,6 +182,16 @@ class NoneBotSource implements ImMessageSource {
   @override
   Future<void> clearAvatarCache() async {
     await _avatarCache?.clear();
+  }
+
+  @override
+  Future<void> saveForwardRaw(String forwardId, String rawJson) async {
+    await _store?.saveForwardRaw(forwardId, rawJson);
+  }
+
+  @override
+  Future<String?> loadForwardRaw(String forwardId) async {
+    return _store?.loadForwardRaw(forwardId);
   }
 
   @override
@@ -324,6 +343,125 @@ class NoneBotSource implements ImMessageSource {
     }
 
     return message;
+  }
+
+  @override
+  Future<ImMessage> sendMediaMessage({
+    required String conversationId,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  }) async {
+    final label = switch (kind) {
+      ImMessageKind.image => '[图片]',
+      ImMessageKind.record => '[语音]',
+      ImMessageKind.video => '[视频]',
+      ImMessageKind.file => fileName ?? '[文件]',
+      _ => '[媒体]',
+    };
+
+    final localId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    var message = ImMessage(
+      id: localId,
+      conversationId: conversationId,
+      senderId: _selfId,
+      text: label,
+      kind: kind,
+      mediaPath: filePath,
+      sentAt: DateTime.now(),
+      isMine: true,
+      status: ImMessageStatus.sending,
+    );
+
+    final list = _messages.putIfAbsent(conversationId, () => []);
+    list.add(message);
+    _emitMessages(conversationId);
+    _saveMsg(message);
+
+    final conv = _conversations[conversationId];
+    if (conv != null) {
+      _conversations[conversationId] = conv.copyWith(
+        subtitle: label,
+        updatedAt: message.sentAt,
+        unreadCount: 0,
+      );
+    } else {
+      final parsed = parseConversationId(conversationId, _selfId);
+      _conversations[conversationId] = ImConversation(
+        id: conversationId,
+        type: parsed.isGroup ? ImConversationType.group : ImConversationType.direct,
+        title: parsed.isGroup
+            ? (_groupNames[parsed.targetId] ?? 'Group ${parsed.targetId}')
+            : parsed.targetId,
+        participantIds: parsed.isGroup
+            ? (_groupMemberIds[parsed.targetId] ?? [_selfId])
+            : [_selfId, parsed.targetId],
+        subtitle: label,
+        updatedAt: message.sentAt,
+      );
+    }
+    _saveConv(_conversations[conversationId]!);
+    _emitConversations();
+
+    if (!_mock && _client != null) {
+      try {
+        final chain = _mediaToChain(kind, filePath, fileName);
+        final parsed = parseConversationId(conversationId, _selfId);
+        int msgId;
+        if (parsed.isGroup) {
+          msgId = await _client!.sendGroupMsg(
+            groupId: parsed.targetId,
+            message: chain,
+          );
+        } else {
+          msgId = await _client!.sendPrivateMsg(
+            userId: parsed.targetId,
+            message: chain,
+          );
+        }
+        message = message.copyWith(id: '$msgId', status: ImMessageStatus.sent);
+        final idx = list.indexWhere((m) => m.id == localId);
+        if (idx >= 0) list[idx] = message;
+        _emitMessages(conversationId);
+      } on OneBotException catch (e) {
+        message = message.copyWith(status: ImMessageStatus.failed);
+        final idx = list.indexWhere((m) => m.id == localId);
+        if (idx >= 0) list[idx] = message;
+        _emitMessages(conversationId);
+        throw Exception('Failed to send media: ${e.message}');
+      }
+    } else {
+      message = message.copyWith(status: ImMessageStatus.sent);
+      final idx = list.indexWhere((m) => m.id == localId);
+      if (idx >= 0) list[idx] = message;
+      _emitMessages(conversationId);
+    }
+
+    return message;
+  }
+
+  List<OneBotMessageSegment> _mediaToChain(
+      ImMessageKind kind, String filePath, String? fileName) {
+    final file = File(filePath);
+    if (!file.existsSync()) return [OneBotMessageSegment.plain('[文件未找到]')];
+
+    final bytes = file.readAsBytesSync();
+    final b64 = base64Encode(bytes);
+    // Prepend a MIME hint so the OneBot server can detect the type.
+    final dataUri = 'base64://$b64';
+
+    return switch (kind) {
+      ImMessageKind.image => [OneBotMessageSegment.image(dataUri)],
+      ImMessageKind.record => [OneBotMessageSegment.record(dataUri)],
+      ImMessageKind.video => [OneBotMessageSegment.video(dataUri)],
+      ImMessageKind.file => [
+          OneBotMessageSegment(
+            type: 'file',
+            data: {'file': dataUri, 'name': fileName ?? 'file'},
+          ),
+        ],
+      _ => [OneBotMessageSegment.plain(filePath)],
+    };
   }
 
   @override
@@ -613,12 +751,64 @@ class NoneBotSource implements ImMessageSource {
           );
           _emitConversations();
         }
+      case OneBotGroupRecallNotice(
+           :final groupId,
+           :final operatorId,
+           :final messageId):
+        ImLogger.logRaw(ImLogger.event,
+            'recall groupId=$groupId opId=$operatorId msgId=$messageId');
+        final convId = oneBotConversationId(
+          selfId: _selfId,
+          groupId: groupId,
+        );
+        _markRecalled(convId, messageId, operatorId);
+      case OneBotFriendRecallNotice(
+           :final userId,
+           :final messageId):
+        ImLogger.logRaw(ImLogger.event,
+            'recall userId=$userId msgId=$messageId');
+        final convId = oneBotConversationId(
+          selfId: _selfId,
+          userId: userId,
+        );
+        _markRecalled(convId, messageId, userId);
       default:
-        // Other notice events (group_upload, group_admin, etc.)
-        // are ignored for now.
+        ImLogger.logRaw(ImLogger.event,
+            'unhandled notice: ${event.noticeType}');
         break;
     }
   }
+
+  void _markRecalled(String convId, int messageId, String operatorId) {
+    final list = _messages[convId];
+    if (list == null) return;
+    final prefix = '$messageId';
+    final opName = _users[operatorId]?.displayName ?? operatorId;
+    var found = false;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id == prefix || list[i].id.startsWith('${prefix}_')) {
+        list[i] = list[i].copyWith(recalled: true);
+        // Persist the recall notice text separately so we can display it
+        // in the banner while keeping the original content.
+        _saveRecallNotice(convId, list[i].id, opName);
+        _saveMsg(list[i]); // persists recalled flag
+        found = true;
+      }
+    }
+    if (found) {
+      _emitMessages(convId);
+      ImLogger.logRaw(
+          ImLogger.event, 'recall msg=$messageId by=$operatorId');
+    }
+  }
+
+  final _recallNotices = <String, String>{}; // msgId → operatorName
+
+  void _saveRecallNotice(String convId, String msgId, String opName) {
+    _recallNotices[msgId] = opName;
+  }
+
+  String? recallNoticeFor(String msgId) => _recallNotices[msgId];
 
   // -----------------------------------------------------------------
   // Name resolution (connected mode)
@@ -791,6 +981,8 @@ class NoneBotSource implements ImMessageSource {
           (url == null || url.isEmpty)) {
         continue;
       }
+      // Record / voice files are downloaded on-demand when the user taps play.
+      if (seg.type == 'record') continue;
       final dlId = fileId ?? url!;
 
       Future<CachedMedia> future;

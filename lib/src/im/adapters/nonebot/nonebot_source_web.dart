@@ -50,6 +50,11 @@ class NoneBotSource implements ImMessageSource {
   set storageConfig(dynamic v) {}
   set mediaCache(dynamic v) {}
 
+  // ignore: avoid_returning_null
+  dynamic get client => null;
+
+  Future<String?> fetchUserAvatar(String userId) async => null;
+
   static String? _defaultAvatar(String userId) => null;
 
   // -----------------------------------------------------------------
@@ -105,6 +110,16 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<ImMessage> sendMediaMessage({
+    required String conversationId,
+    required String filePath,
+    required ImMessageKind kind,
+    String? fileName,
+  }) async {
+    throw UnsupportedError('sendMediaMessage is not available on web');
+  }
+
+  @override
   Future<void> markConversationRead(String conversationId) async {}
 
   @override
@@ -121,6 +136,12 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<void> clearAvatarCache() async {}
+
+  @override
+  Future<void> saveForwardRaw(String forwardId, String rawJson) async {}
+
+  @override
+  Future<String?> loadForwardRaw(String forwardId) async => null;
 
   @override
   Future<void> ensureConversation(ImConversation conversation) async {}

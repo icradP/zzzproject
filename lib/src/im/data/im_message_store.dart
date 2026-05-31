@@ -22,7 +22,7 @@ class ImMessageStore {
 
   Database? _db;
 
-  static const _version = 3;
+  static const _version = 5;
 
   static bool _ffiInitialized = false;
 
@@ -110,6 +110,14 @@ class ImMessageStore {
       CREATE INDEX IF NOT EXISTS idx_messages_conv
       ON messages(conversation_id, sent_at DESC)
     ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS forward_messages (
+        forward_id  TEXT PRIMARY KEY,
+        messages    TEXT NOT NULL,
+        fetched_at  INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
@@ -131,6 +139,20 @@ class ImMessageStore {
       await db.execute(
         "ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT",
       );
+    }
+    if (oldV < 4) {
+      await db.execute(
+        "ALTER TABLE messages ADD COLUMN recalled INTEGER NOT NULL DEFAULT 0",
+      );
+    }
+    if (oldV < 5) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS forward_messages (
+          forward_id  TEXT PRIMARY KEY,
+          messages    TEXT NOT NULL,
+          fetched_at  INTEGER NOT NULL
+        )
+      ''');
     }
   }
 
@@ -314,6 +336,37 @@ class ImMessageStore {
     'extra': '{}',
   };
 
+  // -----------------------------------------------------------------------
+  // Forward messages cache (stores raw API response JSON)
+  // -----------------------------------------------------------------------
+
+  Future<void> saveForwardRaw(String forwardId, String rawJson) async {
+    final db = _dbOrNull;
+    if (db == null) return;
+    await db.insert(
+      'forward_messages',
+      {
+        'forward_id': forwardId,
+        'messages': rawJson,
+        'fetched_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> loadForwardRaw(String forwardId) async {
+    final db = _dbOrNull;
+    if (db == null) return null;
+    final rows = await db.query(
+      'forward_messages',
+      where: 'forward_id = ?',
+      whereArgs: [forwardId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['messages'] as String?;
+  }
+
   ImConversation _rowToConv(Map<String, dynamic> r) => ImConversation(
     id: r['id'] as String,
     type: ImConversationType.values[(r['type'] as int?) ?? 0],
@@ -351,6 +404,7 @@ class ImMessageStore {
         ? jsonEncode(m.reactions!.map((r) => {'emoji_id': r.emojiId, 'count': r.count}).toList())
         : null,
     'reply_to_message_id': m.replyToMessageId,
+    'recalled': m.recalled ? 1 : 0,
     'extra': '{}',
   };
 
@@ -400,6 +454,7 @@ class ImMessageStore {
       mediaMime: r['media_mime'] as String?,
       reactions: reactions,
       replyToMessageId: r['reply_to_message_id'] as String?,
+      recalled: (r['recalled'] as int?) == 1,
     );
   }
 

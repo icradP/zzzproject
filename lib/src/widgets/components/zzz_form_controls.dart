@@ -45,6 +45,7 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
     super.initState();
     _focusNode = widget.focusNode ?? FocusNode();
     _focusNode.addListener(() {
+      if (!mounted) return;
       if (_focusNode.hasFocus != _focused) {
         setState(() => _focused = _focusNode.hasFocus);
       }
@@ -145,6 +146,7 @@ class _ZzzSelectState<T> extends State<ZzzSelect<T>> {
     super.initState();
     _focusNode = FocusNode();
     _focusNode.addListener(() {
+      if (!mounted) return;
       if (_focusNode.hasFocus != _focused) {
         setState(() => _focused = _focusNode.hasFocus);
       }
