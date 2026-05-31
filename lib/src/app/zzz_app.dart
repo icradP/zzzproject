@@ -19,6 +19,7 @@ import '../im/data/im_storage_config_web.dart'
     if (dart.library.io) '../im/data/im_storage_config.dart';
 import '../im/data/im_interaction_handler.dart';
 import '../im/data/im_logger.dart';
+import '../im/data/im_notification_service.dart';
 import '../im/data/im_media_cache.dart';
 import '../im/models/im_models.dart';
 import '../im/data/im_nsfw_checker.dart';
@@ -47,6 +48,28 @@ class _ZzzAppState extends State<ZzzApp> {
   void initState() {
     super.initState();
     _initRepository();
+    _initNotifications();
+  }
+
+  var _notifyPermissionRequested = false;
+
+  void _initNotifications() {
+    ImNotificationService.init();
+    NoneBotSource.onNewMessage = (convId, sender, text) {
+      // Request permission on first incoming message.
+      if (!_notifyPermissionRequested) {
+        _notifyPermissionRequested = true;
+        ImNotificationService.requestPermission();
+      }
+      // Show notification when backgrounded.
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.paused) {
+        ImNotificationService.show(
+          id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+          title: sender,
+          body: text,
+        );
+      }
+    };
   }
 
   NoneBotSource? _noneBotSource;

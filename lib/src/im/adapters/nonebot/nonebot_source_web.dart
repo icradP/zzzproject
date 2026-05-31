@@ -53,6 +53,8 @@ class NoneBotSource implements ImMessageSource {
   // ignore: avoid_returning_null
   dynamic get client => null;
 
+  static void Function(String, String, String)? onNewMessage;
+
   Future<String?> fetchUserAvatar(String userId) async => null;
 
   static String? _defaultAvatar(String userId) => null;

@@ -149,7 +149,10 @@ class NoneBotSource implements ImMessageSource {
         selfId: _selfId,
         storageConfig: _storageConfig,
       );
+      ImLogger.logRaw(ImLogger.store,
+          'opening store (config=${_storageConfig != null})');
       await _store!.open();
+      ImLogger.logRaw(ImLogger.store, 'store opened OK');
       await _loadHistory();
 
       // Best-effort: pre-populate friend & group names on connect.
@@ -819,9 +822,9 @@ class NoneBotSource implements ImMessageSource {
     if (_store == null) return;
     try {
       final convs = await _store!.getConversations();
+      ImLogger.ingestCount('history conversations', convs.length);
       for (final c in convs) {
         _conversations[c.id] = c;
-        // Restore group names from persisted conversations.
         if (c.isGroup) {
           final parsed = parseConversationId(c.id, _selfId);
           _groupNames.putIfAbsent(parsed.targetId, () => c.title);
@@ -832,7 +835,11 @@ class NoneBotSource implements ImMessageSource {
         }
       }
       _emitConversations();
-    } catch (_) {}
+      ImLogger.ingestCount('history messages total',
+          _messages.values.fold<int>(0, (s, l) => s + l.length));
+    } catch (e) {
+      ImLogger.logRaw(ImLogger.store, 'loadHistory error: $e');
+    }
   }
 
   /// Persist a message to SQLite (fire-and-forget).
@@ -1079,10 +1086,25 @@ class NoneBotSource implements ImMessageSource {
     if (c != null && !c.isClosed) c.add(sorted);
   }
 
+  /// Optional callback invoked when a new message arrives (for notifications).
+  static void Function(String convId, String sender, String text)? onNewMessage;
+
   void _emitMessages(String conversationId) {
     final c = _messageControllers[conversationId];
     if (c != null && !c.isClosed) {
       c.add(List.unmodifiable(_messages[conversationId] ?? const []));
+    }
+    // Fire notification hook.
+    final list = _messages[conversationId];
+    if (list != null && list.isNotEmpty) {
+      final last = list.last;
+      if (!last.isMine) {
+        onNewMessage?.call(
+          conversationId,
+          _users[last.senderId]?.displayName ?? last.senderId,
+          last.text,
+        );
+      }
     }
   }
 

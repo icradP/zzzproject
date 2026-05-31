@@ -29,8 +29,11 @@ class ImMessageStore {
   static void _ensureFfi() {
     if (_ffiInitialized) return;
     _ffiInitialized = true;
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
+    // On desktop, sqflite needs FFI init. On iOS/Android, use native sqflite.
+    if (!Platform.isIOS && !Platform.isAndroid) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
   }
 
   Future<void> open() async {
@@ -101,6 +104,7 @@ class ImMessageStore {
         media_mime      TEXT,
         reactions       TEXT,
         reply_to_message_id TEXT,
+        recalled        INTEGER NOT NULL DEFAULT 0,
         extra           TEXT NOT NULL DEFAULT '{}',
         PRIMARY KEY (id, conversation_id)
       )
@@ -109,6 +113,14 @@ class ImMessageStore {
     await db.execute('''
       CREATE INDEX IF NOT EXISTS idx_messages_conv
       ON messages(conversation_id, sent_at DESC)
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS forward_messages (
+        forward_id  TEXT PRIMARY KEY,
+        messages    TEXT NOT NULL,
+        fetched_at  INTEGER NOT NULL
+      )
     ''');
 
     await db.execute('''
