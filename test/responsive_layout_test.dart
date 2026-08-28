@@ -19,29 +19,24 @@ void main() {
   ];
 
   for (final scenario in scenarios) {
-    testWidgets('IM home adapts without layout exceptions on ${scenario.name}', (
-      tester,
-    ) async {
-      await _setViewport(tester, scenario.size);
-      SharedPreferences.setMockInitialValues({});
+    testWidgets(
+      'IM home adapts without layout exceptions on ${scenario.name}',
+      (tester) async {
+        await _setViewport(tester, scenario.size);
+        SharedPreferences.setMockInitialValues({});
 
-      await tester.pumpWidget(const ZzzApp());
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      _expectNoFlutterException(tester);
+        await tester.pumpWidget(const ZzzApp());
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        _expectNoFlutterException(tester);
 
-      expect(find.text('Messages'), findsOneWidget);
-      expect(find.text('Belle'), findsWidgets);
+        expect(find.text('Messages'), findsOneWidget);
+        expect(find.text('Belle'), findsWidgets);
 
-      await _openDemoFromImHome(tester);
-      _expectNoFlutterException(tester);
-
-      expect(find.text('Chat Simulator'), findsOneWidget);
-      expect(find.text('Start a conversation!'), findsOneWidget);
-
-      await _openAndCloseSettings(tester);
-      _expectNoFlutterException(tester);
-    });
+        await _openAndCloseSettings(tester);
+        _expectNoFlutterException(tester);
+      },
+    );
   }
 
   for (final scenario in scenarios) {
@@ -76,26 +71,21 @@ Future<void> _setViewport(WidgetTester tester, Size size) async {
   });
 }
 
-Future<void> _openDemoFromImHome(WidgetTester tester) async {
-  final demoButton = find.text('Open Chat Simulator Demo');
-  await tester.ensureVisible(demoButton);
-  await tester.tap(demoButton);
-  await tester.pump(const Duration(milliseconds: 400));
-  await tester.pump(const Duration(milliseconds: 400));
+Future<void> _openAndCloseSettings(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Settings'));
+  await _pumpFrames(tester);
+
+  expect(find.text('IM Settings'), findsOneWidget);
+  await tester.tap(find.byTooltip('Back'));
+  await _pumpFrames(tester);
+
+  expect(find.text('Messages'), findsOneWidget);
 }
 
-Future<void> _openAndCloseSettings(WidgetTester tester) async {
-  final settingsButton = find.byTooltip('Settings');
-  await tester.ensureVisible(settingsButton);
-  await tester.tap(settingsButton);
-  await tester.pump(const Duration(milliseconds: 300));
-
-  expect(find.text('IM Connection Settings'), findsOneWidget);
-  final backButton = find.byTooltip('Back');
-  await tester.ensureVisible(backButton);
-  await tester.tap(backButton);
-  await tester.pump(const Duration(milliseconds: 300));
-  await tester.pump(const Duration(milliseconds: 300));
+Future<void> _pumpFrames(WidgetTester tester) async {
+  for (var i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 void _expectNoFlutterException(WidgetTester tester) {

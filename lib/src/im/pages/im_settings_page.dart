@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:onebot_flutter/onebot_flutter.dart' show OneBotClient;
+import 'package:onebot_flutter/onebot_flutter.dart'
+    show OneBotClient, OneBotConfig, OneBotWsMode;
 
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
-import '../adapters/nonebot/nonebot_models.dart';
 import '../data/im_animation_config.dart';
 import '../data/im_backdrop_config.dart';
 import '../data/im_connection_config.dart';
 import '../data/im_nsfw_config.dart';
+import '../data/im_push_manager.dart';
 import '../data/im_storage_config.dart';
 import '../im_scope.dart';
+import '../adapters/zzz_server/zzz_server_source.dart';
 
 class ImSettingsPage extends StatefulWidget {
   const ImSettingsPage({super.key});
@@ -23,11 +25,12 @@ class ImSettingsPage extends StatefulWidget {
 class _ImSettingsPageState extends State<ImSettingsPage>
     with SingleTickerProviderStateMixin {
   ImPlatform _platform = ImPlatform.mock;
-  OneBotWsMode _wsMode = OneBotWsMode.forward;
+  WsMode _wsMode = WsMode.forward;
   final _httpController = TextEditingController();
   final _wsController = TextEditingController();
   final _tokenController = TextEditingController();
   final _selfIdController = TextEditingController();
+  final _serverUrlController = TextEditingController();
   final _storagePathController = TextEditingController();
   bool _saving = false;
   bool _testing = false;
@@ -53,16 +56,21 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       icon: Icons.hub_outlined,
       tooltip: 'NoneBot v1 (OneBot)',
     ),
+    ZzzSegmentItem<ImPlatform>(
+      value: ImPlatform.zzzServer,
+      icon: Icons.dns_outlined,
+      tooltip: 'ZZZ Server',
+    ),
   ];
 
   final _wsModeItems = const [
-    ZzzSegmentItem<OneBotWsMode>(
-      value: OneBotWsMode.forward,
+    ZzzSegmentItem<WsMode>(
+      value: WsMode.forward,
       icon: Icons.arrow_forward_rounded,
       tooltip: 'Forward (client)',
     ),
-    ZzzSegmentItem<OneBotWsMode>(
-      value: OneBotWsMode.reverse,
+    ZzzSegmentItem<WsMode>(
+      value: WsMode.reverse,
       icon: Icons.arrow_back_rounded,
       tooltip: 'Reverse (server)',
     ),
@@ -84,6 +92,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     _wsController.dispose();
     _tokenController.dispose();
     _selfIdController.dispose();
+    _serverUrlController.dispose();
     _storagePathController.dispose();
     _bgController.dispose();
     for (final c in _nsfwControllers) {
@@ -110,6 +119,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       _wsController.text = config.wsEndpoint ?? '';
       _tokenController.text = config.accessToken ?? '';
       _selfIdController.text = config.selfId;
+      _serverUrlController.text = config.serverUrl ?? '';
       _storagePathController.text = storage.basePath ?? '';
       _loaded = true;
     });
@@ -121,22 +131,30 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       final config = ImConnectionConfig(
         platform: _platform,
         wsMode: _wsMode,
-        httpEndpoint: _httpController.text.trim().isEmpty
-            ? null
-            : _httpController.text.trim(),
-        wsEndpoint: _wsController.text.trim().isEmpty
-            ? null
-            : _wsController.text.trim(),
-        accessToken: _tokenController.text.trim().isEmpty
-            ? null
-            : _tokenController.text.trim(),
+        httpEndpoint:
+            _httpController.text.trim().isEmpty
+                ? null
+                : _httpController.text.trim(),
+        wsEndpoint:
+            _wsController.text.trim().isEmpty
+                ? null
+                : _wsController.text.trim(),
+        accessToken:
+            _tokenController.text.trim().isEmpty
+                ? null
+                : _tokenController.text.trim(),
         selfId: _selfIdController.text.trim(),
+        serverUrl:
+            _serverUrlController.text.trim().isEmpty
+                ? null
+                : _serverUrlController.text.trim(),
       );
       await config.save();
       final storage = ImStorageConfig(
-        basePath: _storagePathController.text.trim().isEmpty
-            ? null
-            : _storagePathController.text.trim(),
+        basePath:
+            _storagePathController.text.trim().isEmpty
+                ? null
+                : _storagePathController.text.trim(),
       );
       await storage.save();
       await _animConfig.save();
@@ -163,25 +181,51 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       _testSuccess = false;
     });
 
+    if (_platform == ImPlatform.zzzServer) {
+      final source = ZzzServerSource(
+        config: ZzzServerConfig(
+          serverUrl: _serverUrlController.text.trim(),
+          selfId: _selfIdController.text.trim(),
+          authToken: _tokenController.text.trim(),
+        ),
+        allowReconnect: false,
+      );
+      final error = await source.testConnection();
+      source.disconnect();
+      if (mounted) {
+        setState(() {
+          _testing = false;
+          _testSuccess = error == null;
+          _testResult = error ?? 'Connection successful';
+        });
+      }
+      return;
+    }
+
     final client = OneBotClient(
       config: OneBotConfig(
         selfId: _selfIdController.text.trim(),
-        httpEndpoint: _httpController.text.trim().isEmpty
-            ? null
-            : _httpController.text.trim(),
-        wsEndpoint: _wsController.text.trim().isEmpty
-            ? null
-            : _wsController.text.trim(),
-        wsMode: _wsMode,
-        accessToken: _tokenController.text.trim().isEmpty
-            ? null
-            : _tokenController.text.trim(),
+        httpEndpoint:
+            _httpController.text.trim().isEmpty
+                ? null
+                : _httpController.text.trim(),
+        wsEndpoint:
+            _wsController.text.trim().isEmpty
+                ? null
+                : _wsController.text.trim(),
+        wsMode:
+            _wsMode == WsMode.forward
+                ? OneBotWsMode.forward
+                : OneBotWsMode.reverse,
+        accessToken:
+            _tokenController.text.trim().isEmpty
+                ? null
+                : _tokenController.text.trim(),
       ),
     );
 
-    client.disconnect();    final error = await client.testConnection();
-
-
+    final error = await client.testConnection();
+    client.disconnect();
     if (mounted) {
       setState(() {
         _testing = false;
@@ -303,6 +347,13 @@ class _ImSettingsPageState extends State<ImSettingsPage>
                         ),
                         const SizedBox(height: 12),
                         ZzzExpandableSection(
+                          title: 'Notifications',
+                          subtitle: 'Background message alerts',
+                          initiallyExpanded: false,
+                          child: _buildNotificationFields(),
+                        ),
+                        const SizedBox(height: 12),
+                        ZzzExpandableSection(
                           title: 'Visual',
                           subtitle: 'Animation and motion effects',
                           initiallyExpanded: false,
@@ -403,7 +454,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           const SizedBox(height: 10),
           const _FieldLabel('WebSocket mode'),
           const SizedBox(height: 8),
-          ZzzSegmentedControl<OneBotWsMode>(
+          ZzzSegmentedControl<WsMode>(
             items: _wsModeItems,
             value: _wsMode,
             onChanged: (v) => setState(() => _wsMode = v),
@@ -423,14 +474,90 @@ class _ImSettingsPageState extends State<ImSettingsPage>
             _buildTestResult(),
           ],
         ],
+        if (_platform == ImPlatform.zzzServer) ...[
+          const SizedBox(height: 14),
+          ZzzTextInput(
+            controller: _serverUrlController,
+            hintText: 'Server URL (e.g. ws://your-server:8080/ws)',
+            prefixIcon: const Icon(Icons.dns_outlined),
+            fillColor: Colors.white.withValues(alpha: 0.06),
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            controller: _selfIdController,
+            hintText: 'User ID',
+            prefixIcon: const Icon(Icons.badge_outlined),
+            fillColor: Colors.white.withValues(alpha: 0.06),
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            controller: _tokenController,
+            hintText: 'Auth token',
+            prefixIcon: const Icon(Icons.key_outlined),
+            fillColor: Colors.white.withValues(alpha: 0.06),
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 12),
+          _buildTestButton(),
+          if (_testResult != null) ...[
+            const SizedBox(height: 8),
+            _buildTestResult(),
+          ],
+        ],
       ],
+    );
+  }
+
+  Widget _buildNotificationFields() {
+    final manager = ImScope.pushManagerOf(context);
+    return ListenableBuilder(
+      listenable: manager,
+      builder: (context, _) {
+        final enabled = manager.permission == ImPushPermission.enabled;
+        final denied = manager.permission == ImPushPermission.denied;
+        final status = switch (manager.permission) {
+          ImPushPermission.unsupported =>
+            'Unavailable in this browser or app mode',
+          ImPushPermission.defaultState => 'Off',
+          ImPushPermission.denied => 'Blocked by browser settings',
+          ImPushPermission.enabled => 'On for this device',
+        };
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ZzzSwitchTile(
+              value: enabled,
+              title: 'Message notifications',
+              subtitle: manager.error ?? status,
+              onChanged:
+                  manager.isSupported && !manager.isBusy && !denied
+                      ? (value) {
+                        if (value) {
+                          manager.enable();
+                        } else {
+                          manager.disable();
+                        }
+                      }
+                      : null,
+            ),
+            if (manager.isBusy) ...[
+              const SizedBox(height: 8),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
+          ],
+        );
+      },
     );
   }
 
   // -- Backdrop text helpers -------------------------------------------------
 
   void _rebuildBackdropControllers() {
-    for (final c in _backdropControllers) { c.dispose(); }
+    for (final c in _backdropControllers) {
+      c.dispose();
+    }
     _backdropControllers.clear();
     for (final line in _backdropConfig.lines) {
       _backdropControllers.add(TextEditingController(text: line));
@@ -473,9 +600,10 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           title: 'Conversation list slide',
           subtitle: 'Animate items when they reorder after new messages.',
           onChanged: (v) {
-            setState(() => _animConfig = _animConfig.copyWith(
-                  conversationListSlide: v,
-                ));
+            setState(
+              () =>
+                  _animConfig = _animConfig.copyWith(conversationListSlide: v),
+            );
           },
         ),
         ZzzSwitchTile(
@@ -483,9 +611,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           title: 'Chat panel transition',
           subtitle: 'Slide animation when switching between conversations.',
           onChanged: (v) {
-            setState(() => _animConfig = _animConfig.copyWith(
-                  chatPanelSlide: v,
-                ));
+            setState(
+              () => _animConfig = _animConfig.copyWith(chatPanelSlide: v),
+            );
           },
         ),
         ZzzSwitchTile(
@@ -493,9 +621,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           title: 'Animated background',
           subtitle: 'Moving ZERO ZONE style backdrop.',
           onChanged: (v) {
-            setState(() => _animConfig = _animConfig.copyWith(
-                  backgroundMotion: v,
-                ));
+            setState(
+              () => _animConfig = _animConfig.copyWith(backgroundMotion: v),
+            );
           },
         ),
         ZzzSwitchTile(
@@ -503,9 +631,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           title: 'Panel entrance effects',
           subtitle: 'Fade and slide when panels and dialogs open.',
           onChanged: (v) {
-            setState(() => _animConfig = _animConfig.copyWith(
-                  panelEntrance: v,
-                ));
+            setState(
+              () => _animConfig = _animConfig.copyWith(panelEntrance: v),
+            );
           },
         ),
       ],
@@ -522,7 +650,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       children: [
         for (var i = 0; i < _backdropConfig.lines.length; i++)
           Padding(
-            padding: EdgeInsets.only(bottom: i < _backdropConfig.lines.length - 1 ? 8 : 0),
+            padding: EdgeInsets.only(
+              bottom: i < _backdropConfig.lines.length - 1 ? 8 : 0,
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -582,13 +712,14 @@ class _ImSettingsPageState extends State<ImSettingsPage>
         const SizedBox(height: 12),
         OutlinedButton.icon(
           onPressed: _migrating ? null : _migrateData,
-          icon: _migrating
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.drive_file_move_outlined, size: 18),
+          icon:
+              _migrating
+                  ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                  : const Icon(Icons.drive_file_move_outlined, size: 18),
           label: Text(_migrating ? 'Migrating...' : 'Migrate existing data'),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.white54,
@@ -599,13 +730,14 @@ class _ImSettingsPageState extends State<ImSettingsPage>
         const SizedBox(height: 12),
         OutlinedButton.icon(
           onPressed: _clearingCache ? null : _clearAvatarCache,
-          icon: _clearingCache
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.delete_sweep_outlined, size: 18),
+          icon:
+              _clearingCache
+                  ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                  : const Icon(Icons.delete_sweep_outlined, size: 18),
           label: Text(_clearingCache ? 'Clearing...' : 'Clear avatar cache'),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.white54,
@@ -621,8 +753,10 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   // NSFW section
   // -----------------------------------------------------------------------
 
-  final _nsfwControllers =
-      List.generate(18, (i) => TextEditingController(text: '20'));
+  final _nsfwControllers = List.generate(
+    18,
+    (i) => TextEditingController(text: '20'),
+  );
 
   void _refreshNsfwControllers() {
     for (var i = 0; i < 18; i++) {
@@ -642,11 +776,14 @@ class _ImSettingsPageState extends State<ImSettingsPage>
         ZzzSwitchTile(
           value: _nsfwConfig.enabled,
           title: 'Enable NSFW detection',
-          subtitle: _nsfwConfig.enabled
-              ? 'Images will be blurred until long-pressed'
-              : 'All images shown without filtering',
-          onChanged: (v) =>
-              setState(() => _nsfwConfig = _nsfwConfig.copyWith(enabled: v)),
+          subtitle:
+              _nsfwConfig.enabled
+                  ? 'Images will be blurred until long-pressed'
+                  : 'All images shown without filtering',
+          onChanged:
+              (v) => setState(
+                () => _nsfwConfig = _nsfwConfig.copyWith(enabled: v),
+              ),
         ),
         const SizedBox(height: 12),
 
@@ -663,8 +800,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           const SizedBox(height: 8),
           for (var i = 0; i < ImNsfwConfig.labels.length; i++)
             Padding(
-              padding:
-                  EdgeInsets.only(bottom: i < ImNsfwConfig.labels.length - 1 ? 8 : 0),
+              padding: EdgeInsets.only(
+                bottom: i < ImNsfwConfig.labels.length - 1 ? 8 : 0,
+              ),
               child: _buildClassRow(i),
             ),
         ],
@@ -678,8 +816,10 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           value: _nsfwConfig.persistReveal,
           title: 'Remember revealed images',
           subtitle: 'Revealed images stay unblurred after app restart',
-          onChanged: (v) => setState(
-              () => _nsfwConfig = _nsfwConfig.copyWith(persistReveal: v)),
+          onChanged:
+              (v) => setState(
+                () => _nsfwConfig = _nsfwConfig.copyWith(persistReveal: v),
+              ),
         ),
       ],
     );
@@ -697,18 +837,21 @@ class _ImSettingsPageState extends State<ImSettingsPage>
             onChanged: (v) {
               if (v == true) {
                 final pct = double.tryParse(
-                    _nsfwControllers[classIndex].text.trim());
+                  _nsfwControllers[classIndex].text.trim(),
+                );
                 _nsfwConfig.setThreshold(
-                    classIndex, pct != null ? pct / 100 : 0.2);
+                  classIndex,
+                  pct != null ? pct / 100 : 0.2,
+                );
               } else {
                 _nsfwConfig.setThreshold(classIndex, null);
               }
               setState(() {});
             },
-            fillColor: WidgetStateProperty.resolveWith((s) =>
-                s.contains(WidgetState.selected)
-                    ? Colors.pinkAccent
-                    : null),
+            fillColor: WidgetStateProperty.resolveWith(
+              (s) =>
+                  s.contains(WidgetState.selected) ? Colors.pinkAccent : null,
+            ),
             side: const BorderSide(color: Colors.white24),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
@@ -749,13 +892,14 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   Widget _buildTestButton() {
     return OutlinedButton.icon(
       onPressed: _testing ? null : _testConnection,
-      icon: _testing
-          ? const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.wifi_find_outlined, size: 18),
+      icon:
+          _testing
+              ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+              : const Icon(Icons.wifi_find_outlined, size: 18),
       label: Text(_testing ? 'Testing...' : 'Test Connection'),
       style: OutlinedButton.styleFrom(
         foregroundColor: Colors.white,
@@ -769,14 +913,16 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: _testSuccess
-            ? Colors.green.withValues(alpha: 0.15)
-            : Colors.red.withValues(alpha: 0.15),
+        color:
+            _testSuccess
+                ? Colors.green.withValues(alpha: 0.15)
+                : Colors.red.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: _testSuccess
-              ? Colors.green.withValues(alpha: 0.4)
-              : Colors.red.withValues(alpha: 0.4),
+          color:
+              _testSuccess
+                  ? Colors.green.withValues(alpha: 0.4)
+                  : Colors.red.withValues(alpha: 0.4),
         ),
       ),
       child: Row(
@@ -804,16 +950,17 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   Widget _buildSaveButton() {
     return FilledButton.icon(
       onPressed: _saving ? null : _save,
-      icon: _saving
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.black,
-              ),
-            )
-          : const Icon(Icons.save_rounded),
+      icon:
+          _saving
+              ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.black,
+                ),
+              )
+              : const Icon(Icons.save_rounded),
       label: Text(_saving ? 'Saving...' : 'Save'),
       style: FilledButton.styleFrom(
         backgroundColor: ZzzColors.yellow,

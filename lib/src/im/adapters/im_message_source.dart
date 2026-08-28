@@ -29,9 +29,7 @@ abstract class ImMessageSource {
 
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
-    required String filePath,
-    required ImMessageKind kind,
-    String? fileName,
+    required ImMediaUpload upload,
   });
 
   Future<void> markConversationRead(String conversationId);

@@ -19,7 +19,7 @@ class NoneBotSource implements ImMessageSource {
     required bool mock,
     AvatarResolver? avatarResolver,
   }) : _mock = mock,
-      _avatarResolver = avatarResolver ?? _defaultAvatar;
+       _avatarResolver = avatarResolver ?? _defaultAvatar;
 
   factory NoneBotSource.mock({AvatarResolver? avatarResolver}) {
     return NoneBotSource._(
@@ -81,11 +81,8 @@ class NoneBotSource implements ImMessageSource {
   Future<String?> testConnection() async => null;
 
   @override
-  Future<ImUser> getCurrentUser() async => ImUser(
-    id: 'me',
-    displayName: 'Web Proxy',
-    isOnline: true,
-  );
+  Future<ImUser> getCurrentUser() async =>
+      ImUser(id: 'me', displayName: 'Web Proxy', isOnline: true);
 
   @override
   Future<ImUser?> getUser(String userId) async => null;
@@ -114,9 +111,7 @@ class NoneBotSource implements ImMessageSource {
   @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
-    required String filePath,
-    required ImMessageKind kind,
-    String? fileName,
+    required ImMediaUpload upload,
   }) async {
     throw UnsupportedError('sendMediaMessage is not available on web');
   }

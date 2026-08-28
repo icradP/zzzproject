@@ -2,7 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 
-import 'package:onebot_flutter/src/onebot_models.dart' show OneBotMessageSegment;
+import 'package:onebot_flutter/src/onebot_models.dart'
+    show OneBotMessageSegment;
 import 'im_platform_image_provider.dart';
 
 enum ImConversationType { direct, group }
@@ -29,6 +30,22 @@ enum ImMessageKind {
   poke,
 }
 
+class ImMediaUpload {
+  const ImMediaUpload({
+    required this.kind,
+    required this.fileName,
+    this.filePath,
+    this.bytes,
+    this.mimeType,
+  }) : assert(filePath != null || bytes != null);
+
+  final ImMessageKind kind;
+  final String fileName;
+  final String? filePath;
+  final Uint8List? bytes;
+  final String? mimeType;
+}
+
 /// A contact or the signed-in user.
 class ImUser {
   const ImUser({
@@ -52,7 +69,9 @@ class ImUser {
   /// Builds an [ImageProvider] for this user's avatar, trying local file
   /// cache first, then asset path, then [fallbackAsset].
   ImageProvider avatarImage(String fallbackAsset) {
-    if (avatarLocalPath != null) return createFileImageProvider(avatarLocalPath!);
+    if (avatarLocalPath != null) {
+      return createFileImageProvider(avatarLocalPath!);
+    }
     if (avatarBytes != null) return MemoryImage(avatarBytes!);
     return AssetImage(avatarAssetPath ?? fallbackAsset);
   }
@@ -108,7 +127,9 @@ class ImConversation {
   /// Builds an [ImageProvider] for this conversation's avatar, checking
   /// local file cache first, then asset path.
   ImageProvider avatarImage(String fallbackAsset) {
-    if (avatarLocalPath != null) return createFileImageProvider(avatarLocalPath!);
+    if (avatarLocalPath != null) {
+      return createFileImageProvider(avatarLocalPath!);
+    }
     return AssetImage(avatarAssetPath ?? fallbackAsset);
   }
 
@@ -236,4 +257,24 @@ class ImReaction {
   const ImReaction({required this.emojiId, required this.count});
   final String emojiId;
   final int count;
+}
+
+/// A tree of forwarded messages.
+///
+/// Used by both OneBot (NapCat) and ZzzServer sources to represent
+/// combined forward message groups.
+class ForwardGroup {
+  const ForwardGroup({
+    this.title,
+    this.senderName,
+    this.messages = const [],
+    this.children = const [],
+  });
+
+  final String? title;
+  final String? senderName;
+  final List<ImMessage> messages;
+  final List<ForwardGroup> children;
+
+  bool get isEmpty => messages.isEmpty && children.every((c) => c.isEmpty);
 }

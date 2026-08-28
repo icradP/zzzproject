@@ -11,6 +11,7 @@ abstract final class AppRoutes {
   static const demo = '/demo';
   static const settings = '/settings';
   static const contacts = '/contacts';
+  static const chat = '/chat/:conversationId';
 }
 
 final appRouter = GoRouter(
@@ -20,6 +21,14 @@ final appRouter = GoRouter(
       path: AppRoutes.home,
       name: 'home',
       builder: (_, __) => const ImHomePage(),
+    ),
+    GoRoute(
+      path: AppRoutes.chat,
+      name: 'chat',
+      builder:
+          (_, state) => ImHomePage(
+            initialConversationId: state.pathParameters['conversationId'],
+          ),
     ),
     GoRoute(
       path: AppRoutes.demo,

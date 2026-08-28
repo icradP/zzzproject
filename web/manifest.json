@@ -1,12 +1,14 @@
 {
-    "name": "zzzproject",
-    "short_name": "zzzproject",
+    "name": "ZZZ IM",
+    "short_name": "ZZZ IM",
+    "id": ".",
     "start_url": ".",
+    "scope": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#000000",
+    "theme_color": "#F5C542",
+    "description": "ZZZ IM messaging client.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

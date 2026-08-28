@@ -28,9 +28,7 @@ abstract class ImRepository {
   /// Send a media message (image, voice, video, file).
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
-    required String filePath,
-    required ImMessageKind kind,
-    String? fileName,
+    required ImMediaUpload upload,
   });
 
   /// Mark all messages in a conversation as read.

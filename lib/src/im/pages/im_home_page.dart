@@ -15,7 +15,9 @@ import '../widgets/contacts_panel.dart';
 import '../widgets/im_chat_room_view.dart';
 
 class ImHomePage extends StatefulWidget {
-  const ImHomePage({super.key});
+  const ImHomePage({this.initialConversationId, super.key});
+
+  final String? initialConversationId;
 
   static const routeName = '/';
 
@@ -39,10 +41,19 @@ class _ImHomePageState extends State<ImHomePage>
   @override
   void initState() {
     super.initState();
+    _selectedConversationId = widget.initialConversationId;
     _backgroundController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 30),
     )..repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant ImHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialConversationId != oldWidget.initialConversationId) {
+      setState(() => _selectedConversationId = widget.initialConversationId);
+    }
   }
 
   @override
@@ -71,6 +82,9 @@ class _ImHomePageState extends State<ImHomePage>
       _previousConversationId = null;
     });
     ImScope.interactionsOf(context).onConversationClosed();
+    if (widget.initialConversationId != null) {
+      context.go(AppRoutes.home);
+    }
   }
 
   void _openDemoPage() {
@@ -246,27 +260,28 @@ class _ImHomePageState extends State<ImHomePage>
           width: 340,
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
-            child: _showContacts
-                ? ZzzPanel(
-                    key: const ValueKey('contacts'),
-                    animateEntrance: true,
-                    background: const DecorationImage(
-                      image: AssetImage(AppAssets.bgChatWithPatternDark2),
-                      repeat: ImageRepeat.repeat,
-                      opacity: 0.1,
+            child:
+                _showContacts
+                    ? ZzzPanel(
+                      key: const ValueKey('contacts'),
+                      animateEntrance: true,
+                      background: const DecorationImage(
+                        image: AssetImage(AppAssets.bgChatWithPatternDark2),
+                        repeat: ImageRepeat.repeat,
+                        opacity: 0.1,
+                      ),
+                      child: ContactsPanel(
+                        onConversationSelected: _onContactsSelection,
+                      ),
+                    )
+                    : ZzzPanel(
+                      key: const ValueKey('inbox'),
+                      animateEntrance: true,
+                      child: ConversationListView(
+                        selectedConversationId: _selectedConversationId,
+                        onConversationSelected: _selectConversation,
+                      ),
                     ),
-                    child: ContactsPanel(
-                      onConversationSelected: _onContactsSelection,
-                    ),
-                  )
-                : ZzzPanel(
-                    key: const ValueKey('inbox'),
-                    animateEntrance: true,
-                    child: ConversationListView(
-                      selectedConversationId: _selectedConversationId,
-                      onConversationSelected: _selectConversation,
-                    ),
-                  ),
           ),
         ),
         const SizedBox(width: 14),
@@ -294,7 +309,10 @@ class _ImHomePageState extends State<ImHomePage>
         onHorizontalDragUpdate: (details) {
           if (details.delta.dx > 0 || _dragOffset > 0) {
             setState(() {
-              _dragOffset = (_dragOffset + details.delta.dx).clamp(0.0, screenWidth);
+              _dragOffset = (_dragOffset + details.delta.dx).clamp(
+                0.0,
+                screenWidth,
+              );
             });
           }
         },
@@ -309,7 +327,7 @@ class _ImHomePageState extends State<ImHomePage>
         },
         child: Transform.translate(
           offset: Offset(_dragOffset, 0),
-          child: _buildChatPanel(repository),
+          child: _buildChatPanel(repository, showBack: true),
         ),
       );
     }
@@ -323,10 +341,9 @@ class _ImHomePageState extends State<ImHomePage>
           position: Tween<Offset>(
             begin: const Offset(0.3, 0),
             end: Offset.zero,
-          ).animate(CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          )),
+          ).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+          ),
           child: FadeTransition(
             opacity: CurvedAnimation(parent: animation, curve: Curves.easeIn),
             child: child,
@@ -364,7 +381,11 @@ class _ImHomePageState extends State<ImHomePage>
             if (pending != null && pending.id == _selectedConversationId) {
               selected = pending;
             } else {
-              return _buildEmptyChatPlaceholder();
+              final unavailable = _selectedConversationId != null;
+              return _buildEmptyChatPlaceholder(
+                unavailable: unavailable,
+                showBack: showBack && unavailable,
+              );
             }
           }
           // Promote to non-null for use inside nested closures.
@@ -372,12 +393,13 @@ class _ImHomePageState extends State<ImHomePage>
 
           // Determine slide direction and distance from the conversation
           // list order so the panel slides in from the right direction.
-          final prevIdx = _previousConversationId != null
-              ? conversations.indexWhere(
-                  (c) => c.id == _previousConversationId)
-              : -1;
-          final curIdx = conversations.indexWhere(
-              (c) => c.id == conv.id);
+          final prevIdx =
+              _previousConversationId != null
+                  ? conversations.indexWhere(
+                    (c) => c.id == _previousConversationId,
+                  )
+                  : -1;
+          final curIdx = conversations.indexWhere((c) => c.id == conv.id);
           final rawDelta = curIdx >= 0 && prevIdx >= 0 ? prevIdx - curIdx : 0;
           final delta = rawDelta.clamp(-4, 4);
 
@@ -387,9 +409,10 @@ class _ImHomePageState extends State<ImHomePage>
             builder: (context, messageSnapshot) {
               final messages = messageSnapshot.data ?? const [];
               _messageCache[conv.id] = messages;
-              final animDuration = ImAnimationConfig.instance.chatPanelSlide
-                  ? const Duration(milliseconds: 350)
-                  : Duration.zero;
+              final animDuration =
+                  ImAnimationConfig.instance.chatPanelSlide
+                      ? const Duration(milliseconds: 350)
+                      : Duration.zero;
               return AnimatedSwitcher(
                 duration: animDuration,
                 switchInCurve: Curves.easeOutCubic,
@@ -399,16 +422,15 @@ class _ImHomePageState extends State<ImHomePage>
                   final offset = Tween<Offset>(
                     begin: begin,
                     end: Offset.zero,
-                  ).animate(CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ));
+                  ).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  );
                   return FadeTransition(
                     opacity: animation,
-                    child: SlideTransition(
-                      position: offset,
-                      child: child,
-                    ),
+                    child: SlideTransition(position: offset, child: child),
                   );
                 },
                 child: ImChatRoomView(
@@ -420,10 +442,9 @@ class _ImHomePageState extends State<ImHomePage>
                   resolveUserAvatar: _resolveUserAvatar,
                   resolveMessage: (id) => _findMessage(id, messages),
                   onSend: (text) async {
-                    await ImScope.interactionsOf(context).onSendMessage(
-                      conversation: conv,
-                      text: text,
-                    );
+                    await ImScope.interactionsOf(
+                      context,
+                    ).onSendMessage(conversation: conv, text: text);
                     await repository.sendTextMessage(
                       conversationId: conv.id,
                       text: text,
@@ -438,7 +459,10 @@ class _ImHomePageState extends State<ImHomePage>
     );
   }
 
-  Widget _buildEmptyChatPlaceholder() {
+  Widget _buildEmptyChatPlaceholder({
+    bool unavailable = false,
+    bool showBack = false,
+  }) {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
@@ -447,17 +471,29 @@ class _ImHomePageState extends State<ImHomePage>
           children: [
             Image.asset(AppAssets.stickerEllen, height: 140),
             const SizedBox(height: 16),
-            const Text(
-              'Select a conversation',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            Text(
+              unavailable
+                  ? 'Conversation unavailable'
+                  : 'Select a conversation',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Pick a chat from the inbox, or open the simulator demo to test the legacy ZZZ-Chat UI.',
+            Text(
+              unavailable
+                  ? 'This conversation may have been removed or is not available to this account.'
+                  : 'Pick a chat from the inbox, or open the simulator demo to test the legacy ZZZ-Chat UI.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white54, height: 1.45),
+              style: const TextStyle(color: Colors.white54, height: 1.45),
             ),
             const SizedBox(height: 18),
+            if (showBack) ...[
+              FilledButton.icon(
+                onPressed: _clearSelection,
+                icon: const Icon(Icons.inbox_rounded),
+                label: const Text('Back to inbox'),
+              ),
+              const SizedBox(height: 10),
+            ],
             OutlinedButton.icon(
               onPressed: _openDemoPage,
               icon: const Icon(Icons.science_outlined),

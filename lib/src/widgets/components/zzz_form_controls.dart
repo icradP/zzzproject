@@ -12,6 +12,7 @@ class ZzzTextInput extends StatefulWidget {
     this.textInputAction,
     this.onChanged,
     this.onSubmitted,
+    this.obscureText = false,
     this.style,
     this.fillColor = Colors.white,
     this.foregroundColor = Colors.black,
@@ -28,6 +29,7 @@ class ZzzTextInput extends StatefulWidget {
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final bool obscureText;
   final TextStyle? style;
   final Color fillColor;
   final Color foregroundColor;
@@ -83,6 +85,9 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
         maxLines: widget.maxLines,
         autofocus: widget.autofocus,
         textInputAction: widget.textInputAction,
+        obscureText: widget.obscureText,
+        enableSuggestions: !widget.obscureText,
+        autocorrect: !widget.obscureText,
         decoration: InputDecoration(
           hintText: widget.hintText,
           prefixIcon: widget.prefixIcon,
@@ -258,7 +263,7 @@ class ZzzSwitchTile extends StatefulWidget {
   final bool value;
   final String title;
   final String? subtitle;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
   final bool animated;
 
   @override
@@ -311,13 +316,19 @@ class _ZzzSwitchTileState extends State<ZzzSwitchTile> {
                       ]
                       : null,
             ),
-            child: SwitchListTile(
-              value: widget.value,
-              title: Text(widget.title),
-              subtitle: widget.subtitle == null ? null : Text(widget.subtitle!),
-              activeColor: Colors.black,
-              activeTrackColor: ZzzColors.yellow,
-              onChanged: widget.onChanged,
+            child: Material(
+              type: MaterialType.transparency,
+              borderRadius: BorderRadius.circular(12),
+              clipBehavior: Clip.antiAlias,
+              child: SwitchListTile(
+                value: widget.value,
+                title: Text(widget.title),
+                subtitle:
+                    widget.subtitle == null ? null : Text(widget.subtitle!),
+                activeColor: Colors.black,
+                activeTrackColor: ZzzColors.yellow,
+                onChanged: widget.onChanged,
+              ),
             ),
           ),
         ),

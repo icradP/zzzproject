@@ -46,6 +46,8 @@ coverage/
 *.dart.js
 *.info.json
 *.js
+!web/push_client.js
+!web/push-sw.js
 *.js_
 *.js.deps
 *.js.map

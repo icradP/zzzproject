@@ -1,0 +1,718 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/icradp/zzz-im-server/internal/protocol"
+	_ "github.com/mattn/go-sqlite3"
+)
+
+// SQLiteStore implements Store using SQLite.
+type SQLiteStore struct {
+	db *sql.DB
+}
+
+// NewSQLiteStore creates a new SQLite store.
+func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	store := &SQLiteStore{db: db}
+	if err := store.initSchema(); err != nil {
+		return nil, fmt.Errorf("failed to initialize schema: %w", err)
+	}
+
+	return store, nil
+}
+
+// initSchema creates the database tables.
+func (s *SQLiteStore) initSchema() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS users (
+		id TEXT PRIMARY KEY,
+		nickname TEXT NOT NULL,
+		avatar_url TEXT DEFAULT '',
+		online BOOLEAN DEFAULT FALSE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS conversations (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL, -- "private" or "group"
+		title TEXT NOT NULL,
+		avatar_url TEXT DEFAULT '',
+		owner_id TEXT DEFAULT '',
+		participants TEXT DEFAULT '[]', -- JSON array of user IDs
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS messages (
+		id TEXT PRIMARY KEY,
+		conversation_id TEXT NOT NULL,
+		sender_id TEXT NOT NULL,
+		sender_nickname TEXT NOT NULL,
+		segments TEXT NOT NULL, -- JSON array of segments
+		recalled BOOLEAN DEFAULT FALSE,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp);
+	CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
+
+	CREATE TABLE IF NOT EXISTS groups (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		avatar_url TEXT DEFAULT '',
+		owner_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS group_members (
+		group_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		role TEXT DEFAULT 'member', -- "owner", "admin", "member"
+		joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (group_id, user_id),
+		FOREIGN KEY (group_id) REFERENCES groups(id)
+	);
+
+	CREATE TABLE IF NOT EXISTS friend_requests (
+		id TEXT PRIMARY KEY,
+		from_id TEXT NOT NULL,
+		to_id TEXT NOT NULL,
+		comment TEXT DEFAULT '',
+		status TEXT DEFAULT 'pending', -- "pending", "accepted", "rejected"
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests(to_id, status);
+
+	CREATE TABLE IF NOT EXISTS forwards (
+		id TEXT PRIMARY KEY,
+		messages TEXT NOT NULL, -- JSON array of messages
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS media_files (
+		id TEXT PRIMARY KEY,
+		file_name TEXT NOT NULL,
+		file_type TEXT NOT NULL, -- "image", "voice", "video", "file"
+		mime_type TEXT DEFAULT '',
+		size INTEGER DEFAULT 0,
+		url TEXT NOT NULL,
+		uploader_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS push_subscriptions (
+		user_id TEXT NOT NULL,
+		endpoint TEXT NOT NULL,
+		p256dh TEXT NOT NULL,
+		auth TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (user_id, endpoint)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+	`
+
+	_, err := s.db.Exec(schema)
+	return err
+}
+
+// Close closes the database connection.
+func (s *SQLiteStore) Close() error {
+	return s.db.Close()
+}
+
+// ---- User operations ----
+
+func (s *SQLiteStore) GetUser(id string) (*User, error) {
+	user := &User{}
+	err := s.db.QueryRow(
+		"SELECT id, nickname, avatar_url, online, created_at FROM users WHERE id = ?",
+		id,
+	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *SQLiteStore) SetUser(user *User) error {
+	_, err := s.db.Exec(
+		"INSERT OR REPLACE INTO users (id, nickname, avatar_url, online) VALUES (?, ?, ?, ?)",
+		user.ID, user.Nickname, user.Avatar, user.Online,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetUsers() ([]*User, error) {
+	rows, err := s.db.Query("SELECT id, nickname, avatar_url, online, created_at FROM users")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		user := &User{}
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func (s *SQLiteStore) SetUserOnline(id string, online bool) error {
+	_, err := s.db.Exec("UPDATE users SET online = ? WHERE id = ?", online, id)
+	return err
+}
+
+// ---- Conversation operations ----
+
+func (s *SQLiteStore) GetOrCreateConversation(id, convType, title string) (*Conversation, error) {
+	conv, err := s.GetConversation(id)
+	if err != nil {
+		return nil, err
+	}
+	if conv != nil {
+		return conv, nil
+	}
+
+	participantsJSON, _ := json.Marshal([]string{})
+	_, err = s.db.Exec(
+		"INSERT INTO conversations (id, type, title, participants) VALUES (?, ?, ?, ?)",
+		id, convType, title, string(participantsJSON),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetConversation(id)
+}
+
+func (s *SQLiteStore) SaveConversation(conversation *Conversation) error {
+	participants, err := json.Marshal(conversation.Participants)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO conversations (id, type, title, avatar_url, owner_id, participants)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			type = excluded.type,
+			title = excluded.title,
+			avatar_url = excluded.avatar_url,
+			owner_id = excluded.owner_id,
+			participants = excluded.participants`,
+		conversation.ID, conversation.Type, conversation.Title,
+		conversation.Avatar, conversation.OwnerID, string(participants),
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetConversation(id string) (*Conversation, error) {
+	conv := &Conversation{}
+	var participantsJSON string
+	err := s.db.QueryRow(
+		"SELECT id, type, title, avatar_url, owner_id, participants, created_at FROM conversations WHERE id = ?",
+		id,
+	).Scan(&conv.ID, &conv.Type, &conv.Title, &conv.Avatar, &conv.OwnerID, &participantsJSON, &conv.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(participantsJSON), &conv.Participants)
+	return conv, nil
+}
+
+func (s *SQLiteStore) GetConversations() ([]*Conversation, error) {
+	rows, err := s.db.Query("SELECT id, type, title, avatar_url, owner_id, participants, created_at FROM conversations")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var convs []*Conversation
+	for rows.Next() {
+		conv := &Conversation{}
+		var participantsJSON string
+		if err := rows.Scan(&conv.ID, &conv.Type, &conv.Title, &conv.Avatar, &conv.OwnerID, &participantsJSON, &conv.CreatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(participantsJSON), &conv.Participants)
+		convs = append(convs, conv)
+	}
+	return convs, nil
+}
+
+func (s *SQLiteStore) GetUserConversations(userID string) ([]*Conversation, error) {
+	// Get private conversations
+	privateConvs, err := s.getPrivateConversations(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get group conversations
+	groupConvs, err := s.getGroupConversations(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(privateConvs, groupConvs...), nil
+}
+
+func (s *SQLiteStore) getPrivateConversations(userID string) ([]*Conversation, error) {
+	rows, err := s.db.Query(
+		"SELECT id, type, title, avatar_url, owner_id, participants, created_at FROM conversations WHERE type = 'private' AND participants LIKE ?",
+		"%"+userID+"%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var convs []*Conversation
+	for rows.Next() {
+		conv := &Conversation{}
+		var participantsJSON string
+		if err := rows.Scan(&conv.ID, &conv.Type, &conv.Title, &conv.Avatar, &conv.OwnerID, &participantsJSON, &conv.CreatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(participantsJSON), &conv.Participants)
+		convs = append(convs, conv)
+	}
+	return convs, nil
+}
+
+func (s *SQLiteStore) getGroupConversations(userID string) ([]*Conversation, error) {
+	rows, err := s.db.Query(
+		`SELECT c.id, c.type, c.title, c.avatar_url, c.owner_id, c.participants, c.created_at
+		 FROM conversations c
+		 JOIN group_members gm ON c.id = gm.group_id
+		 WHERE gm.user_id = ?`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var convs []*Conversation
+	for rows.Next() {
+		conv := &Conversation{}
+		var participantsJSON string
+		if err := rows.Scan(&conv.ID, &conv.Type, &conv.Title, &conv.Avatar, &conv.OwnerID, &participantsJSON, &conv.CreatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(participantsJSON), &conv.Participants)
+		convs = append(convs, conv)
+	}
+	return convs, nil
+}
+
+func (s *SQLiteStore) DeleteConversation(id string) error {
+	_, err := s.db.Exec("DELETE FROM messages WHERE conversation_id = ?", id)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("DELETE FROM conversations WHERE id = ?", id)
+	return err
+}
+
+// ---- Message operations ----
+
+func (s *SQLiteStore) StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error) {
+	segmentsJSON, err := json.Marshal(segments)
+	if err != nil {
+		return nil, err
+	}
+
+	msg := &Message{
+		ID:             fmt.Sprintf("msg_%d", time.Now().UnixNano()),
+		ConversationID: convID,
+		SenderID:       senderID,
+		SenderNickname: senderNickname,
+		Segments:       segments,
+		Timestamp:      time.Now(),
+	}
+
+	_, err = s.db.Exec(
+		"INSERT INTO messages (id, conversation_id, sender_id, sender_nickname, segments, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+		msg.ID, msg.ConversationID, msg.SenderID, msg.SenderNickname, string(segmentsJSON), msg.Timestamp,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return msg, nil
+}
+
+func (s *SQLiteStore) GetMessage(msgID string) (*Message, error) {
+	msg := &Message{}
+	var segmentsJSON string
+	err := s.db.QueryRow(
+		"SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, timestamp FROM messages WHERE id = ?",
+		msgID,
+	).Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderNickname, &segmentsJSON, &msg.Recalled, &msg.Timestamp)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(segmentsJSON), &msg.Segments)
+	return msg, nil
+}
+
+func (s *SQLiteStore) GetMessages(convID string, limit int) ([]*Message, error) {
+	rows, err := s.db.Query(
+		"SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, timestamp FROM messages WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT ?",
+		convID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []*Message
+	for rows.Next() {
+		msg := &Message{}
+		var segmentsJSON string
+		if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderNickname, &segmentsJSON, &msg.Recalled, &msg.Timestamp); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(segmentsJSON), &msg.Segments)
+		msgs = append(msgs, msg)
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+
+	return msgs, nil
+}
+
+func (s *SQLiteStore) RecallMessage(msgID string) (bool, error) {
+	result, err := s.db.Exec("UPDATE messages SET recalled = TRUE WHERE id = ?", msgID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+// ---- Group operations ----
+
+func (s *SQLiteStore) CreateGroup(id, name, avatar, ownerID string) (*Group, error) {
+	_, err := s.db.Exec(
+		"INSERT INTO groups (id, name, avatar_url, owner_id) VALUES (?, ?, ?, ?)",
+		id, name, avatar, ownerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add owner as member
+	_, err = s.db.Exec(
+		"INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, 'owner')",
+		id, ownerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetGroup(id)
+}
+
+func (s *SQLiteStore) GetGroup(id string) (*Group, error) {
+	group := &Group{}
+	err := s.db.QueryRow(
+		"SELECT id, name, avatar_url, owner_id, created_at FROM groups WHERE id = ?",
+		id,
+	).Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Load members
+	members, err := s.GetGroupMembers(id)
+	if err != nil {
+		return nil, err
+	}
+	group.Members = members
+
+	return group, nil
+}
+
+func (s *SQLiteStore) GetGroups() ([]*Group, error) {
+	rows, err := s.db.Query("SELECT id, name, avatar_url, owner_id, created_at FROM groups")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []*Group
+	for rows.Next() {
+		group := &Group{}
+		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func (s *SQLiteStore) GetUserGroups(userID string) ([]*Group, error) {
+	rows, err := s.db.Query(
+		`SELECT g.id, g.name, g.avatar_url, g.owner_id, g.created_at
+		 FROM groups g
+		 JOIN group_members gm ON g.id = gm.group_id
+		 WHERE gm.user_id = ?`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []*Group
+	for rows.Next() {
+		group := &Group{}
+		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func (s *SQLiteStore) AddGroupMember(groupID, userID string) (bool, error) {
+	result, err := s.db.Exec(
+		"INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
+		groupID, userID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func (s *SQLiteStore) RemoveGroupMember(groupID, userID string) (bool, error) {
+	result, err := s.db.Exec(
+		"DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
+		groupID, userID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func (s *SQLiteStore) IsGroupMember(groupID, userID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?",
+		groupID, userID,
+	).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (s *SQLiteStore) GetGroupMembers(groupID string) ([]*GroupMember, error) {
+	rows, err := s.db.Query(
+		"SELECT user_id, role, joined_at FROM group_members WHERE group_id = ?",
+		groupID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []*GroupMember
+	for rows.Next() {
+		member := &GroupMember{}
+		if err := rows.Scan(&member.UserID, &member.Role, &member.JoinedAt); err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	return members, nil
+}
+
+// ---- Friend request operations ----
+
+func (s *SQLiteStore) CreateFriendRequest(fromID, toID, comment string) (*FriendRequest, error) {
+	req := &FriendRequest{
+		ID:        fmt.Sprintf("freq_%d", time.Now().UnixNano()),
+		FromID:    fromID,
+		ToID:      toID,
+		Comment:   comment,
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+
+	_, err := s.db.Exec(
+		"INSERT INTO friend_requests (id, from_id, to_id, comment, status) VALUES (?, ?, ?, ?, ?)",
+		req.ID, req.FromID, req.ToID, req.Comment, req.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+func (s *SQLiteStore) GetFriendRequest(id string) (*FriendRequest, error) {
+	req := &FriendRequest{}
+	err := s.db.QueryRow(
+		"SELECT id, from_id, to_id, comment, status, created_at FROM friend_requests WHERE id = ?",
+		id,
+	).Scan(&req.ID, &req.FromID, &req.ToID, &req.Comment, &req.Status, &req.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func (s *SQLiteStore) GetPendingFriendRequests(userID string) ([]*FriendRequest, error) {
+	rows, err := s.db.Query(
+		"SELECT id, from_id, to_id, comment, status, created_at FROM friend_requests WHERE to_id = ? AND status = 'pending'",
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reqs []*FriendRequest
+	for rows.Next() {
+		req := &FriendRequest{}
+		if err := rows.Scan(&req.ID, &req.FromID, &req.ToID, &req.Comment, &req.Status, &req.CreatedAt); err != nil {
+			return nil, err
+		}
+		reqs = append(reqs, req)
+	}
+	return reqs, nil
+}
+
+func (s *SQLiteStore) HandleFriendRequest(reqID, action string) (bool, error) {
+	result, err := s.db.Exec(
+		"UPDATE friend_requests SET status = ? WHERE id = ? AND status = 'pending'",
+		action, reqID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+// ---- Forward message operations ----
+
+func (s *SQLiteStore) StoreForward(messages []*Message) (*ForwardMessage, error) {
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		return nil, err
+	}
+
+	forward := &ForwardMessage{
+		ID:        fmt.Sprintf("fwd_%d", time.Now().UnixNano()),
+		Messages:  messages,
+		CreatedAt: time.Now(),
+	}
+
+	_, err = s.db.Exec(
+		"INSERT INTO forwards (id, messages) VALUES (?, ?)",
+		forward.ID, string(messagesJSON),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return forward, nil
+}
+
+func (s *SQLiteStore) GetForward(id string) (*ForwardMessage, error) {
+	forward := &ForwardMessage{}
+	var messagesJSON string
+	err := s.db.QueryRow(
+		"SELECT id, messages, created_at FROM forwards WHERE id = ?",
+		id,
+	).Scan(&forward.ID, &messagesJSON, &forward.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(messagesJSON), &forward.Messages)
+	return forward, nil
+}
+
+// ---- Media operations ----
+
+func (s *SQLiteStore) StoreMedia(file *MediaFile) error {
+	_, err := s.db.Exec(
+		"INSERT INTO media_files (id, file_name, file_type, mime_type, size, url, uploader_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		file.ID, file.FileName, file.FileType, file.MimeType, file.Size, file.URL, file.UploaderID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetMedia(id string) (*MediaFile, error) {
+	file := &MediaFile{}
+	err := s.db.QueryRow(
+		"SELECT id, file_name, file_type, mime_type, size, url, uploader_id, created_at FROM media_files WHERE id = ?",
+		id,
+	).Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.UploaderID, &file.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+func (s *SQLiteStore) DeleteMedia(id string) error {
+	_, err := s.db.Exec("DELETE FROM media_files WHERE id = ?", id)
+	return err
+}

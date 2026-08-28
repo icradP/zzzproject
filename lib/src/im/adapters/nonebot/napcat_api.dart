@@ -8,24 +8,6 @@ import 'nonebot_mapper.dart';
 // NapCat API helpers
 // ---------------------------------------------------------------------------
 
-/// A tree of forwarded messages.  Nested forwards become child [ForwardGroup]s.
-class ForwardGroup {
-  const ForwardGroup({
-    this.title,
-    this.senderName,
-    this.messages = const [],
-    this.children = const [],
-  });
-
-  final String? title;
-  final String? senderName;
-  final List<ImMessage> messages;
-  final List<ForwardGroup> children;
-
-  bool get isEmpty =>
-      messages.isEmpty && children.every((c) => c.isEmpty);
-}
-
 /// NapCat-flavoured wrapper around [OneBotClient].
 class NapCatApi {
   NapCatApi(this.client);

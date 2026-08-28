@@ -318,9 +318,10 @@ class MockImRepository implements ImRepository {
       );
     } else {
       final isGroup = conversationId.startsWith('group_');
-      final title = isGroup
-          ? 'Group ${conversationId.substring(6)}'
-          : _resolveDisplayName(conversationId);
+      final title =
+          isGroup
+              ? 'Group ${conversationId.substring(6)}'
+              : _resolveDisplayName(conversationId);
       _conversations[conversationId] = ImConversation(
         id: conversationId,
         type: isGroup ? ImConversationType.group : ImConversationType.direct,
@@ -338,11 +339,9 @@ class MockImRepository implements ImRepository {
   @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
-    required String filePath,
-    required ImMessageKind kind,
-    String? fileName,
+    required ImMediaUpload upload,
   }) async {
-    final label = switch (kind) {
+    final label = switch (upload.kind) {
       ImMessageKind.image => '[图片]',
       ImMessageKind.record => '[语音]',
       ImMessageKind.video => '[视频]',
@@ -356,8 +355,9 @@ class MockImRepository implements ImRepository {
       text: label,
       sentAt: DateTime.now(),
       isMine: true,
-      kind: kind,
-      mediaPath: filePath,
+      kind: upload.kind,
+      mediaPath: upload.filePath,
+      mediaMime: upload.mimeType,
     );
     final list = _messages.putIfAbsent(conversationId, () => []);
     list.add(message);
@@ -388,12 +388,10 @@ class MockImRepository implements ImRepository {
     if (normalized.isEmpty) {
       return _conversations.values.toList();
     }
-    return _conversations.values
-        .where((conversation) {
-          return conversation.title.toLowerCase().contains(normalized) ||
-              (conversation.subtitle ?? '').toLowerCase().contains(normalized);
-        })
-        .toList();
+    return _conversations.values.where((conversation) {
+      return conversation.title.toLowerCase().contains(normalized) ||
+          (conversation.subtitle ?? '').toLowerCase().contains(normalized);
+    }).toList();
   }
 
   @override
@@ -403,17 +401,20 @@ class MockImRepository implements ImRepository {
 
   @override
   Future<List<ImConversation>> getGroupList() async {
-    final groups = _conversations.values
-        .where((c) => c.type == ImConversationType.group)
-        .toList();
+    final groups =
+        _conversations.values
+            .where((c) => c.type == ImConversationType.group)
+            .toList();
     // Include a synthetic group to demonstrate groups without messages.
     if (!groups.any((g) => g.id == 'group_mock')) {
-      groups.add(ImConversation(
-        id: 'group_mock',
-        type: ImConversationType.group,
-        title: 'Random Play (Mock)',
-        participantIds: [_currentUserId],
-      ));
+      groups.add(
+        ImConversation(
+          id: 'group_mock',
+          type: ImConversationType.group,
+          title: 'Random Play (Mock)',
+          participantIds: [_currentUserId],
+        ),
+      );
     }
     return groups;
   }

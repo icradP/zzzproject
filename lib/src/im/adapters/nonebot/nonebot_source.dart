@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:onebot_flutter/onebot_flutter.dart' show OneBotClient, OneBotException;
+import 'package:onebot_flutter/onebot_flutter.dart'
+    show OneBotClient, OneBotException;
 
 import '../../data/im_avatar_cache.dart';
 import '../../data/im_logger.dart';
@@ -27,7 +28,7 @@ class NoneBotSource implements ImMessageSource {
     required bool mock,
     AvatarResolver? avatarResolver,
   }) : _mock = mock,
-      _avatarResolver = avatarResolver ?? _defaultAvatar {
+       _avatarResolver = avatarResolver ?? _defaultAvatar {
     _selfId = config.selfId;
     _users[_selfId] = ImUser(
       id: _selfId,
@@ -80,6 +81,7 @@ class NoneBotSource implements ImMessageSource {
     if (_avatarCache == null) return null;
     return _avatarCache!.get(userId);
   }
+
   ImMediaCache? _mediaCache;
   ImAvatarCache? _avatarCache;
   ImMessageStore? _store;
@@ -118,10 +120,7 @@ class NoneBotSource implements ImMessageSource {
 
     _statusController.add(ConnectionStatus.connecting);
     try {
-      _client = OneBotClient(
-        config: config,
-        onLog: ImLogger.logRaw,
-      );
+      _client = OneBotClient(config: config, onLog: ImLogger.logRaw);
       await _client!.connect();
       ImLogger.ingestCount('connected', 0); // just mark connected
 
@@ -145,12 +144,11 @@ class NoneBotSource implements ImMessageSource {
         storageConfig: _storageConfig,
       );
       _avatarCache = ImAvatarCache(storageConfig: _storageConfig);
-      _store = ImMessageStore(
-        selfId: _selfId,
-        storageConfig: _storageConfig,
+      _store = ImMessageStore(selfId: _selfId, storageConfig: _storageConfig);
+      ImLogger.logRaw(
+        ImLogger.store,
+        'opening store (config=${_storageConfig != null})',
       );
-      ImLogger.logRaw(ImLogger.store,
-          'opening store (config=${_storageConfig != null})');
       await _store!.open();
       ImLogger.logRaw(ImLogger.store, 'store opened OK');
       await _loadHistory();
@@ -282,20 +280,29 @@ class NoneBotSource implements ImMessageSource {
       final parsed = parseConversationId(conversationId, _selfId);
       final user = _users[parsed.targetId];
       final dmTitle = user?.displayName;
-      final participantIds = parsed.isGroup
-          ? (_groupMemberIds[parsed.targetId] ?? [_selfId])
-          : [_selfId, parsed.targetId];
+      final participantIds =
+          parsed.isGroup
+              ? (_groupMemberIds[parsed.targetId] ?? [_selfId])
+              : [_selfId, parsed.targetId];
       _conversations[conversationId] = ImConversation(
         id: conversationId,
-        type: parsed.isGroup ? ImConversationType.group : ImConversationType.direct,
-        title: parsed.isGroup
-            ? (_groupNames[parsed.targetId] ?? 'Group ${parsed.targetId}')
-            : ((dmTitle != null && dmTitle.isNotEmpty) ? dmTitle : parsed.targetId),
+        type:
+            parsed.isGroup
+                ? ImConversationType.group
+                : ImConversationType.direct,
+        title:
+            parsed.isGroup
+                ? (_groupNames[parsed.targetId] ?? 'Group ${parsed.targetId}')
+                : ((dmTitle != null && dmTitle.isNotEmpty)
+                    ? dmTitle
+                    : parsed.targetId),
         participantIds: participantIds,
         subtitle: trimmed,
         updatedAt: message.sentAt,
         avatarAssetPath:
-            parsed.isGroup ? null : (user?.avatarAssetPath ?? _avatarResolver(parsed.targetId)),
+            parsed.isGroup
+                ? null
+                : (user?.avatarAssetPath ?? _avatarResolver(parsed.targetId)),
         avatarLocalPath:
             parsed.isGroup ? _groupAvatarPaths[parsed.targetId] : null,
       );
@@ -321,10 +328,7 @@ class NoneBotSource implements ImMessageSource {
           );
         }
         // Update with real message id and status
-        message = message.copyWith(
-          id: '$msgId',
-          status: ImMessageStatus.sent,
-        );
+        message = message.copyWith(id: '$msgId', status: ImMessageStatus.sent);
         // Swap the local message with the updated one
         final idx = list.indexWhere((m) => m.id == localId);
         if (idx >= 0) list[idx] = message;
@@ -351,15 +355,13 @@ class NoneBotSource implements ImMessageSource {
   @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
-    required String filePath,
-    required ImMessageKind kind,
-    String? fileName,
+    required ImMediaUpload upload,
   }) async {
-    final label = switch (kind) {
+    final label = switch (upload.kind) {
       ImMessageKind.image => '[图片]',
       ImMessageKind.record => '[语音]',
       ImMessageKind.video => '[视频]',
-      ImMessageKind.file => fileName ?? '[文件]',
+      ImMessageKind.file => upload.fileName,
       _ => '[媒体]',
     };
 
@@ -369,8 +371,9 @@ class NoneBotSource implements ImMessageSource {
       conversationId: conversationId,
       senderId: _selfId,
       text: label,
-      kind: kind,
-      mediaPath: filePath,
+      kind: upload.kind,
+      mediaPath: upload.filePath,
+      mediaMime: upload.mimeType,
       sentAt: DateTime.now(),
       isMine: true,
       status: ImMessageStatus.sending,
@@ -392,13 +395,18 @@ class NoneBotSource implements ImMessageSource {
       final parsed = parseConversationId(conversationId, _selfId);
       _conversations[conversationId] = ImConversation(
         id: conversationId,
-        type: parsed.isGroup ? ImConversationType.group : ImConversationType.direct,
-        title: parsed.isGroup
-            ? (_groupNames[parsed.targetId] ?? 'Group ${parsed.targetId}')
-            : parsed.targetId,
-        participantIds: parsed.isGroup
-            ? (_groupMemberIds[parsed.targetId] ?? [_selfId])
-            : [_selfId, parsed.targetId],
+        type:
+            parsed.isGroup
+                ? ImConversationType.group
+                : ImConversationType.direct,
+        title:
+            parsed.isGroup
+                ? (_groupNames[parsed.targetId] ?? 'Group ${parsed.targetId}')
+                : parsed.targetId,
+        participantIds:
+            parsed.isGroup
+                ? (_groupMemberIds[parsed.targetId] ?? [_selfId])
+                : [_selfId, parsed.targetId],
         subtitle: label,
         updatedAt: message.sentAt,
       );
@@ -408,7 +416,7 @@ class NoneBotSource implements ImMessageSource {
 
     if (!_mock && _client != null) {
       try {
-        final chain = _mediaToChain(kind, filePath, fileName);
+        final chain = _mediaToChain(upload);
         final parsed = parseConversationId(conversationId, _selfId);
         int msgId;
         if (parsed.isGroup) {
@@ -443,27 +451,28 @@ class NoneBotSource implements ImMessageSource {
     return message;
   }
 
-  List<OneBotMessageSegment> _mediaToChain(
-      ImMessageKind kind, String filePath, String? fileName) {
-    final file = File(filePath);
-    if (!file.existsSync()) return [OneBotMessageSegment.plain('[文件未找到]')];
-
-    final bytes = file.readAsBytesSync();
+  List<OneBotMessageSegment> _mediaToChain(ImMediaUpload upload) {
+    final bytes =
+        upload.bytes ??
+        (upload.filePath == null
+            ? null
+            : File(upload.filePath!).readAsBytesSync());
+    if (bytes == null) return [OneBotMessageSegment.plain('[文件未找到]')];
     final b64 = base64Encode(bytes);
     // Prepend a MIME hint so the OneBot server can detect the type.
     final dataUri = 'base64://$b64';
 
-    return switch (kind) {
+    return switch (upload.kind) {
       ImMessageKind.image => [OneBotMessageSegment.image(dataUri)],
       ImMessageKind.record => [OneBotMessageSegment.record(dataUri)],
       ImMessageKind.video => [OneBotMessageSegment.video(dataUri)],
       ImMessageKind.file => [
-          OneBotMessageSegment(
-            type: 'file',
-            data: {'file': dataUri, 'name': fileName ?? 'file'},
-          ),
-        ],
-      _ => [OneBotMessageSegment.plain(filePath)],
+        OneBotMessageSegment(
+          type: 'file',
+          data: {'file': dataUri, 'name': upload.fileName},
+        ),
+      ],
+      _ => [OneBotMessageSegment.plain(upload.fileName)],
     };
   }
 
@@ -532,7 +541,10 @@ class NoneBotSource implements ImMessageSource {
 
   void _ingestPrivateEvent(OneBotPrivateMessageEvent event) {
     final convId = oneBotConversationId(selfId: _selfId, userId: event.userId);
-    final imUser = oneBotSenderToImUser(event.sender, avatarResolver: _avatarResolver);
+    final imUser = oneBotSenderToImUser(
+      event.sender,
+      avatarResolver: _avatarResolver,
+    );
     final isNewUser = !_users.containsKey(imUser.id);
     _users.putIfAbsent(imUser.id, () => imUser);
     if (isNewUser) _fetchUserAvatar(imUser.id);
@@ -574,15 +586,23 @@ class NoneBotSource implements ImMessageSource {
     _emitMessages(convId);
     _emitConversations();
     ImLogger.ingestMessage(
-      convId, msgs.first.senderId, msgs.first.kind.name,
+      convId,
+      msgs.first.senderId,
+      msgs.first.kind.name,
       msgs.map((m) => m.text).join(' | '),
       segCount: msgs.first.segments?.length,
     );
   }
 
   void _ingestGroupEvent(OneBotGroupMessageEvent event) {
-    final convId = oneBotConversationId(selfId: _selfId, groupId: event.groupId);
-    final imUser = oneBotSenderToImUser(event.sender, avatarResolver: _avatarResolver);
+    final convId = oneBotConversationId(
+      selfId: _selfId,
+      groupId: event.groupId,
+    );
+    final imUser = oneBotSenderToImUser(
+      event.sender,
+      avatarResolver: _avatarResolver,
+    );
     final isNewGroupUser = !_users.containsKey(imUser.id);
     _users.putIfAbsent(imUser.id, () => imUser);
     if (isNewGroupUser) _fetchUserAvatar(imUser.id);
@@ -641,7 +661,9 @@ class NoneBotSource implements ImMessageSource {
     _emitConversations();
     _saveConv(_conversations[convId]!);
     ImLogger.ingestMessage(
-      convId, msgs.first.senderId, msgs.first.kind.name,
+      convId,
+      msgs.first.senderId,
+      msgs.first.kind.name,
       msgs.map((m) => m.text).join(' | '),
       segCount: msgs.first.segments?.length,
     );
@@ -650,13 +672,11 @@ class NoneBotSource implements ImMessageSource {
   void _ingestNoticeEvent(OneBotNoticeEvent event) {
     switch (event) {
       case OneBotEmojiLikeNotice(
-           :final groupId,
-           :final messageId,
-           :final likes):
-        final convId = oneBotConversationId(
-          selfId: _selfId,
-          groupId: groupId,
-        );
+        :final groupId,
+        :final messageId,
+        :final likes,
+      ):
+        final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
         final list = _messages[convId];
         if (list == null) return;
         final idx = list.indexWhere((m) => m.id == '$messageId');
@@ -668,27 +688,22 @@ class NoneBotSource implements ImMessageSource {
         for (final like in likes) {
           current[like.emojiId] = like.count;
         }
-        final updated = current.entries
-            .map((e) => ImReaction(emojiId: e.key, count: e.value))
-            .toList();
+        final updated =
+            current.entries
+                .map((e) => ImReaction(emojiId: e.key, count: e.value))
+                .toList();
         list[idx] = msg.copyWith(reactions: updated);
         _emitMessages(convId);
         ImLogger.ingestMessage(
-          convId, '', 'reaction',
+          convId,
+          '',
+          'reaction',
           'msg=$messageId likes=${likes.map((l) => '${l.emojiId}x${l.count}').join(',')}',
         );
-      case OneBotGroupUploadNotice(
-           :final groupId,
-           :final userId,
-           :final file):
-        final convId = oneBotConversationId(
-          selfId: _selfId,
-          groupId: groupId,
-        );
+      case OneBotGroupUploadNotice(:final groupId, :final userId, :final file):
+        final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
         final senderName = _users[userId]?.displayName ?? userId;
-        final sizeLabel = file.size > 0
-            ? ' (${_formatBytes(file.size)})'
-            : '';
+        final sizeLabel = file.size > 0 ? ' (${_formatBytes(file.size)})' : '';
         final msg = ImMessage(
           id: 'file_${event.time}',
           conversationId: convId,
@@ -715,14 +730,16 @@ class NoneBotSource implements ImMessageSource {
         _emitMessages(convId);
       case OneBotPokeNotice(:final groupId, :final userId, :final targetId):
         final isGroup = groupId != null;
-        final convId = isGroup
-            ? oneBotConversationId(selfId: _selfId, groupId: groupId)
-            : oneBotConversationId(selfId: _selfId, userId: userId);
+        final convId =
+            isGroup
+                ? oneBotConversationId(selfId: _selfId, groupId: groupId)
+                : oneBotConversationId(selfId: _selfId, userId: userId);
 
         final pokerName = _users[userId]?.displayName ?? userId;
-        final targetName = targetId == _selfId
-            ? '你'
-            : (_users[targetId]?.displayName ?? targetId);
+        final targetName =
+            targetId == _selfId
+                ? '你'
+                : (_users[targetId]?.displayName ?? targetId);
         final text = '$pokerName 戳了戳 $targetName';
 
         final msg = ImMessage(
@@ -738,15 +755,18 @@ class NoneBotSource implements ImMessageSource {
         _emitMessages(convId);
 
         if (!_conversations.containsKey(convId)) {
-          final pokeParticipantIds = isGroup
-              ? (_groupMemberIds[groupId] ?? [_selfId])
-              : [_selfId, userId];
+          final pokeParticipantIds =
+              isGroup
+                  ? (_groupMemberIds[groupId] ?? [_selfId])
+                  : [_selfId, userId];
           _conversations[convId] = ImConversation(
             id: convId,
-            type: isGroup ? ImConversationType.group : ImConversationType.direct,
-            title: isGroup
-                ? (_groupNames[groupId] ?? 'Group $groupId')
-                : pokerName,
+            type:
+                isGroup ? ImConversationType.group : ImConversationType.direct,
+            title:
+                isGroup
+                    ? (_groupNames[groupId] ?? 'Group $groupId')
+                    : pokerName,
             participantIds: pokeParticipantIds,
             avatarLocalPath: isGroup ? _groupAvatarPaths[groupId] : null,
             subtitle: text,
@@ -755,29 +775,28 @@ class NoneBotSource implements ImMessageSource {
           _emitConversations();
         }
       case OneBotGroupRecallNotice(
-           :final groupId,
-           :final operatorId,
-           :final messageId):
-        ImLogger.logRaw(ImLogger.event,
-            'recall groupId=$groupId opId=$operatorId msgId=$messageId');
-        final convId = oneBotConversationId(
-          selfId: _selfId,
-          groupId: groupId,
+        :final groupId,
+        :final operatorId,
+        :final messageId,
+      ):
+        ImLogger.logRaw(
+          ImLogger.event,
+          'recall groupId=$groupId opId=$operatorId msgId=$messageId',
         );
+        final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
         _markRecalled(convId, messageId, operatorId);
-      case OneBotFriendRecallNotice(
-           :final userId,
-           :final messageId):
-        ImLogger.logRaw(ImLogger.event,
-            'recall userId=$userId msgId=$messageId');
-        final convId = oneBotConversationId(
-          selfId: _selfId,
-          userId: userId,
+      case OneBotFriendRecallNotice(:final userId, :final messageId):
+        ImLogger.logRaw(
+          ImLogger.event,
+          'recall userId=$userId msgId=$messageId',
         );
+        final convId = oneBotConversationId(selfId: _selfId, userId: userId);
         _markRecalled(convId, messageId, userId);
       default:
-        ImLogger.logRaw(ImLogger.event,
-            'unhandled notice: ${event.noticeType}');
+        ImLogger.logRaw(
+          ImLogger.event,
+          'unhandled notice: ${event.noticeType}',
+        );
         break;
     }
   }
@@ -800,8 +819,7 @@ class NoneBotSource implements ImMessageSource {
     }
     if (found) {
       _emitMessages(convId);
-      ImLogger.logRaw(
-          ImLogger.event, 'recall msg=$messageId by=$operatorId');
+      ImLogger.logRaw(ImLogger.event, 'recall msg=$messageId by=$operatorId');
     }
   }
 
@@ -835,8 +853,10 @@ class NoneBotSource implements ImMessageSource {
         }
       }
       _emitConversations();
-      ImLogger.ingestCount('history messages total',
-          _messages.values.fold<int>(0, (s, l) => s + l.length));
+      ImLogger.ingestCount(
+        'history messages total',
+        _messages.values.fold<int>(0, (s, l) => s + l.length),
+      );
     } catch (e) {
       ImLogger.logRaw(ImLogger.store, 'loadHistory error: $e');
     }
@@ -861,7 +881,8 @@ class NoneBotSource implements ImMessageSource {
       _selfId = info.userId;
       _users[_selfId] = ImUser(
         id: _selfId,
-        displayName: info.nickname.isNotEmpty ? info.nickname : 'Bot ($_selfId)',
+        displayName:
+            info.nickname.isNotEmpty ? info.nickname : 'Bot ($_selfId)',
         avatarAssetPath: _avatarResolver(_selfId),
         isOnline: true,
       );
@@ -894,7 +915,10 @@ class NoneBotSource implements ImMessageSource {
         // Fetch group avatar.
         _fetchGroupAvatar(g.groupId);
         // Update existing conversation title if present.
-        final convId = oneBotConversationId(selfId: _selfId, groupId: g.groupId);
+        final convId = oneBotConversationId(
+          selfId: _selfId,
+          groupId: g.groupId,
+        );
         final conv = _conversations[convId];
         if (conv != null) {
           _conversations[convId] = conv.copyWith(title: g.groupName);
@@ -984,8 +1008,7 @@ class NoneBotSource implements ImMessageSource {
         }
       }
 
-      if ((fileId == null || fileId.isEmpty) &&
-          (url == null || url.isEmpty)) {
+      if ((fileId == null || fileId.isEmpty) && (url == null || url.isEmpty)) {
         continue;
       }
       // Record / voice files are downloaded on-demand when the user taps play.
@@ -1075,13 +1098,13 @@ class NoneBotSource implements ImMessageSource {
   // -----------------------------------------------------------------
 
   void _emitConversations() {
-    final sorted = _conversations.values.toList()
-      ..sort((a, b) {
-        if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
-        final at = a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bt = b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return bt.compareTo(at);
-      });
+    final sorted =
+        _conversations.values.toList()..sort((a, b) {
+          if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+          final at = a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final bt = b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return bt.compareTo(at);
+        });
     final c = _conversationControllers['all'];
     if (c != null && !c.isClosed) c.add(sorted);
   }
@@ -1211,30 +1234,68 @@ class NoneBotSource implements ImMessageSource {
     );
 
     _putMessages('dm_belle_me', [
-      _mockMsg('m1', 'dm_belle_me', 'belle',
-          'Proxy, are you still at the video store?',
-          now.subtract(const Duration(minutes: 18))),
-      _mockMsg('m2', 'dm_belle_me', _selfId,
-          'Yeah, sorting the new Hollow Observer tapes.',
-          now.subtract(const Duration(minutes: 12))),
-      _mockMsg('m3', 'dm_belle_me', 'belle', 'See you at Sixth Street!',
-          now.subtract(const Duration(minutes: 3))),
+      _mockMsg(
+        'm1',
+        'dm_belle_me',
+        'belle',
+        'Proxy, are you still at the video store?',
+        now.subtract(const Duration(minutes: 18)),
+      ),
+      _mockMsg(
+        'm2',
+        'dm_belle_me',
+        _selfId,
+        'Yeah, sorting the new Hollow Observer tapes.',
+        now.subtract(const Duration(minutes: 12)),
+      ),
+      _mockMsg(
+        'm3',
+        'dm_belle_me',
+        'belle',
+        'See you at Sixth Street!',
+        now.subtract(const Duration(minutes: 3)),
+      ),
     ]);
     _putMessages('dm_me_wise', [
-      _mockMsg('w1', 'dm_me_wise', 'wise', "Don't forget the commission.",
-          now.subtract(const Duration(hours: 1))),
+      _mockMsg(
+        'w1',
+        'dm_me_wise',
+        'wise',
+        "Don't forget the commission.",
+        now.subtract(const Duration(hours: 1)),
+      ),
     ]);
     _putMessages('group_cunning_hares', [
-      _mockMsg('g1', 'group_cunning_hares', 'anby', 'I brought snacks.',
-          now.subtract(const Duration(hours: 6))),
-      _mockMsg('g2', 'group_cunning_hares', 'nicole', 'Pay up, buddy.',
-          now.subtract(const Duration(hours: 5))),
-      _mockMsg('g3', 'group_cunning_hares', _selfId, 'Invoice sent.',
-          now.subtract(const Duration(hours: 4, minutes: 50))),
+      _mockMsg(
+        'g1',
+        'group_cunning_hares',
+        'anby',
+        'I brought snacks.',
+        now.subtract(const Duration(hours: 6)),
+      ),
+      _mockMsg(
+        'g2',
+        'group_cunning_hares',
+        'nicole',
+        'Pay up, buddy.',
+        now.subtract(const Duration(hours: 5)),
+      ),
+      _mockMsg(
+        'g3',
+        'group_cunning_hares',
+        _selfId,
+        'Invoice sent.',
+        now.subtract(const Duration(hours: 4, minutes: 50)),
+      ),
     ]);
     _putMessages('dm_me_nicole', [
-      _mockMsg('n1', 'dm_me_nicole', 'nicole', 'Interest is compounding.',
-          now.subtract(const Duration(days: 1))),
+      _mockMsg(
+        'n1',
+        'dm_me_nicole',
+        'nicole',
+        'Interest is compounding.',
+        now.subtract(const Duration(days: 1)),
+      ),
     ]);
     _putMessages('dm_fairy_me', [
       ImMessage(

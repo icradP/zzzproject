@@ -43,22 +43,14 @@ class SourceBackedRepository implements ImRepository {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
-  }) =>
-      _source.sendTextMessage(conversationId: conversationId, text: text);
+  }) => _source.sendTextMessage(conversationId: conversationId, text: text);
 
   @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
-    required String filePath,
-    required ImMessageKind kind,
-    String? fileName,
+    required ImMediaUpload upload,
   }) =>
-      _source.sendMediaMessage(
-        conversationId: conversationId,
-        filePath: filePath,
-        kind: kind,
-        fileName: fileName,
-      );
+      _source.sendMediaMessage(conversationId: conversationId, upload: upload);
 
   @override
   Future<void> markConversationRead(String conversationId) =>
