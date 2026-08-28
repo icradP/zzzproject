@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 
+import '../../../assets/app_assets.dart';
 import '../../../theme/zzz_colors.dart';
 import '../../im_scope.dart';
 import '../../models/im_models.dart';
@@ -423,8 +424,7 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
               child: CircleAvatar(
                 radius: 16,
                 backgroundImage: _avatar ??
-                    const AssetImage(
-                        'assets/icons/zzz_agent_profile_icon.png'),
+                    const AssetImage(AppAssets.iconAgentProfile),
               ),
             ),
           ),

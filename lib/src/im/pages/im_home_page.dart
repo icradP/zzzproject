@@ -236,7 +236,7 @@ class _ImHomePageState extends State<ImHomePage>
               tooltip: 'New chat',
               onPressed: () => _onNewChatPressed(isWide),
               icon: Image.asset(
-                'assets/icons/zzz_agent_profile_icon.png',
+                AppAssets.iconAgentProfile,
                 width: 24,
                 height: 24,
                 color: ZzzColors.yellow,
