@@ -175,6 +175,23 @@ void main() {
       find.byKey(const ValueKey('create-group-compact-layout')),
       findsNothing,
     );
+
+    final expandedHeight =
+        tester
+            .getRect(find.byKey(const ValueKey('zzz-modal-panel-surface')))
+            .height;
+    await tester.tap(find.byKey(const ValueKey('zzz-modal-panel-collapse')));
+    await tester.pumpAndSettle();
+    final collapsedHeight =
+        tester
+            .getRect(find.byKey(const ValueKey('zzz-modal-panel-surface')))
+            .height;
+    expect(collapsedHeight, lessThan(expandedHeight));
+    expect(
+      find.byKey(const ValueKey('create-group-member-browser')),
+      findsNothing,
+    );
+    expect(find.byTooltip('Expand panel'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

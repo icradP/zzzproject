@@ -100,104 +100,110 @@ class _ZzzModalPanelState extends State<ZzzModalPanel> {
           maxWidth: widget.maxWidth,
           maxHeight: resolvedMaxHeight < 180 ? 180 : resolvedMaxHeight,
         ),
-        child: ZzzPanel(
-          padding: EdgeInsets.zero,
-          radius: 16,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
-                child: Row(
-                  children: [
-                    if (widget.icon != null) ...[
-                      Container(
-                        width: 38,
-                        height: 38,
-                        decoration: const BoxDecoration(
-                          color: ZzzColors.yellow,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(widget.icon, color: Colors.black, size: 21),
-                      ),
-                      const SizedBox(width: 12),
-                    ],
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
+        child: AnimatedSize(
+          duration: _kZzzAnimExpand,
+          curve: _kZzzCurve,
+          alignment: Alignment.topCenter,
+          clipBehavior: Clip.none,
+          child: ZzzPanel(
+            key: const ValueKey('zzz-modal-panel-surface'),
+            padding: EdgeInsets.zero,
+            radius: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
+                  child: Row(
+                    children: [
+                      if (widget.icon != null) ...[
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: const BoxDecoration(
+                            color: ZzzColors.yellow,
+                            shape: BoxShape.circle,
                           ),
-                          if (widget.subtitle != null)
+                          child: Icon(
+                            widget.icon,
+                            color: Colors.black,
+                            size: 21,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text(
-                              widget.subtitle!,
+                              widget.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 12,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
-                        ],
-                      ),
-                    ),
-                    if (widget.collapsible)
-                      IconButton(
-                        key: const ValueKey('zzz-modal-panel-collapse'),
-                        tooltip:
-                            _expanded ? 'Collapse panel' : 'Expand panel',
-                        onPressed: () => setState(() => _expanded = !_expanded),
-                        icon: AnimatedRotation(
-                          duration: _kZzzAnimExpand,
-                          curve: _kZzzCurve,
-                          turns: _expanded ? 0 : 0.5,
-                          child: const Icon(Icons.expand_more_rounded),
+                            if (widget.subtitle != null)
+                              Text(
+                                widget.subtitle!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    IconButton(
-                      tooltip: 'Close',
-                      onPressed:
-                          widget.onClose ??
-                          () => Navigator.of(context).maybePop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
+                      if (widget.collapsible)
+                        IconButton(
+                          key: const ValueKey('zzz-modal-panel-collapse'),
+                          tooltip:
+                              _expanded ? 'Collapse panel' : 'Expand panel',
+                          onPressed:
+                              () => setState(() => _expanded = !_expanded),
+                          icon: AnimatedRotation(
+                            duration: _kZzzAnimExpand,
+                            curve: _kZzzCurve,
+                            turns: _expanded ? 0 : 0.5,
+                            child: const Icon(Icons.expand_more_rounded),
+                          ),
+                        ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed:
+                            widget.onClose ??
+                            () => Navigator.of(context).maybePop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1, color: Colors.white12),
-              if (widget.collapsible)
-                Flexible(
-                  // Keep the body's original constraints. A SizeTransition
-                  // loosens height constraints, which breaks children that
-                  // use Expanded (for example the group member browser).
-                  child: Offstage(
-                    offstage: !_expanded,
+                const Divider(height: 1, color: Colors.white12),
+                if (!widget.collapsible || _expanded)
+                  Flexible(
+                    // AnimatedSize is outside this branch so children that
+                    // use Expanded keep a bounded height while the panel is open.
                     child: widget.child,
                   ),
-                )
-              else
-                Flexible(child: widget.child),
-              if (widget.actions.isNotEmpty) ...[
-                const Divider(height: 1, color: Colors.white12),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-                  child: OverflowBar(
-                    alignment: MainAxisAlignment.end,
-                    spacing: 8,
-                    overflowSpacing: 8,
-                    children: widget.actions,
+                if (widget.actions.isNotEmpty) ...[
+                  const Divider(height: 1, color: Colors.white12),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                    child: OverflowBar(
+                      alignment: MainAxisAlignment.end,
+                      spacing: 8,
+                      overflowSpacing: 8,
+                      children: widget.actions,
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
