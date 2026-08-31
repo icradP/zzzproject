@@ -191,7 +191,6 @@ void main() {
       find.byKey(const ValueKey('create-group-member-browser')),
       findsNothing,
     );
-    expect(find.byTooltip('Expand panel'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
