@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/icradp/zzz-im-server/internal/gateway"
 	"github.com/icradp/zzz-im-server/internal/media"
@@ -93,7 +94,11 @@ func main() {
 	mux.Handle("/files/", mediaStore)
 
 	log.Printf("[server] listening on %s", *addr)
-	log.Printf("[server] WebSocket endpoint: ws://localhost%s/ws", *addr)
+	displayAddr := *addr
+	if strings.HasPrefix(displayAddr, ":") {
+		displayAddr = "localhost" + displayAddr
+	}
+	log.Printf("[server] WebSocket endpoint: ws://%s/ws", displayAddr)
 	log.Printf("[server] storage driver: %s", *dbDriver)
 	log.Printf("[server] media directory: %s", *mediaDir)
 	if cache != nil {

@@ -1,0 +1,35 @@
+[Unit]
+Description=ZZZ IM test server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=zzz-im
+Group=zzz-im
+WorkingDirectory=/var/lib/zzz-im
+EnvironmentFile=/etc/zzz-im/server.env
+ExecStart=/usr/local/bin/zzz-im-server -addr 127.0.0.1:18080 -driver sqlite -dsn /var/lib/zzz-im/zzz-im.db -media-dir /var/lib/zzz-im/media
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+UMask=0027
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/zzz-im
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

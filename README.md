@@ -60,6 +60,25 @@ The shared token is an access gate for testing, not a multi-user production
 authentication system. Replace it with account-specific credentials before
 using the server for sensitive or untrusted traffic.
 
+If the target host cannot reach Docker Hub, cross-compile static Linux amd64
+binaries into `dist/` and run `deploy/zzz-im/deploy-native.sh`. The included
+systemd unit runs the service as the dedicated `zzz-im` user with a read-only
+system view and write access limited to `/var/lib/zzz-im`.
+
+```bash
+mkdir -p dist
+cd server
+CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=x86_64-linux-musl-gcc \
+  go build -trimpath \
+  -ldflags='-s -w -linkmode external -extldflags "-static"' \
+  -o ../dist/zzz-im-server-linux-amd64 ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags='-s -w' \
+  -o ../dist/zzz-im-vapid-linux-amd64 ./cmd/vapid
+cd ..
+sudo ./deploy/zzz-im/deploy-native.sh
+```
+
 Build the PWA for GitHub Pages:
 
 ```bash
