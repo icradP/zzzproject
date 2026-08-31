@@ -7,6 +7,8 @@ import '../../models/im_models.dart';
 import '../im_message_source.dart';
 import 'im_upload_bytes.dart';
 
+typedef ZzzAvatarResolver = String? Function(String userId);
+
 class ZzzServerConfig {
   const ZzzServerConfig({
     required this.serverUrl,
@@ -38,13 +40,16 @@ class ZzzServerSource implements ImMessageSource {
   ZzzServerSource({
     required this.config,
     bool allowReconnect = true,
+    ZzzAvatarResolver? avatarResolver,
     Future<void> Function()? onAuthenticationFailed,
   }) : _onAuthenticationFailed = onAuthenticationFailed,
+       _avatarResolver = avatarResolver,
        _allowReconnect = allowReconnect,
        _selfId = config.selfId;
 
   final ZzzServerConfig config;
   final bool _allowReconnect;
+  final ZzzAvatarResolver? _avatarResolver;
   final Future<void> Function()? _onAuthenticationFailed;
 
   WebSocketChannel? _channel;
@@ -134,7 +139,11 @@ class ZzzServerSource implements ImMessageSource {
 
   @override
   Future<String?> testConnection() async {
-    final probe = ZzzServerSource(config: config, allowReconnect: false);
+    final probe = ZzzServerSource(
+      config: config,
+      allowReconnect: false,
+      avatarResolver: _avatarResolver,
+    );
     try {
       await probe.connect().timeout(const Duration(seconds: 12));
       return null;
@@ -285,7 +294,7 @@ class ZzzServerSource implements ImMessageSource {
           type: ImConversationType.group,
           title: '${json['name'] ?? id}',
           participantIds: participants,
-          avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+          avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
         );
         _conversations[id] = conversation;
         groups.add(conversation);
@@ -373,7 +382,7 @@ class ZzzServerSource implements ImMessageSource {
       participantIds:
           (data['participants'] as List?)?.map((v) => '$v').toList() ??
           [_selfId],
-      avatarAssetPath: _resolveMediaUrl(data['avatar_url'] as String?),
+      avatarAssetPath: _resolveAvatar(id, data['avatar_url'] as String?),
       sourceId: null,
     );
     _conversations[id] = conversation;
@@ -475,7 +484,7 @@ class ZzzServerSource implements ImMessageSource {
         id: id,
         displayName: '${json['nickname'] ?? id}',
         isOnline: json['online'] as bool? ?? false,
-        avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+        avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
       );
     }
   }
@@ -522,7 +531,12 @@ class ZzzServerSource implements ImMessageSource {
       title: '${json['title'] ?? id}',
       participantIds: participants,
       subtitle: json['last_message'] as String?,
-      avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+      avatarAssetPath: _resolveConversationAvatar(
+        id: id,
+        isGroup: json['type'] == 'group',
+        participantIds: participants,
+        value: json['avatar_url'] as String?,
+      ),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
       updatedAt:
           timestamp > 0
@@ -606,7 +620,10 @@ class ZzzServerSource implements ImMessageSource {
       _users[senderId] = ImUser(
         id: senderId,
         displayName: '${sender['nickname'] ?? senderId}',
-        avatarAssetPath: _resolveMediaUrl(sender['avatar_url'] as String?),
+        avatarAssetPath: _resolveAvatar(
+          senderId,
+          sender['avatar_url'] as String?,
+        ),
         isOnline: true,
       );
       final mediaUrl = (data['url'] as String?) ?? (data['file'] as String?);
@@ -781,7 +798,7 @@ class ZzzServerSource implements ImMessageSource {
       id: _selfId,
       displayName: '${json['nickname'] ?? _selfId}',
       isOnline: true,
-      avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+      avatarAssetPath: _resolveAvatar(_selfId, json['avatar_url'] as String?),
     );
   }
 
@@ -793,7 +810,7 @@ class ZzzServerSource implements ImMessageSource {
     return ImUser(
       id: id,
       displayName: '${json['nickname'] ?? id}',
-      avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+      avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
       isOnline: json['online'] as bool? ?? true,
     );
   }
@@ -902,6 +919,29 @@ class ZzzServerSource implements ImMessageSource {
     final server = Uri.parse(config.serverUrl);
     final scheme = server.scheme == 'wss' ? 'https' : 'http';
     return server.replace(scheme: scheme, path: value, query: null).toString();
+  }
+
+  String? _resolveAvatar(String userId, String? value) {
+    return _resolveMediaUrl(value) ?? _avatarResolver?.call(userId);
+  }
+
+  String? _resolveConversationAvatar({
+    required String id,
+    required bool isGroup,
+    required List<String> participantIds,
+    required String? value,
+  }) {
+    final remote = _resolveMediaUrl(value);
+    if (remote != null) return remote;
+    if (isGroup) return _avatarResolver?.call(id);
+    String? otherUserId;
+    for (final participantId in participantIds) {
+      if (participantId != _selfId) {
+        otherUserId = participantId;
+        break;
+      }
+    }
+    return _avatarResolver?.call(otherUserId ?? id);
   }
 
   void _setStatus(ConnectionStatus status) {

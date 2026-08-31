@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../assets/app_assets.dart';
+import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
@@ -107,9 +108,9 @@ class _ContactsPanelState extends State<ContactsPanel> {
           (user) => self.sourceId == null || user.sourceId == self.sourceId,
         )
         .toList(growable: false);
-    final request = await showDialog<_CreateGroupRequest>(
+    final request = await showZzzModalPanel<_CreateGroupRequest>(
       context: context,
-      builder: (_) => _CreateGroupDialog(users: availableUsers),
+      builder: (_) => _CreateGroupPanel(users: availableUsers),
     );
     if (request == null || !mounted) return;
     try {
@@ -166,10 +167,10 @@ class _ContactsPanelState extends State<ContactsPanel> {
               ),
             ),
             if (_showGroups)
-              IconButton(
+              ZzzFooterButton(
                 tooltip: 'Create group',
-                onPressed: _createGroup,
-                icon: const Icon(Icons.group_add_outlined),
+                onTap: _createGroup,
+                icon: Icons.group_add_outlined,
               ),
           ],
         ),
@@ -250,28 +251,51 @@ class _CreateGroupRequest {
   final List<String> memberIds;
 }
 
-class _CreateGroupDialog extends StatefulWidget {
-  const _CreateGroupDialog({required this.users});
+class _CreateGroupPanel extends StatefulWidget {
+  const _CreateGroupPanel({required this.users});
 
   final List<ImUser> users;
 
   @override
-  State<_CreateGroupDialog> createState() => _CreateGroupDialogState();
+  State<_CreateGroupPanel> createState() => _CreateGroupPanelState();
 }
 
-class _CreateGroupDialogState extends State<_CreateGroupDialog> {
+class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   final _nameController = TextEditingController();
+  final _memberSearchController = TextEditingController();
   final _selectedMemberIds = <String>{};
+  String _memberQuery = '';
+
+  bool get _hasValidName {
+    final name = _nameController.text.trim();
+    return name.isNotEmpty && name.length <= 80;
+  }
+
+  List<ImUser> get _filteredUsers {
+    if (_memberQuery.isEmpty) return widget.users;
+    return widget.users
+        .where((user) {
+          final id = ImSourceAddress.localIdOf(user.id).toLowerCase();
+          return user.displayName.toLowerCase().contains(_memberQuery) ||
+              id.contains(_memberQuery);
+        })
+        .toList(growable: false);
+  }
+
+  List<ImUser> get _selectedUsers => widget.users
+      .where((user) => _selectedMemberIds.contains(user.id))
+      .toList(growable: false);
 
   @override
   void dispose() {
     _nameController.dispose();
+    _memberSearchController.dispose();
     super.dispose();
   }
 
   void _submit() {
     final name = _nameController.text.trim();
-    if (name.isEmpty) return;
+    if (!_hasValidName) return;
     Navigator.of(context).pop(
       _CreateGroupRequest(
         name: name,
@@ -280,67 +304,136 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
     );
   }
 
+  void _toggleMember(ImUser user) {
+    setState(() {
+      if (!_selectedMemberIds.add(user.id)) {
+        _selectedMemberIds.remove(user.id);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Create group'),
-      content: SizedBox(
-        width: 420,
-        height: 320,
+    final filteredUsers = _filteredUsers;
+    final selectedUsers = _selectedUsers;
+    final selectedCount = _selectedMemberIds.length;
+
+    return ZzzModalPanel(
+      key: const ValueKey('create-group-panel'),
+      title: 'Create group',
+      subtitle: '$selectedCount selected',
+      icon: Icons.group_add_outlined,
+      actions: [
+        TextButton.icon(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+          label: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _hasValidName ? _submit : null,
+          icon: const Icon(Icons.group_add_outlined),
+          label: const Text('Create'),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(
+            ZzzTextInput(
+              key: const ValueKey('create-group-name'),
               controller: _nameController,
               autofocus: true,
-              maxLength: 80,
-              decoration: const InputDecoration(labelText: 'Group name'),
+              hintText: 'Group name',
+              prefixIcon: const Icon(Icons.edit_outlined),
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              foregroundColor: Colors.white,
               onChanged: (_) => setState(() {}),
               onSubmitted: (_) => _submit(),
             ),
-            const Text(
-              'Members',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            ZzzReveal(
+              expanded: selectedUsers.isNotEmpty,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 14),
+                child: SizedBox(
+                  height: 68,
+                  child: ListView.separated(
+                    key: const ValueKey('selected-group-members'),
+                    scrollDirection: Axis.horizontal,
+                    itemCount: selectedUsers.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final user = selectedUsers[index];
+                      return ZzzSelectableAvatar(
+                        image: user.avatarImage(
+                          AppAssets.fallbackAvatarForId(user.id),
+                        ),
+                        label: user.displayName,
+                        selected: true,
+                        size: 38,
+                        onSelect: () => _toggleMember(user),
+                      );
+                    },
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(top: 14, bottom: 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Members',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (selectedCount > 0)
+                    TextButton.icon(
+                      onPressed:
+                          () => setState(() => _selectedMemberIds.clear()),
+                      icon: const Icon(Icons.deselect_rounded, size: 18),
+                      label: const Text('Clear'),
+                    ),
+                ],
+              ),
+            ),
+            ZzzTextInput(
+              key: const ValueKey('create-group-member-search'),
+              controller: _memberSearchController,
+              hintText: 'Search members',
+              prefixIcon: const Icon(Icons.search_rounded),
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              foregroundColor: Colors.white,
+              textInputAction: TextInputAction.search,
+              onChanged:
+                  (value) =>
+                      setState(() => _memberQuery = value.trim().toLowerCase()),
+            ),
+            const SizedBox(height: 8),
             Expanded(
               child:
-                  widget.users.isEmpty
+                  filteredUsers.isEmpty
                       ? const Center(
                         child: Text(
-                          'No contacts available',
+                          'No matching contacts',
                           style: TextStyle(color: Colors.white54),
                         ),
                       )
-                      : ListView.builder(
-                        itemCount: widget.users.length,
+                      : ListView.separated(
+                        key: const ValueKey('create-group-member-list'),
+                        itemCount: filteredUsers.length,
+                        separatorBuilder:
+                            (_, __) =>
+                                const Divider(height: 1, color: Colors.white10),
                         itemBuilder: (context, index) {
-                          final user = widget.users[index];
-                          return CheckboxListTile(
-                            value: _selectedMemberIds.contains(user.id),
-                            secondary: ZzzAvatar(
-                              image: user.avatarImage(AppAssets.characterWise),
-                              size: 36,
-                            ),
-                            title: Text(
-                              user.displayName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              ImSourceAddress.localIdOf(user.id),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onChanged: (selected) {
-                              setState(() {
-                                if (selected == true) {
-                                  _selectedMemberIds.add(user.id);
-                                } else {
-                                  _selectedMemberIds.remove(user.id);
-                                }
-                              });
-                            },
+                          final user = filteredUsers[index];
+                          final selected = _selectedMemberIds.contains(user.id);
+                          return _CreateGroupMemberTile(
+                            key: ValueKey('create-group-member-${user.id}'),
+                            user: user,
+                            selected: selected,
+                            onTap: () => _toggleMember(user),
                           );
                         },
                       ),
@@ -348,17 +441,100 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+    );
+  }
+}
+
+class _CreateGroupMemberTile extends StatelessWidget {
+  const _CreateGroupMemberTile({
+    required this.user,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final ImUser user;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            color:
+                selected
+                    ? ZzzColors.yellow.withValues(alpha: 0.09)
+                    : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  ZzzAvatar(
+                    image: user.avatarImage(
+                      AppAssets.fallbackAvatarForId(user.id),
+                    ),
+                    size: 40,
+                  ),
+                  Positioned(
+                    right: -1,
+                    bottom: -1,
+                    child: Container(
+                      width: 11,
+                      height: 11,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color:
+                            user.isOnline ? ZzzColors.yellow : Colors.white30,
+                        border: Border.all(color: ZzzColors.panel, width: 2),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      ImSourceAddress.localIdOf(user.id),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Checkbox(
+                value: selected,
+                onChanged: (_) => onTap(),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+            ],
+          ),
         ),
-        FilledButton.icon(
-          onPressed: _nameController.text.trim().isEmpty ? null : _submit,
-          icon: const Icon(Icons.group_add_outlined),
-          label: const Text('Create'),
-        ),
-      ],
+      ),
     );
   }
 }

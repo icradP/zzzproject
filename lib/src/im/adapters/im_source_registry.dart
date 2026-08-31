@@ -95,6 +95,7 @@ class ImSourceRegistry {
               authToken: config.accessToken ?? '',
               selfId: config.selfId,
             ),
+            avatarResolver: avatarResolver,
             onAuthenticationFailed: onZzzAuthenticationFailed,
           );
           zzzServerSources[profile.id] = source;

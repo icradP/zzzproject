@@ -244,15 +244,8 @@ class _ZzzAppState extends State<ZzzApp> {
       case 'fairy':
         return AppAssets.character('temp/Fairy.png');
       default:
-        return _randomAvatarForId(userId);
+        return AppAssets.fallbackAvatarForId(userId);
     }
-  }
-
-  /// Deterministically picks an avatar from [AppAssets.avatarPool] for [id].
-  static String _randomAvatarForId(String id) {
-    final hash = id.codeUnits.fold<int>(0, (prev, c) => prev * 31 + c);
-    final index = hash.abs() % AppAssets.avatarPool.length;
-    return AppAssets.avatarPool[index];
   }
 
   @override

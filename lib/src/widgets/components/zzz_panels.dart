@@ -1,5 +1,159 @@
 part of '../zzz_components.dart';
 
+Future<T?> showZzzModalPanel<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+}) {
+  return showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+    barrierColor: Colors.black.withValues(alpha: 0.72),
+    transitionDuration: _kZzzAnimExpand,
+    pageBuilder: (context, _, __) => builder(context),
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: _kZzzBounce,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.04),
+            end: Offset.zero,
+          ).animate(curved),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
+            child: child,
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Responsive modal surface with the same visual language as [ZzzPanel].
+class ZzzModalPanel extends StatelessWidget {
+  const ZzzModalPanel({
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.icon,
+    this.actions = const [],
+    this.maxWidth = 520,
+    this.maxHeight = 640,
+    this.onClose,
+    super.key,
+  });
+
+  final String title;
+  final String? subtitle;
+  final IconData? icon;
+  final Widget child;
+  final List<Widget> actions;
+  final double maxWidth;
+  final double maxHeight;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final availableHeight = media.size.height - media.viewInsets.vertical - 32;
+    final resolvedMaxHeight =
+        availableHeight < maxHeight ? availableHeight : maxHeight;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxWidth,
+          maxHeight: resolvedMaxHeight < 180 ? 180 : resolvedMaxHeight,
+        ),
+        child: ZzzPanel(
+          padding: EdgeInsets.zero,
+          radius: 16,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
+                child: Row(
+                  children: [
+                    if (icon != null) ...[
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: const BoxDecoration(
+                          color: ZzzColors.yellow,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(icon, color: Colors.black, size: 21),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (subtitle != null)
+                            Text(
+                              subtitle!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed:
+                          onClose ?? () => Navigator.of(context).maybePop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: Colors.white12),
+              Flexible(child: child),
+              if (actions.isNotEmpty) ...[
+                const Divider(height: 1, color: Colors.white12),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                  child: OverflowBar(
+                    alignment: MainAxisAlignment.end,
+                    spacing: 8,
+                    overflowSpacing: 8,
+                    children: actions,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class ZzzPanel extends StatefulWidget {
   const ZzzPanel({
     required this.child,

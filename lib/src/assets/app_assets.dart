@@ -26,8 +26,7 @@ class AppAssets {
   static const String chatboxPointR = '${_images}chatbox_point_r.png';
 
   // Icons
-  static const String iconAgentProfile =
-      '${_icons}zzz_agent_profile_icon.png';
+  static const String iconAgentProfile = '${_icons}zzz_agent_profile_icon.png';
   static const String iconBack = '${_icons}zzz_back_icon.png';
   static const String iconDm = '${_icons}zzz_dm_icon.png';
   static const String iconEdit = '${_icons}edit_icon.png';
@@ -61,6 +60,44 @@ class AppAssets {
     '${_characters}Wise.png',
     '${_characters}ZhuYuan.png',
   ];
+
+  /// Broader pool used when a remote account has not uploaded an avatar.
+  static const List<String> fallbackAvatarPool = [
+    ...avatarPool,
+    '${_characters}npcs/Amy.png',
+    '${_characters}npcs/Asha.png',
+    '${_characters}npcs/Elfy.png',
+    '${_characters}npcs/Enzo.png',
+    '${_characters}npcs/Foamy.png',
+    '${_characters}npcs/Heddy.png',
+    '${_characters}npcs/Monica.png',
+    '${_characters}npcs/OfficerMewmew.png',
+    '${_characters}npcs/Sjal1.png',
+    '${_characters}npcs/Sjal2.png',
+    '${_characters}npcs/Sjal3.png',
+    '${_characters}npcs/Venus.png',
+    '${_characters}temp/AlexandrinaSebastiane.png',
+    '${_characters}temp/BurniceWhite.png',
+    '${_characters}temp/CaesarKing.png',
+    '${_characters}temp/EllenJoe.png',
+    '${_characters}temp/GraceHoward.png',
+    '${_characters}temp/HoshimiMiyabi.png',
+    '${_characters}temp/KoledaBelobog.png',
+    '${_characters}temp/Lighter.png',
+    '${_characters}temp/NekomiyaMana.png',
+    '${_characters}temp/SethLowell.png',
+    '${_characters}temp/Soldier11.png',
+    '${_characters}temp/Soukaku.png',
+  ];
+
+  /// Keeps generated avatars stable across sessions while distributing users.
+  static String fallbackAvatarForId(String id) {
+    var hash = 0;
+    for (final codeUnit in id.codeUnits) {
+      hash = (hash * 31 + codeUnit) & 0x7fffffff;
+    }
+    return fallbackAvatarPool[hash % fallbackAvatarPool.length];
+  }
 
   /// Path under [assets/characters/] for a file or nested relative path.
   static String character(String relativePath) => '$_characters$relativePath';
