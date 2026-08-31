@@ -1051,6 +1051,7 @@ func (g *Gateway) handleRegisterPush(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "failed to save push subscription")
 		return
 	}
+	log.Printf("[push] subscription registered for %s", client.userID)
 	g.sendJSON(client, protocol.Response{
 		Status: "ok", RetCode: 0, Echo: req.Echo,
 	})
@@ -1075,6 +1076,7 @@ func (g *Gateway) handleUnregisterPush(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "failed to delete push subscription")
 		return
 	}
+	log.Printf("[push] subscription removed for %s", client.userID)
 	g.sendJSON(client, protocol.Response{
 		Status: "ok", RetCode: 0, Echo: req.Echo,
 	})
@@ -1182,7 +1184,9 @@ func (g *Gateway) pushToConversation(convID string, message *store.Message, excl
 				}
 				if sendErr != nil {
 					log.Printf("[push] delivery failed for %s: %v", userID, sendErr)
+					continue
 				}
+				log.Printf("[push] delivered message %s to %s", message.ID, userID)
 			}
 		}
 	}()

@@ -7,6 +7,7 @@ import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../data/im_animation_config.dart';
 import '../data/im_backdrop_config.dart';
+import '../data/im_push_manager.dart';
 import '../data/im_repository.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
@@ -167,6 +168,9 @@ class _ImHomePageState extends State<ImHomePage>
                         _buildAppHeader(isWide: isWide),
                       if (!(!isWide && _selectedConversationId != null))
                         const SizedBox(height: 12),
+                      if (!(!isWide && _selectedConversationId != null)) ...[
+                        _buildPushNotificationBanner(),
+                      ],
                       Expanded(
                         child:
                             isWide
@@ -249,6 +253,96 @@ class _ImHomePageState extends State<ImHomePage>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPushNotificationBanner() {
+    final manager = ImScope.pushManagerOf(context);
+    return ListenableBuilder(
+      listenable: manager,
+      builder: (context, _) {
+        if (!manager.isSupported ||
+            manager.permission == ImPushPermission.enabled) {
+          return const SizedBox.shrink();
+        }
+
+        final denied = manager.permission == ImPushPermission.denied;
+        final subtitle =
+            manager.error ??
+            (denied
+                ? 'Notifications are blocked in this device\'s browser settings.'
+                : 'Receive new messages when ZZZ IM is in the background.');
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color:
+                    denied
+                        ? Colors.redAccent.withValues(alpha: 0.55)
+                        : ZzzColors.yellow.withValues(alpha: 0.55),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  denied
+                      ? Icons.notifications_off_outlined
+                      : Icons.notifications_outlined,
+                  color: denied ? Colors.redAccent : ZzzColors.yellow,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Message notifications',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 12,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                if (manager.isBusy)
+                  const SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: denied ? null : () => _enablePush(manager),
+                    icon: const Icon(Icons.notifications_active_outlined),
+                    label: Text(denied ? 'Blocked' : 'Turn on'),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _enablePush(ImPushManager manager) async {
+    await manager.enable();
+    if (!mounted || manager.permission != ImPushPermission.enabled) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Notifications enabled on this device.')),
     );
   }
 
