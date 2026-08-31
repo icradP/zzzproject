@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../assets/app_assets.dart';
@@ -27,7 +29,12 @@ class ImGroupDetailsPanel extends StatefulWidget {
 
 class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
   final _searchController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _announcementController = TextEditingController();
   final _selectedInvitees = <String>{};
+  Uint8List? _avatarBytes;
+  String? _avatarName;
+  String? _avatarMime;
   ImGroupDetails? _details;
   List<ImUser> _availableUsers = const [];
   String _tab = 'members';
@@ -55,6 +62,8 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
   @override
   void dispose() {
     _searchController.dispose();
+    _nameController.dispose();
+    _announcementController.dispose();
     super.dispose();
   }
 
@@ -81,12 +90,21 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
       if (!mounted) return;
       setState(() {
         _details = details;
+        _nameController.text = details.conversation.title;
+        _announcementController.text = details.announcement;
         _availableUsers = users;
         _error = userLoadError;
         _selectedInvitees.removeWhere(
           (id) => details.members.any((member) => member.user.id == id),
         );
-        if (!details.canInviteMembers) _tab = 'members';
+        final settingsAvailable =
+            details.canEditSettings ||
+            details.canTransferOwnership ||
+            details.canDismiss;
+        if (_tab == 'invite' && !details.canInviteMembers ||
+            _tab == 'settings' && !settingsAvailable) {
+          _tab = 'members';
+        }
         _loading = false;
       });
     } catch (error) {
@@ -190,6 +208,183 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
     }
   }
 
+  Future<void> _pickGroupAvatar() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+      allowMultiple: false,
+    );
+    final file = result?.files.single;
+    if (file == null || file.bytes == null) return;
+    if (file.bytes!.length > 5 * 1024 * 1024) {
+      setState(() => _error = 'Group avatar must be 5 MB or smaller.');
+      return;
+    }
+    setState(() {
+      _avatarBytes = file.bytes;
+      _avatarName = file.name;
+      _avatarMime = file.extension == null ? null : 'image/${file.extension}';
+      _error = null;
+    });
+  }
+
+  Future<void> _runGroupAction(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+      await _load();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _saveSettings(ImGroupDetails details) async {
+    final name = _nameController.text.trim();
+    if (details.supportsNameEditing && (name.isEmpty || name.length > 80)) {
+      setState(() => _error = 'Group name must be 1-80 characters.');
+      return;
+    }
+    final announcement = _announcementController.text.trim();
+    if (announcement.length > 2000) {
+      setState(() => _error = 'Announcement must be 2000 characters or less.');
+      return;
+    }
+    await _runGroupAction(() async {
+      await widget.repository.updateGroup(
+        groupId: widget.conversation.id,
+        name: details.supportsNameEditing ? name : null,
+        announcement: details.supportsAnnouncementEditing ? announcement : null,
+        avatar:
+            _avatarBytes == null
+                ? null
+                : ImMediaUpload(
+                  kind: ImMessageKind.image,
+                  fileName: _avatarName ?? 'group-avatar.jpg',
+                  bytes: _avatarBytes,
+                  mimeType: _avatarMime,
+                ),
+      );
+      _avatarBytes = null;
+      _avatarName = null;
+      _avatarMime = null;
+    });
+  }
+
+  Future<void> _setAdministrator(ImGroupMember member, bool enabled) =>
+      _runGroupAction(
+        () => widget.repository.setGroupAdmin(
+          groupId: widget.conversation.id,
+          userId: member.user.id,
+          enabled: enabled,
+        ),
+      );
+
+  Future<void> _setMemberMute(ImGroupMember member, Duration duration) =>
+      _runGroupAction(
+        () => widget.repository.setGroupMemberMute(
+          groupId: widget.conversation.id,
+          userId: member.user.id,
+          duration: duration,
+        ),
+      );
+
+  Future<void> _chooseMemberMute(ImGroupMember member) async {
+    final options = <(String, Duration)>[
+      ('10 minutes', const Duration(minutes: 10)),
+      ('1 hour', const Duration(hours: 1)),
+      ('12 hours', const Duration(hours: 12)),
+      ('1 day', const Duration(days: 1)),
+      ('7 days', const Duration(days: 7)),
+    ];
+    final duration = await showZzzModalPanel<Duration>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            title: 'Mute member',
+            subtitle: member.user.displayName,
+            icon: Icons.volume_off_outlined,
+            maxWidth: 420,
+            maxHeight: 440,
+            child: ListView.separated(
+              key: const ValueKey('group-mute-duration-list'),
+              padding: const EdgeInsets.all(12),
+              itemCount: options.length,
+              separatorBuilder:
+                  (_, __) => const Divider(height: 1, color: Colors.white10),
+              itemBuilder: (context, index) {
+                final option = options[index];
+                return Material(
+                  color: Colors.transparent,
+                  child: ListTile(
+                    leading: const Icon(Icons.schedule_rounded),
+                    title: Text(option.$1),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => Navigator.of(dialogContext).pop(option.$2),
+                  ),
+                );
+              },
+            ),
+          ),
+    );
+    if (duration != null && mounted) await _setMemberMute(member, duration);
+  }
+
+  Future<void> _transferOwnership(ImGroupMember member) async {
+    final confirmed = await _confirm(
+      title: 'Transfer ownership',
+      message:
+          '${member.user.displayName} will become the group owner. You will become a regular member.',
+      actionLabel: 'Transfer',
+    );
+    if (!confirmed || !mounted) return;
+    await _runGroupAction(
+      () => widget.repository.transferGroupOwnership(
+        groupId: widget.conversation.id,
+        userId: member.user.id,
+      ),
+    );
+  }
+
+  Future<void> _setMuteAll(bool enabled) => _runGroupAction(
+    () => widget.repository.setGroupMuteAll(
+      groupId: widget.conversation.id,
+      enabled: enabled,
+    ),
+  );
+
+  Future<void> _dismissGroup() async {
+    final confirmed = await _confirm(
+      title: 'Dismiss group',
+      message:
+          'This permanently removes the group for every member. This action cannot be undone.',
+      actionLabel: 'Dismiss',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.dismissGroup(widget.conversation.id);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      widget.onLeft();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = '$error';
+        });
+      }
+    }
+  }
+
   Future<void> _inviteSelected() async {
     if (_selectedInvitees.isEmpty || _busy) return;
     setState(() {
@@ -240,12 +435,36 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
   @override
   Widget build(BuildContext context) {
     final details = _details;
+    final hasSettings =
+        details != null &&
+        (details.canEditSettings ||
+            details.canTransferOwnership ||
+            details.canDismiss);
+    final tabs = <ZzzSegmentItem<String>>[
+      const ZzzSegmentItem<String>(
+        value: 'members',
+        tooltip: 'Members',
+        icon: Icons.groups_rounded,
+      ),
+      if (details?.canInviteMembers ?? false)
+        const ZzzSegmentItem<String>(
+          value: 'invite',
+          tooltip: 'Invite members',
+          icon: Icons.person_add_alt_1_rounded,
+        ),
+      if (hasSettings)
+        const ZzzSegmentItem<String>(
+          value: 'settings',
+          tooltip: 'Group settings',
+          icon: Icons.tune_rounded,
+        ),
+    ];
     return ZzzModalPanel(
       key: const ValueKey('group-details-panel'),
       title: 'Group management',
-      subtitle: widget.conversation.title,
+      subtitle: details?.conversation.title ?? widget.conversation.title,
       icon: Icons.manage_accounts_outlined,
-      maxWidth: 680,
+      maxWidth: 760,
       maxHeight: 720,
       child:
           _loading && details == null
@@ -261,22 +480,11 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
                       _buildError(),
                     ],
                     const SizedBox(height: 12),
-                    if (details?.canInviteMembers ?? false) ...[
+                    if (tabs.length > 1) ...[
                       ZzzSegmentedControl<String>(
                         key: const ValueKey('group-management-tabs'),
                         value: _tab,
-                        items: const [
-                          ZzzSegmentItem<String>(
-                            value: 'members',
-                            tooltip: 'Members',
-                            icon: Icons.groups_rounded,
-                          ),
-                          ZzzSegmentItem<String>(
-                            value: 'invite',
-                            tooltip: 'Invite members',
-                            icon: Icons.person_add_alt_1_rounded,
-                          ),
-                        ],
+                        items: tabs,
                         onChanged: (value) => setState(() => _tab = value),
                       ),
                       const SizedBox(height: 12),
@@ -287,13 +495,14 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
                               ? _buildRetry()
                               : AnimatedSwitcher(
                                 duration: const Duration(milliseconds: 180),
-                                child:
-                                    _tab == 'invite'
-                                        ? _buildInviteList()
-                                        : _buildMemberList(details),
+                                child: switch (_tab) {
+                                  'invite' => _buildInviteList(),
+                                  'settings' => _buildSettings(details),
+                                  _ => _buildMemberList(details),
+                                },
                               ),
                     ),
-                    if (details?.canLeave ?? false) ...[
+                    if ((details?.canLeave ?? false) && _tab != 'settings') ...[
                       const Divider(height: 16, color: Colors.white12),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -384,6 +593,261 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
     );
   }
 
+  Widget _buildSettings(ImGroupDetails details) {
+    final profile = ZzzExpandableSection(
+      key: const ValueKey('group-profile-settings'),
+      title: 'Group profile',
+      subtitle: 'Name, image and announcement',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (details.supportsAvatarEditing) ...[
+            Row(
+              children: [
+                ZzzAvatar(
+                  image:
+                      _avatarBytes == null
+                          ? details.conversation.avatarImage(
+                            AppAssets.fallbackAvatarForId(
+                              details.conversation.id,
+                            ),
+                          )
+                          : MemoryImage(_avatarBytes!),
+                  size: 52,
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('group-avatar-pick'),
+                    onPressed: _busy ? null : _pickGroupAvatar,
+                    icon: const Icon(Icons.photo_camera_outlined),
+                    label: Text(
+                      _avatarBytes == null ? 'Change image' : 'Image selected',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (details.supportsNameEditing) ...[
+            ZzzTextInput(
+              key: const ValueKey('group-name-input'),
+              controller: _nameController,
+              hintText: 'Group name',
+              maxLength: 80,
+              prefixIcon: const Icon(Icons.group_outlined),
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              foregroundColor: Colors.white,
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (details.supportsAnnouncementEditing) ...[
+            ZzzTextInput(
+              key: const ValueKey('group-announcement-input'),
+              controller: _announcementController,
+              hintText: 'Group announcement',
+              minLines: 3,
+              maxLines: 5,
+              maxLength: 2000,
+              prefixIcon: const Icon(Icons.campaign_outlined),
+              fillColor: Colors.white.withValues(alpha: 0.08),
+              foregroundColor: Colors.white,
+            ),
+            const SizedBox(height: 10),
+          ],
+          FilledButton.icon(
+            key: const ValueKey('group-settings-save'),
+            onPressed: _busy ? null : () => _saveSettings(details),
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save changes'),
+          ),
+        ],
+      ),
+    );
+    final governance = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (details.supportsWholeGroupMute && details.currentUserIsManager)
+          ZzzExpandableSection(
+            key: const ValueKey('group-moderation-settings'),
+            title: 'Moderation',
+            subtitle: 'Control who can send messages',
+            child: Material(
+              color: Colors.transparent,
+              child: SwitchListTile.adaptive(
+                key: const ValueKey('group-mute-all'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mute all members'),
+                subtitle: const Text(
+                  'Owners and administrators can still send messages.',
+                ),
+                value: details.muteAll,
+                onChanged: _busy ? null : _setMuteAll,
+              ),
+            ),
+          ),
+        if (details.canLeave || details.canDismiss)
+          ZzzExpandableSection(
+            key: const ValueKey('group-danger-settings'),
+            title: 'Group access',
+            subtitle: 'Permanent membership actions',
+            initiallyExpanded: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (details.canLeave)
+                  OutlinedButton.icon(
+                    key: const ValueKey('group-leave-settings'),
+                    onPressed: _busy ? null : _leaveGroup,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                    ),
+                    icon: const Icon(Icons.logout_rounded),
+                    label: const Text('Leave group'),
+                  ),
+                if (details.canDismiss)
+                  FilledButton.icon(
+                    key: const ValueKey('group-dismiss'),
+                    onPressed: _busy ? null : _dismissGroup,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: ZzzColors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.delete_forever_outlined),
+                    label: const Text('Dismiss group'),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+
+    return LayoutBuilder(
+      key: const ValueKey('group-settings-tab'),
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 560) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.only(right: 14),
+                  children: [profile],
+                ),
+              ),
+              const VerticalDivider(width: 1, color: Colors.white12),
+              SizedBox(
+                width: 250,
+                child: ListView(
+                  padding: const EdgeInsets.only(left: 14),
+                  children: [governance],
+                ),
+              ),
+            ],
+          );
+        }
+        return ListView(
+          padding: EdgeInsets.zero,
+          children: [profile, const Divider(color: Colors.white12), governance],
+        );
+      },
+    );
+  }
+
+  void _handleMemberAction(String action, ImGroupMember member) {
+    switch (action) {
+      case 'promote':
+        unawaited(_setAdministrator(member, true));
+      case 'demote':
+        unawaited(_setAdministrator(member, false));
+      case 'mute':
+        unawaited(_chooseMemberMute(member));
+      case 'unmute':
+        unawaited(_setMemberMute(member, Duration.zero));
+      case 'transfer':
+        unawaited(_transferOwnership(member));
+      case 'remove':
+        unawaited(_removeMember(member));
+    }
+  }
+
+  Widget? _buildMemberActions(ImGroupDetails details, ImGroupMember member) {
+    final canSetAdmin = details.canSetAdministrator(member);
+    final canMute = details.canMuteMember(member);
+    final canTransfer =
+        details.canTransferOwnership &&
+        member.user.id != details.currentUserId &&
+        member.role != ImGroupRole.owner;
+    final canRemove = details.canRemoveMember(member);
+    if (!canSetAdmin && !canMute && !canTransfer && !canRemove) return null;
+    return PopupMenuButton<String>(
+      key: ValueKey('group-member-actions-${member.user.id}'),
+      tooltip: 'Manage ${member.user.displayName}',
+      enabled: !_busy,
+      onSelected: (action) => _handleMemberAction(action, member),
+      itemBuilder:
+          (context) => [
+            if (canSetAdmin)
+              PopupMenuItem(
+                value: member.role == ImGroupRole.admin ? 'demote' : 'promote',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    member.role == ImGroupRole.admin
+                        ? Icons.remove_moderator_outlined
+                        : Icons.admin_panel_settings_outlined,
+                  ),
+                  title: Text(
+                    member.role == ImGroupRole.admin
+                        ? 'Remove administrator'
+                        : 'Make administrator',
+                  ),
+                ),
+              ),
+            if (canMute)
+              PopupMenuItem(
+                value: member.isMuted ? 'unmute' : 'mute',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    member.isMuted
+                        ? Icons.volume_up_outlined
+                        : Icons.volume_off_outlined,
+                  ),
+                  title: Text(member.isMuted ? 'Unmute' : 'Mute...'),
+                ),
+              ),
+            if (canTransfer)
+              const PopupMenuItem(
+                value: 'transfer',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.swap_horiz_rounded),
+                  title: Text('Transfer ownership'),
+                ),
+              ),
+            if (canRemove)
+              const PopupMenuItem(
+                value: 'remove',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    Icons.person_remove_outlined,
+                    color: Colors.redAccent,
+                  ),
+                  title: Text(
+                    'Remove from group',
+                    style: TextStyle(color: Colors.redAccent),
+                  ),
+                ),
+              ),
+          ],
+      icon: const Icon(Icons.more_vert_rounded),
+    );
+  }
+
   Widget _buildMemberList(ImGroupDetails details) {
     return ListView.separated(
       key: const ValueKey('group-member-list'),
@@ -392,23 +856,12 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
           (_, __) => const Divider(height: 1, color: Colors.white10),
       itemBuilder: (context, index) {
         final member = details.members[index];
-        final canRemove = details.canRemoveMember(member);
         return _GroupPersonRow(
           key: ValueKey('group-member-${member.user.id}'),
           user: member.user,
           role: member.role,
-          trailing:
-              canRemove
-                  ? IconButton(
-                    key: ValueKey('group-remove-${member.user.id}'),
-                    tooltip: 'Remove ${member.user.displayName}',
-                    onPressed: _busy ? null : () => _removeMember(member),
-                    icon: const Icon(
-                      Icons.person_remove_outlined,
-                      color: Colors.redAccent,
-                    ),
-                  )
-                  : null,
+          mutedUntil: member.mutedUntil,
+          trailing: _buildMemberActions(details, member),
         );
       },
     );
@@ -488,6 +941,7 @@ class _GroupPersonRow extends StatelessWidget {
   const _GroupPersonRow({
     required this.user,
     this.role,
+    this.mutedUntil,
     this.trailing,
     this.selected = false,
     this.onTap,
@@ -496,6 +950,7 @@ class _GroupPersonRow extends StatelessWidget {
 
   final ImUser user;
   final ImGroupRole? role;
+  final DateTime? mutedUntil;
   final Widget? trailing;
   final bool selected;
   final VoidCallback? onTap;
@@ -533,11 +988,15 @@ class _GroupPersonRow extends StatelessWidget {
                     ),
                     if (role != null)
                       Text(
-                        switch (role!) {
-                          ImGroupRole.owner => 'Owner',
-                          ImGroupRole.admin => 'Administrator',
-                          ImGroupRole.member => 'Member',
-                        },
+                        [
+                          switch (role!) {
+                            ImGroupRole.owner => 'Owner',
+                            ImGroupRole.admin => 'Administrator',
+                            ImGroupRole.member => 'Member',
+                          },
+                          if (mutedUntil?.isAfter(DateTime.now()) ?? false)
+                            'Muted',
+                        ].join(' | '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

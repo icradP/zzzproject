@@ -196,6 +196,16 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleGroupKick(client, req)
 	case protocol.ActionGroupBan:
 		g.handleGroupBan(client, req)
+	case protocol.ActionUpdateGroup:
+		g.handleUpdateGroup(client, req)
+	case protocol.ActionSetGroupAdmin:
+		g.handleSetGroupAdmin(client, req)
+	case protocol.ActionTransferGroup:
+		g.handleTransferGroup(client, req)
+	case protocol.ActionDismissGroup:
+		g.handleDismissGroup(client, req)
+	case protocol.ActionGroupMuteAll:
+		g.handleGroupMuteAll(client, req)
 	case protocol.ActionFriendRequest:
 		g.handleFriendRequest(client, req)
 	case protocol.ActionFriendHandle:
@@ -592,6 +602,7 @@ func (g *Gateway) groupMemberRole(groupID, userID string) string {
 const (
 	maxGroupMembers     = 500
 	maxGroupInviteBatch = 100
+	maxGroupBanSeconds  = 30 * 24 * 60 * 60
 )
 
 func groupRoleOrder(role string) int {
@@ -603,6 +614,18 @@ func groupRoleOrder(role string) int {
 	default:
 		return 2
 	}
+}
+
+func canManageGroupMember(actorRole, targetRole string) bool {
+	return actorRole == "owner" && (targetRole == "admin" || targetRole == "member") ||
+		actorRole == "admin" && targetRole == "member"
+}
+
+func unixTimeOrZero(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.Unix()
 }
 
 // syncGroupConversationParticipants keeps the conversation projection aligned
@@ -723,6 +746,33 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	if !g.canAccessConversation(client.userID, convID) {
 		g.sendError(client, req.Echo, "conversation access denied")
 		return
+	}
+	if convType == "group" {
+		group, groupErr := g.store.GetGroup(convID)
+		members, memberErr := g.store.GetGroupMembers(convID)
+		if groupErr != nil || memberErr != nil || group == nil {
+			g.sendError(client, req.Echo, "failed to load group permissions")
+			return
+		}
+		var currentMember *store.GroupMember
+		for _, member := range members {
+			if member.UserID == client.userID {
+				currentMember = member
+				break
+			}
+		}
+		if currentMember == nil {
+			g.sendError(client, req.Echo, "group access denied")
+			return
+		}
+		if group.MuteAll && currentMember.Role == "member" {
+			g.sendError(client, req.Echo, "the group is muted for all members")
+			return
+		}
+		if currentMember.Role != "owner" && currentMember.MutedUntil.After(time.Now()) {
+			g.sendError(client, req.Echo, "you are muted until "+currentMember.MutedUntil.UTC().Format(time.RFC3339))
+			return
+		}
 	}
 	replyCount := 0
 	for _, segment := range segments {
@@ -1272,11 +1322,13 @@ func (g *Gateway) handleGetGroupList(client *Client, req *protocol.Request) {
 	result := make([]protocol.Group, len(groups))
 	for i, grp := range groups {
 		result[i] = protocol.Group{
-			GroupID:     grp.ID,
-			Name:        grp.Name,
-			Avatar:      grp.Avatar,
-			OwnerID:     grp.OwnerID,
-			MemberCount: len(grp.Members),
+			GroupID:      grp.ID,
+			Name:         grp.Name,
+			Avatar:       grp.Avatar,
+			Announcement: grp.Announcement,
+			OwnerID:      grp.OwnerID,
+			MemberCount:  len(grp.Members),
+			MuteAll:      grp.MuteAll,
 		}
 		if len(grp.Members) == 0 {
 			if members, err := g.store.GetGroupMembers(grp.ID); err == nil {
@@ -1326,11 +1378,12 @@ func (g *Gateway) handleGetGroupInfo(client *Client, req *protocol.Request) {
 			avatar = user.Avatar
 		}
 		memberList[i] = protocol.GroupMember{
-			UserID:   m.UserID,
-			Nickname: nickname,
-			Avatar:   avatar,
-			Role:     m.Role,
-			JoinedAt: m.JoinedAt.Unix(),
+			UserID:     m.UserID,
+			Nickname:   nickname,
+			Avatar:     avatar,
+			Role:       m.Role,
+			JoinedAt:   m.JoinedAt.Unix(),
+			MutedUntil: unixTimeOrZero(m.MutedUntil),
 		}
 	}
 
@@ -1341,7 +1394,9 @@ func (g *Gateway) handleGetGroupInfo(client *Client, req *protocol.Request) {
 			"group_id":     group.ID,
 			"name":         group.Name,
 			"avatar_url":   group.Avatar,
+			"announcement": group.Announcement,
 			"owner_id":     group.OwnerID,
+			"mute_all":     group.MuteAll,
 			"member_count": len(members),
 			"members":      memberList,
 		},
@@ -1629,8 +1684,7 @@ func (g *Gateway) handleGroupKick(client *Client, req *protocol.Request) {
 	}
 	actorRole := g.groupMemberRole(groupID, client.userID)
 	targetRole := g.groupMemberRole(groupID, userID)
-	canKick := actorRole == "owner" && (targetRole == "admin" || targetRole == "member") ||
-		actorRole == "admin" && targetRole == "member"
+	canKick := canManageGroupMember(actorRole, targetRole)
 	if !canKick || userID == client.userID || userID == group.OwnerID {
 		g.sendError(client, req.Echo, "group permission denied")
 		return
@@ -1664,8 +1718,272 @@ func (g *Gateway) handleGroupKick(client *Client, req *protocol.Request) {
 }
 
 func (g *Gateway) handleGroupBan(client *Client, req *protocol.Request) {
-	// TODO: Implement group ban
-	g.sendError(client, req.Echo, "not implemented")
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid group_ban params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	userID, _ := params["user_id"].(string)
+	durationValue, durationOK := params["duration"].(float64)
+	duration := int64(durationValue)
+	if groupID == "" || userID == "" || !durationOK || durationValue != float64(duration) || duration < 0 || duration > maxGroupBanSeconds {
+		g.sendError(client, req.Echo, "duration must be 0-2592000 seconds")
+		return
+	}
+	if group, _ := g.store.GetGroup(groupID); group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	actorRole := g.groupMemberRole(groupID, client.userID)
+	targetRole := g.groupMemberRole(groupID, userID)
+	if userID == client.userID || !canManageGroupMember(actorRole, targetRole) {
+		g.sendError(client, req.Echo, "group permission denied")
+		return
+	}
+	mutedUntil := time.Time{}
+	if duration > 0 {
+		mutedUntil = time.Now().Add(time.Duration(duration) * time.Second)
+	}
+	if err := g.store.SetGroupMemberMute(groupID, userID, mutedUntil); err != nil {
+		g.sendError(client, req.Echo, "failed to update member mute")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
+		"group_id": groupID, "user_id": userID, "muted_until": unixTimeOrZero(mutedUntil),
+	}})
+	g.broadcastToConversation(groupID, protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeGroupBan,
+		GroupID: groupID, UserID: userID, OperatorID: client.userID,
+		SubType: map[bool]string{true: "ban", false: "lift_ban"}[duration > 0], Duration: duration,
+	}, "")
+}
+
+func (g *Gateway) handleUpdateGroup(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid update_group params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if !g.isGroupAdmin(groupID, client.userID) {
+		g.sendError(client, req.Echo, "group permission denied")
+		return
+	}
+	oldName, oldAvatar, oldAnnouncement := group.Name, group.Avatar, group.Announcement
+	name, avatar, announcement := oldName, oldAvatar, oldAnnouncement
+	changed := false
+	if raw, exists := params["name"]; exists {
+		value, valid := raw.(string)
+		value = strings.TrimSpace(value)
+		if !valid || value == "" || len(value) > 80 {
+			g.sendError(client, req.Echo, "group name must be 1-80 characters")
+			return
+		}
+		name, changed = value, true
+	}
+	if raw, exists := params["avatar_url"]; exists {
+		value, valid := raw.(string)
+		if !valid || len(value) > 2048 {
+			g.sendError(client, req.Echo, "group avatar is invalid")
+			return
+		}
+		avatar, changed = value, true
+	}
+	if raw, exists := params["announcement"]; exists {
+		value, valid := raw.(string)
+		value = strings.TrimSpace(value)
+		if !valid || len(value) > 2000 {
+			g.sendError(client, req.Echo, "group announcement is too long")
+			return
+		}
+		announcement, changed = value, true
+	}
+	if !changed {
+		g.sendError(client, req.Echo, "at least one group field is required")
+		return
+	}
+	if err := g.store.UpdateGroup(groupID, name, avatar, announcement, group.MuteAll); err != nil {
+		g.sendError(client, req.Echo, "failed to update group")
+		return
+	}
+	if _, err := g.syncGroupConversationParticipants(groupID); err != nil {
+		_ = g.store.UpdateGroup(groupID, oldName, oldAvatar, oldAnnouncement, group.MuteAll)
+		g.sendError(client, req.Echo, "failed to update group conversation")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
+		"group_id": groupID, "name": name, "avatar_url": avatar, "announcement": announcement,
+	}})
+	g.broadcastToConversation(groupID, protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeGroupUpdate,
+		GroupID: groupID, OperatorID: client.userID,
+	}, "")
+}
+
+func (g *Gateway) handleSetGroupAdmin(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid set_group_admin params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	userID, _ := params["user_id"].(string)
+	enabled, enabledOK := params["enabled"].(bool)
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if group.OwnerID != client.userID || userID == client.userID {
+		g.sendError(client, req.Echo, "only the group owner can manage administrators")
+		return
+	}
+	targetRole := g.groupMemberRole(groupID, userID)
+	if !enabledOK || targetRole == "" || targetRole == "owner" || enabled && targetRole != "member" || !enabled && targetRole != "admin" {
+		g.sendError(client, req.Echo, "invalid administrator change")
+		return
+	}
+	role := "member"
+	if enabled {
+		role = "admin"
+	}
+	if err := g.store.SetGroupMemberRole(groupID, userID, role); err != nil {
+		g.sendError(client, req.Echo, "failed to update administrator")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo})
+	g.broadcastToConversation(groupID, protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeGroupAdmin,
+		GroupID: groupID, UserID: userID, OperatorID: client.userID,
+		SubType: map[bool]string{true: "set", false: "unset"}[enabled], Enabled: enabled,
+	}, "")
+}
+
+func (g *Gateway) handleTransferGroup(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid transfer_group params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	userID, _ := params["user_id"].(string)
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if group.OwnerID != client.userID || userID == client.userID || g.groupMemberRole(groupID, userID) == "" {
+		g.sendError(client, req.Echo, "group ownership transfer denied")
+		return
+	}
+	if err := g.store.TransferGroupOwnership(groupID, client.userID, userID); err != nil {
+		g.sendError(client, req.Echo, "failed to transfer group ownership")
+		return
+	}
+	if _, err := g.syncGroupConversationParticipants(groupID); err != nil {
+		_ = g.store.TransferGroupOwnership(groupID, userID, client.userID)
+		g.sendError(client, req.Echo, "failed to update group conversation")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo})
+	g.broadcastToConversation(groupID, protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeGroupTransfer,
+		GroupID: groupID, UserID: userID, OperatorID: client.userID,
+	}, "")
+}
+
+func (g *Gateway) handleDismissGroup(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid dismiss_group params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if group.OwnerID != client.userID {
+		g.sendError(client, req.Echo, "only the group owner can dismiss the group")
+		return
+	}
+	members, err := g.store.GetGroupMembers(groupID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load group members")
+		return
+	}
+	if err := g.store.DeleteGroup(groupID); err != nil {
+		g.sendError(client, req.Echo, "failed to dismiss group")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo})
+	notice := protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeGroupDismiss,
+		GroupID: groupID, OperatorID: client.userID,
+	}
+	for _, member := range members {
+		g.sendToUser(member.UserID, notice)
+	}
+}
+
+func (g *Gateway) handleGroupMuteAll(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid group_mute_all params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	enabled, enabledOK := params["enabled"].(bool)
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if !enabledOK || !g.isGroupAdmin(groupID, client.userID) {
+		g.sendError(client, req.Echo, "group permission denied")
+		return
+	}
+	if err := g.store.UpdateGroup(groupID, group.Name, group.Avatar, group.Announcement, enabled); err != nil {
+		g.sendError(client, req.Echo, "failed to update group mute")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo})
+	g.broadcastToConversation(groupID, protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeGroupMuteAll,
+		GroupID: groupID, OperatorID: client.userID,
+		SubType: map[bool]string{true: "enable", false: "disable"}[enabled], Enabled: enabled,
+	}, "")
 }
 
 func (g *Gateway) handleFriendRequest(client *Client, req *protocol.Request) {

@@ -404,6 +404,7 @@ class CompositeImRepository implements ImRepository {
               user: _scopeUser(registration, member.user),
               role: member.role,
               joinedAt: member.joinedAt,
+              mutedUntil: member.mutedUntil,
             ),
           )
           .toList(growable: false),
@@ -414,6 +415,16 @@ class CompositeImRepository implements ImRepository {
       supportsInvites: details.supportsInvites,
       supportsMemberRemoval: details.supportsMemberRemoval,
       canLeave: details.canLeave,
+      announcement: details.announcement,
+      muteAll: details.muteAll,
+      supportsNameEditing: details.supportsNameEditing,
+      supportsAvatarEditing: details.supportsAvatarEditing,
+      supportsAnnouncementEditing: details.supportsAnnouncementEditing,
+      supportsAdminManagement: details.supportsAdminManagement,
+      supportsMemberMuting: details.supportsMemberMuting,
+      supportsWholeGroupMute: details.supportsWholeGroupMute,
+      supportsOwnershipTransfer: details.supportsOwnershipTransfer,
+      supportsDismissal: details.supportsDismissal,
     );
   }
 
@@ -442,6 +453,85 @@ class CompositeImRepository implements ImRepository {
     return registration.repository.removeGroupMember(
       groupId: ImSourceAddress.localIdOf(groupId),
       userId: ImSourceAddress.localIdOf(userId),
+    );
+  }
+
+  @override
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) {
+    final registration = _registrationForValue(groupId);
+    return registration.repository.updateGroup(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      name: name,
+      avatar: avatar,
+      announcement: announcement,
+    );
+  }
+
+  @override
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) {
+    final registration = _registrationForValue(groupId);
+    _requireMatchingSource(registration, userId, 'Group member');
+    return registration.repository.setGroupAdmin(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userId: ImSourceAddress.localIdOf(userId),
+      enabled: enabled,
+    );
+  }
+
+  @override
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) {
+    final registration = _registrationForValue(groupId);
+    _requireMatchingSource(registration, userId, 'Group member');
+    return registration.repository.setGroupMemberMute(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userId: ImSourceAddress.localIdOf(userId),
+      duration: duration,
+    );
+  }
+
+  @override
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) {
+    final registration = _registrationForValue(groupId);
+    return registration.repository.setGroupMuteAll(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      enabled: enabled,
+    );
+  }
+
+  @override
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) {
+    final registration = _registrationForValue(groupId);
+    _requireMatchingSource(registration, userId, 'Group member');
+    return registration.repository.transferGroupOwnership(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userId: ImSourceAddress.localIdOf(userId),
+    );
+  }
+
+  @override
+  Future<void> dismissGroup(String groupId) {
+    final registration = _registrationForValue(groupId);
+    return registration.repository.dismissGroup(
+      ImSourceAddress.localIdOf(groupId),
     );
   }
 

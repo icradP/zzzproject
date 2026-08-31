@@ -93,19 +93,22 @@ func (s *SQLiteStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_conversation_reads_conversation
 		ON conversation_reads(conversation_id);
 
-	CREATE TABLE IF NOT EXISTS groups (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		avatar_url TEXT DEFAULT '',
-		owner_id TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		CREATE TABLE IF NOT EXISTS groups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			avatar_url TEXT DEFAULT '',
+			announcement TEXT DEFAULT '',
+			owner_id TEXT NOT NULL,
+			mute_all BOOLEAN DEFAULT FALSE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS group_members (
 		group_id TEXT NOT NULL,
-		user_id TEXT NOT NULL,
-		role TEXT DEFAULT 'member', -- "owner", "admin", "member"
-		joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			user_id TEXT NOT NULL,
+			role TEXT DEFAULT 'member', -- "owner", "admin", "member"
+			joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			muted_until DATETIME,
 		PRIMARY KEY (group_id, user_id),
 		FOREIGN KEY (group_id) REFERENCES groups(id)
 	);
@@ -169,6 +172,16 @@ func (s *SQLiteStore) initSchema() error {
 	if _, err := s.db.Exec("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT ''"); err != nil &&
 		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return err
+	}
+	for _, statement := range []string{
+		"ALTER TABLE groups ADD COLUMN announcement TEXT DEFAULT ''",
+		"ALTER TABLE groups ADD COLUMN mute_all BOOLEAN DEFAULT FALSE",
+		"ALTER TABLE group_members ADD COLUMN muted_until DATETIME",
+	} {
+		if _, err := s.db.Exec(statement); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return err
+		}
 	}
 	return s.migrateLegacyFriendships()
 }
@@ -531,9 +544,9 @@ func (s *SQLiteStore) CreateGroup(id, name, avatar, ownerID string) (*Group, err
 func (s *SQLiteStore) GetGroup(id string) (*Group, error) {
 	group := &Group{}
 	err := s.db.QueryRow(
-		"SELECT id, name, avatar_url, owner_id, created_at FROM groups WHERE id = ?",
+		"SELECT id, name, avatar_url, announcement, owner_id, mute_all, created_at FROM groups WHERE id = ?",
 		id,
-	).Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt)
+	).Scan(&group.ID, &group.Name, &group.Avatar, &group.Announcement, &group.OwnerID, &group.MuteAll, &group.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -552,7 +565,7 @@ func (s *SQLiteStore) GetGroup(id string) (*Group, error) {
 }
 
 func (s *SQLiteStore) GetGroups() ([]*Group, error) {
-	rows, err := s.db.Query("SELECT id, name, avatar_url, owner_id, created_at FROM groups")
+	rows, err := s.db.Query("SELECT id, name, avatar_url, announcement, owner_id, mute_all, created_at FROM groups")
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +574,7 @@ func (s *SQLiteStore) GetGroups() ([]*Group, error) {
 	var groups []*Group
 	for rows.Next() {
 		group := &Group{}
-		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
+		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.Announcement, &group.OwnerID, &group.MuteAll, &group.CreatedAt); err != nil {
 			return nil, err
 		}
 		members, err := s.GetGroupMembers(group.ID)
@@ -576,7 +589,7 @@ func (s *SQLiteStore) GetGroups() ([]*Group, error) {
 
 func (s *SQLiteStore) GetUserGroups(userID string) ([]*Group, error) {
 	rows, err := s.db.Query(
-		`SELECT g.id, g.name, g.avatar_url, g.owner_id, g.created_at
+		`SELECT g.id, g.name, g.avatar_url, g.announcement, g.owner_id, g.mute_all, g.created_at
 		 FROM groups g
 		 JOIN group_members gm ON g.id = gm.group_id
 		 WHERE gm.user_id = ?`,
@@ -590,7 +603,7 @@ func (s *SQLiteStore) GetUserGroups(userID string) ([]*Group, error) {
 	var groups []*Group
 	for rows.Next() {
 		group := &Group{}
-		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
+		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.Announcement, &group.OwnerID, &group.MuteAll, &group.CreatedAt); err != nil {
 			return nil, err
 		}
 		members, err := s.GetGroupMembers(group.ID)
@@ -601,6 +614,133 @@ func (s *SQLiteStore) GetUserGroups(userID string) ([]*Group, error) {
 		groups = append(groups, group)
 	}
 	return groups, nil
+}
+
+func (s *SQLiteStore) UpdateGroup(groupID, name, avatar, announcement string, muteAll bool) error {
+	result, err := s.db.Exec(
+		"UPDATE groups SET name = ?, avatar_url = ?, announcement = ?, mute_all = ? WHERE id = ?",
+		name, avatar, announcement, muteAll, groupID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SetGroupMemberRole(groupID, userID, role string) error {
+	result, err := s.db.Exec(
+		"UPDATE group_members SET role = ? WHERE group_id = ? AND user_id = ?",
+		role, groupID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SetGroupMemberMute(groupID, userID string, mutedUntil time.Time) error {
+	var value interface{}
+	if !mutedUntil.IsZero() {
+		value = mutedUntil
+	}
+	result, err := s.db.Exec(
+		"UPDATE group_members SET muted_until = ? WHERE group_id = ? AND user_id = ?",
+		value, groupID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *SQLiteStore) TransferGroupOwnership(groupID, currentOwnerID, newOwnerID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var targetRole string
+	if err := tx.QueryRow(
+		"SELECT role FROM group_members WHERE group_id = ? AND user_id = ?",
+		groupID, newOwnerID,
+	).Scan(&targetRole); err != nil {
+		return err
+	}
+	if targetRole != "member" && targetRole != "admin" {
+		return fmt.Errorf("invalid new owner")
+	}
+	result, err := tx.Exec(
+		"UPDATE groups SET owner_id = ? WHERE id = ? AND owner_id = ?",
+		newOwnerID, groupID, currentOwnerID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return fmt.Errorf("group owner mismatch")
+	}
+	if _, err := tx.Exec(
+		"UPDATE group_members SET role = 'member' WHERE group_id = ? AND user_id = ?",
+		groupID, currentOwnerID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		"UPDATE group_members SET role = 'owner', muted_until = NULL WHERE group_id = ? AND user_id = ?",
+		groupID, newOwnerID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) DeleteGroup(groupID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		"DELETE FROM conversation_reads WHERE conversation_id = ?",
+		"DELETE FROM messages WHERE conversation_id = ?",
+		"DELETE FROM group_members WHERE group_id = ?",
+		"DELETE FROM conversations WHERE id = ?",
+	} {
+		if _, err := tx.Exec(statement, groupID); err != nil {
+			return err
+		}
+	}
+	result, err := tx.Exec("DELETE FROM groups WHERE id = ?", groupID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) AddGroupMember(groupID, userID string) (bool, error) {
@@ -647,7 +787,7 @@ func (s *SQLiteStore) IsGroupMember(groupID, userID string) (bool, error) {
 
 func (s *SQLiteStore) GetGroupMembers(groupID string) ([]*GroupMember, error) {
 	rows, err := s.db.Query(
-		"SELECT user_id, role, joined_at FROM group_members WHERE group_id = ?",
+		"SELECT user_id, role, joined_at, muted_until FROM group_members WHERE group_id = ?",
 		groupID,
 	)
 	if err != nil {
@@ -658,8 +798,12 @@ func (s *SQLiteStore) GetGroupMembers(groupID string) ([]*GroupMember, error) {
 	var members []*GroupMember
 	for rows.Next() {
 		member := &GroupMember{}
-		if err := rows.Scan(&member.UserID, &member.Role, &member.JoinedAt); err != nil {
+		var mutedUntil sql.NullTime
+		if err := rows.Scan(&member.UserID, &member.Role, &member.JoinedAt, &mutedUntil); err != nil {
 			return nil, err
+		}
+		if mutedUntil.Valid {
+			member.MutedUntil = mutedUntil.Time
 		}
 		members = append(members, member)
 	}

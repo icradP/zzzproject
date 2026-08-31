@@ -208,6 +208,8 @@ void main() {
         details.members.every((member) => member.user.id.startsWith('qq::')),
         isTrue,
       );
+      expect(details.canEditSettings, isTrue);
+      expect(details.canTransferOwnership, isTrue);
 
       await repository.inviteGroupMembers(
         groupId: details.conversation.id,
@@ -222,6 +224,39 @@ void main() {
         groupId: details.conversation.id,
         userId: 'qq::wise',
       );
+      await repository.updateGroup(
+        groupId: details.conversation.id,
+        name: 'Scoped group',
+        announcement: 'Scoped announcement',
+      );
+      await repository.setGroupAdmin(
+        groupId: details.conversation.id,
+        userId: 'qq::nicole',
+        enabled: true,
+      );
+      await repository.setGroupMemberMute(
+        groupId: details.conversation.id,
+        userId: 'qq::nicole',
+        duration: const Duration(minutes: 10),
+      );
+      await repository.setGroupMuteAll(
+        groupId: details.conversation.id,
+        enabled: true,
+      );
+      final governed = await repository.getGroupDetails(
+        details.conversation.id,
+      );
+      expect(governed.conversation.title, 'Scoped group');
+      expect(governed.announcement, 'Scoped announcement');
+      expect(governed.muteAll, isTrue);
+      expect(
+        governed.members.singleWhere((m) => m.user.id == 'qq::nicole').role,
+        ImGroupRole.admin,
+      );
+      expect(
+        governed.members.singleWhere((m) => m.user.id == 'qq::nicole').isMuted,
+        isTrue,
+      );
 
       expect(
         () => repository.inviteGroupMembers(
@@ -234,6 +269,13 @@ void main() {
         () => repository.removeGroupMember(
           groupId: details.conversation.id,
           userId: 'zzz::wise',
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => repository.transferGroupOwnership(
+          groupId: details.conversation.id,
+          userId: 'zzz::nicole',
         ),
         throwsArgumentError,
       );

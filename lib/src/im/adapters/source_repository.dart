@@ -146,6 +146,53 @@ class SourceBackedRepository implements ImRepository {
   }) => _source.removeGroupMember(groupId: groupId, userId: userId);
 
   @override
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) => _source.updateGroup(
+    groupId: groupId,
+    name: name,
+    avatar: avatar,
+    announcement: announcement,
+  );
+
+  @override
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) =>
+      _source.setGroupAdmin(groupId: groupId, userId: userId, enabled: enabled);
+
+  @override
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) => _source.setGroupMemberMute(
+    groupId: groupId,
+    userId: userId,
+    duration: duration,
+  );
+
+  @override
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) => _source.setGroupMuteAll(groupId: groupId, enabled: enabled);
+
+  @override
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) => _source.transferGroupOwnership(groupId: groupId, userId: userId);
+
+  @override
+  Future<void> dismissGroup(String groupId) => _source.dismissGroup(groupId);
+
+  @override
   Future<void> ensureConversation(ImConversation conversation) =>
       _source.ensureConversation(conversation);
 

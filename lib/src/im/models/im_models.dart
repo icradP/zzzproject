@@ -235,11 +235,19 @@ class ImConversation {
 }
 
 class ImGroupMember {
-  const ImGroupMember({required this.user, required this.role, this.joinedAt});
+  const ImGroupMember({
+    required this.user,
+    required this.role,
+    this.joinedAt,
+    this.mutedUntil,
+  });
 
   final ImUser user;
   final ImGroupRole role;
   final DateTime? joinedAt;
+  final DateTime? mutedUntil;
+
+  bool get isMuted => mutedUntil?.isAfter(DateTime.now()) ?? false;
 }
 
 class ImGroupDetails {
@@ -250,6 +258,16 @@ class ImGroupDetails {
     required this.supportsInvites,
     required this.supportsMemberRemoval,
     required this.canLeave,
+    this.announcement = '',
+    this.muteAll = false,
+    this.supportsNameEditing = false,
+    this.supportsAvatarEditing = false,
+    this.supportsAnnouncementEditing = false,
+    this.supportsAdminManagement = false,
+    this.supportsMemberMuting = false,
+    this.supportsWholeGroupMute = false,
+    this.supportsOwnershipTransfer = false,
+    this.supportsDismissal = false,
   });
 
   final ImConversation conversation;
@@ -258,6 +276,16 @@ class ImGroupDetails {
   final bool supportsInvites;
   final bool supportsMemberRemoval;
   final bool canLeave;
+  final String announcement;
+  final bool muteAll;
+  final bool supportsNameEditing;
+  final bool supportsAvatarEditing;
+  final bool supportsAnnouncementEditing;
+  final bool supportsAdminManagement;
+  final bool supportsMemberMuting;
+  final bool supportsWholeGroupMute;
+  final bool supportsOwnershipTransfer;
+  final bool supportsDismissal;
 
   ImGroupMember? get currentMember {
     for (final member in members) {
@@ -272,8 +300,43 @@ class ImGroupDetails {
         (role == ImGroupRole.owner || role == ImGroupRole.admin);
   }
 
+  bool get currentUserIsManager {
+    final role = currentMember?.role;
+    return role == ImGroupRole.owner || role == ImGroupRole.admin;
+  }
+
+  bool get canEditSettings =>
+      currentUserIsManager &&
+      (supportsNameEditing ||
+          supportsAvatarEditing ||
+          supportsAnnouncementEditing ||
+          supportsWholeGroupMute);
+
+  bool get canManageAdmins =>
+      supportsAdminManagement && currentMember?.role == ImGroupRole.owner;
+
+  bool get canTransferOwnership =>
+      supportsOwnershipTransfer && currentMember?.role == ImGroupRole.owner;
+
+  bool get canDismiss =>
+      supportsDismissal && currentMember?.role == ImGroupRole.owner;
+
   bool canRemoveMember(ImGroupMember target) {
     if (!supportsMemberRemoval || target.user.id == currentUserId) return false;
+    final actorRole = currentMember?.role;
+    if (actorRole == ImGroupRole.owner) {
+      return target.role != ImGroupRole.owner;
+    }
+    return actorRole == ImGroupRole.admin && target.role == ImGroupRole.member;
+  }
+
+  bool canSetAdministrator(ImGroupMember target) =>
+      canManageAdmins &&
+      target.user.id != currentUserId &&
+      target.role != ImGroupRole.owner;
+
+  bool canMuteMember(ImGroupMember target) {
+    if (!supportsMemberMuting || target.user.id == currentUserId) return false;
     final actorRole = currentMember?.role;
     if (actorRole == ImGroupRole.owner) {
       return target.role != ImGroupRole.owner;

@@ -267,6 +267,91 @@ func (s *MemoryStore) GetUserGroups(userID string) ([]*Group, error) {
 	return result, nil
 }
 
+func (s *MemoryStore) UpdateGroup(groupID, name, avatar, announcement string, muteAll bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	group, ok := s.groups[groupID]
+	if !ok {
+		return fmt.Errorf("group not found")
+	}
+	group.Name = name
+	group.Avatar = avatar
+	group.Announcement = announcement
+	group.MuteAll = muteAll
+	return nil
+}
+
+func (s *MemoryStore) SetGroupMemberRole(groupID, userID, role string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	group, ok := s.groups[groupID]
+	if !ok {
+		return fmt.Errorf("group not found")
+	}
+	for _, member := range group.Members {
+		if member.UserID == userID {
+			member.Role = role
+			return nil
+		}
+	}
+	return fmt.Errorf("group member not found")
+}
+
+func (s *MemoryStore) SetGroupMemberMute(groupID, userID string, mutedUntil time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	group, ok := s.groups[groupID]
+	if !ok {
+		return fmt.Errorf("group not found")
+	}
+	for _, member := range group.Members {
+		if member.UserID == userID {
+			member.MutedUntil = mutedUntil
+			return nil
+		}
+	}
+	return fmt.Errorf("group member not found")
+}
+
+func (s *MemoryStore) TransferGroupOwnership(groupID, currentOwnerID, newOwnerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	group, ok := s.groups[groupID]
+	if !ok || group.OwnerID != currentOwnerID {
+		return fmt.Errorf("group owner mismatch")
+	}
+	var currentOwner, newOwner *GroupMember
+	for _, member := range group.Members {
+		switch member.UserID {
+		case currentOwnerID:
+			currentOwner = member
+		case newOwnerID:
+			newOwner = member
+		}
+	}
+	if currentOwner == nil || newOwner == nil || newOwner.Role == "owner" {
+		return fmt.Errorf("invalid ownership transfer")
+	}
+	currentOwner.Role = "member"
+	newOwner.Role = "owner"
+	newOwner.MutedUntil = time.Time{}
+	group.OwnerID = newOwnerID
+	return nil
+}
+
+func (s *MemoryStore) DeleteGroup(groupID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.groups[groupID]; !ok {
+		return fmt.Errorf("group not found")
+	}
+	delete(s.groups, groupID)
+	delete(s.conversations, groupID)
+	delete(s.messages, groupID)
+	delete(s.readStates, groupID)
+	return nil
+}
+
 func (s *MemoryStore) AddGroupMember(groupID, userID string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

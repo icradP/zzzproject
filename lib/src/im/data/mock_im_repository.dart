@@ -15,6 +15,10 @@ class MockImRepository implements ImRepository {
   final _users = <String, ImUser>{};
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
+  final _groupAnnouncements = <String, String>{};
+  final _groupMuteAll = <String, bool>{};
+  final _groupRoles = <String, Map<String, ImGroupRole>>{};
+  final _groupMutedUntil = <String, Map<String, DateTime?>>{};
   final _conversationControllers =
       <String, StreamController<List<ImConversation>>>{};
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
@@ -544,9 +548,11 @@ class MockImRepository implements ImRepository {
           return ImGroupMember(
             user: user,
             role:
-                userId == conversation.participantIds.first
+                _groupRoles[groupId]?[userId] ??
+                (userId == conversation.participantIds.first
                     ? ImGroupRole.owner
-                    : ImGroupRole.member,
+                    : ImGroupRole.member),
+            mutedUntil: _groupMutedUntil[groupId]?[userId],
           );
         })
         .toList(growable: false);
@@ -561,6 +567,16 @@ class MockImRepository implements ImRepository {
       supportsInvites: true,
       supportsMemberRemoval: true,
       canLeave: ownerID != _currentUserId,
+      announcement: _groupAnnouncements[groupId] ?? '',
+      muteAll: _groupMuteAll[groupId] ?? false,
+      supportsNameEditing: true,
+      supportsAvatarEditing: true,
+      supportsAnnouncementEditing: true,
+      supportsAdminManagement: true,
+      supportsMemberMuting: true,
+      supportsWholeGroupMute: true,
+      supportsOwnershipTransfer: true,
+      supportsDismissal: true,
     );
   }
 
@@ -598,6 +614,74 @@ class MockImRepository implements ImRepository {
           .where((participantID) => participantID != userId)
           .toList(growable: false),
     );
+    _emitConversations();
+  }
+
+  @override
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) async {
+    final conversation = _conversations[groupId];
+    if (conversation == null) throw StateError('Group not found.');
+    _conversations[groupId] = conversation.copyWith(
+      title: name?.trim(),
+      avatarLocalPath: avatar?.filePath,
+    );
+    if (announcement != null) {
+      _groupAnnouncements[groupId] = announcement.trim();
+    }
+    _emitConversations();
+  }
+
+  @override
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) async {
+    _groupRoles.putIfAbsent(groupId, () => {})[userId] =
+        enabled ? ImGroupRole.admin : ImGroupRole.member;
+  }
+
+  @override
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) async {
+    _groupMutedUntil.putIfAbsent(groupId, () => {})[userId] =
+        duration == Duration.zero ? null : DateTime.now().add(duration);
+  }
+
+  @override
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) async {
+    _groupMuteAll[groupId] = enabled;
+  }
+
+  @override
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) async {
+    final details = await getGroupDetails(groupId);
+    final currentOwner = details.members.firstWhere(
+      (member) => member.role == ImGroupRole.owner,
+    );
+    final roles = _groupRoles.putIfAbsent(groupId, () => {});
+    roles[currentOwner.user.id] = ImGroupRole.member;
+    roles[userId] = ImGroupRole.owner;
+  }
+
+  @override
+  Future<void> dismissGroup(String groupId) async {
+    _conversations.remove(groupId);
+    _messages.remove(groupId);
     _emitConversations();
   }
 

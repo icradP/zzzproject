@@ -138,6 +138,55 @@ abstract class ImRepository {
     );
   }
 
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) async {
+    throw UnsupportedError('Editing groups is not supported by this source.');
+  }
+
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) async {
+    throw UnsupportedError(
+      'Group administrators are not supported by this source.',
+    );
+  }
+
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) async {
+    throw UnsupportedError('Group muting is not supported by this source.');
+  }
+
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) async {
+    throw UnsupportedError(
+      'Whole-group muting is not supported by this source.',
+    );
+  }
+
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) async {
+    throw UnsupportedError(
+      'Group ownership transfer is not supported by this source.',
+    );
+  }
+
+  Future<void> dismissGroup(String groupId) async {
+    throw UnsupportedError('Group dismissal is not supported by this source.');
+  }
+
   /// Ensure a conversation appears in [watchConversations], adding it if absent.
   Future<void> ensureConversation(ImConversation conversation);
 

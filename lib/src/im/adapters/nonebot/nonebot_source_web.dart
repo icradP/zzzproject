@@ -144,6 +144,59 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) async {
+    throw UnsupportedError('Group editing is unavailable on the web stub.');
+  }
+
+  @override
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) async {
+    throw UnsupportedError(
+      'Group administrators are unavailable on the web stub.',
+    );
+  }
+
+  @override
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) async {
+    throw UnsupportedError('Group muting is unavailable on the web stub.');
+  }
+
+  @override
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) async {
+    throw UnsupportedError('Group muting is unavailable on the web stub.');
+  }
+
+  @override
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) async {
+    throw UnsupportedError(
+      'Group ownership transfer is unavailable on the web stub.',
+    );
+  }
+
+  @override
+  Future<void> dismissGroup(String groupId) async {
+    throw UnsupportedError('Group dismissal is unavailable on the web stub.');
+  }
+
+  @override
   Stream<List<ImConversation>> watchConversations() {
     return Stream.value(const []);
   }

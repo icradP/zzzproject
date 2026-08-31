@@ -605,6 +605,7 @@ class ZzzServerSource implements ImMessageSource {
       );
       _users[userID] = user;
       final joinedAt = (json['joined_at'] as num?)?.toInt();
+      final mutedUntil = (json['muted_until'] as num?)?.toInt();
       members.add(
         ImGroupMember(
           user: user,
@@ -613,6 +614,10 @@ class ZzzServerSource implements ImMessageSource {
               joinedAt == null || joinedAt <= 0
                   ? null
                   : DateTime.fromMillisecondsSinceEpoch(joinedAt * 1000),
+          mutedUntil:
+              mutedUntil == null || mutedUntil <= 0
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(mutedUntil * 1000),
         ),
       );
     }
@@ -648,6 +653,16 @@ class ZzzServerSource implements ImMessageSource {
       supportsInvites: true,
       supportsMemberRemoval: true,
       canLeave: currentRole != null && currentRole != ImGroupRole.owner,
+      announcement: '${data['announcement'] ?? ''}',
+      muteAll: data['mute_all'] as bool? ?? false,
+      supportsNameEditing: true,
+      supportsAvatarEditing: true,
+      supportsAnnouncementEditing: true,
+      supportsAdminManagement: true,
+      supportsMemberMuting: true,
+      supportsWholeGroupMute: true,
+      supportsOwnershipTransfer: true,
+      supportsDismissal: true,
     );
   }
 
@@ -675,6 +690,102 @@ class ZzzServerSource implements ImMessageSource {
     });
     _requireOk(response, 'Remove group member');
     await _syncFromServer();
+  }
+
+  @override
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) async {
+    String? avatarUrl;
+    if (avatar != null) {
+      final bytes = await readUploadBytes(avatar);
+      if (bytes.length > 5 * 1024 * 1024) {
+        throw StateError('Group avatars must be 5 MB or smaller.');
+      }
+      final upload = await _request('upload_file', {
+        'file': base64Encode(bytes),
+        'file_name': avatar.fileName,
+        'file_type': 'image',
+        'mime_type': avatar.mimeType ?? 'image/jpeg',
+      });
+      _requireOk(upload, 'Upload group avatar');
+      avatarUrl = (upload['data'] as Map?)?['url'] as String?;
+    }
+    final response = await _request('update_group', {
+      'group_id': groupId,
+      if (name != null) 'name': name.trim(),
+      if (avatarUrl != null) 'avatar_url': avatarUrl,
+      if (announcement != null) 'announcement': announcement.trim(),
+    });
+    _requireOk(response, 'Update group');
+    await getGroupDetails(groupId);
+  }
+
+  @override
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) async {
+    final response = await _request('set_group_admin', {
+      'group_id': groupId,
+      'user_id': userId,
+      'enabled': enabled,
+    });
+    _requireOk(response, 'Update administrator');
+  }
+
+  @override
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) async {
+    final response = await _request('group_ban', {
+      'group_id': groupId,
+      'user_id': userId,
+      'duration': duration.inSeconds,
+    });
+    _requireOk(
+      response,
+      duration == Duration.zero ? 'Unmute member' : 'Mute member',
+    );
+  }
+
+  @override
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) async {
+    final response = await _request('group_mute_all', {
+      'group_id': groupId,
+      'enabled': enabled,
+    });
+    _requireOk(response, 'Update whole-group mute');
+  }
+
+  @override
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) async {
+    final response = await _request('transfer_group', {
+      'group_id': groupId,
+      'user_id': userId,
+    });
+    _requireOk(response, 'Transfer group ownership');
+  }
+
+  @override
+  Future<void> dismissGroup(String groupId) async {
+    final response = await _request('dismiss_group', {'group_id': groupId});
+    _requireOk(response, 'Dismiss group');
+    _conversations.remove(groupId);
+    _messages.remove(groupId);
+    _emitConversations();
   }
 
   @override
@@ -853,7 +964,24 @@ class ZzzServerSource implements ImMessageSource {
       return;
     }
     final noticeType = json['notice_type'];
+    if (noticeType == 'group_dismiss') {
+      final groupId = '${json['group_id'] ?? ''}';
+      if (groupId.isNotEmpty) {
+        _conversations.remove(groupId);
+        _messages.remove(groupId);
+        _emitConversations();
+      }
+      return;
+    }
     if (noticeType == 'group_increase' || noticeType == 'group_decrease') {
+      unawaited(_syncFromServer().catchError((_) {}));
+      return;
+    }
+    if (noticeType == 'group_update' ||
+        noticeType == 'group_admin' ||
+        noticeType == 'group_ban' ||
+        noticeType == 'group_transfer' ||
+        noticeType == 'group_mute_all') {
       unawaited(_syncFromServer().catchError((_) {}));
       return;
     }

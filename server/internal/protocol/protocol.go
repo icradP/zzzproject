@@ -101,6 +101,10 @@ const (
 	NoticeTypeGroupDecrease NoticeType = "group_decrease"
 	NoticeTypeGroupAdmin    NoticeType = "group_admin"
 	NoticeTypeGroupBan      NoticeType = "group_ban"
+	NoticeTypeGroupUpdate   NoticeType = "group_update"
+	NoticeTypeGroupTransfer NoticeType = "group_transfer"
+	NoticeTypeGroupDismiss  NoticeType = "group_dismiss"
+	NoticeTypeGroupMuteAll  NoticeType = "group_mute_all"
 	NoticeTypePoke          NoticeType = "poke"
 	NoticeTypeMessageRead   NoticeType = "message_read"
 )
@@ -117,6 +121,9 @@ type NoticeEvent struct {
 	ConversationID    string     `json:"conversation_id,omitempty"`
 	LastReadMessageID string     `json:"last_read_message_id,omitempty"`
 	ReadAt            int64      `json:"read_at,omitempty"`
+	SubType           string     `json:"sub_type,omitempty"`
+	Duration          int64      `json:"duration,omitempty"`
+	Enabled           bool       `json:"enabled,omitempty"`
 }
 
 // RequestType represents different request event types.
@@ -180,6 +187,11 @@ const (
 	ActionLeaveGroup         = "leave_group"
 	ActionGroupKick          = "group_kick"
 	ActionGroupBan           = "group_ban"
+	ActionUpdateGroup        = "update_group"
+	ActionSetGroupAdmin      = "set_group_admin"
+	ActionTransferGroup      = "transfer_group"
+	ActionDismissGroup       = "dismiss_group"
+	ActionGroupMuteAll       = "group_mute_all"
 	ActionFriendRequest      = "friend_request"
 	ActionFriendHandle       = "friend_request_handle"
 	ActionUploadFile         = "upload_file"
@@ -264,6 +276,33 @@ type GroupBanParams struct {
 	Duration int    `json:"duration,omitempty"` // seconds, 0 = unban
 }
 
+// UpdateGroupParams are the params for the "update_group" action.
+type UpdateGroupParams struct {
+	GroupID      string `json:"group_id"`
+	Name         string `json:"name,omitempty"`
+	Avatar       string `json:"avatar_url,omitempty"`
+	Announcement string `json:"announcement,omitempty"`
+}
+
+// SetGroupAdminParams are the params for the "set_group_admin" action.
+type SetGroupAdminParams struct {
+	GroupID string `json:"group_id"`
+	UserID  string `json:"user_id"`
+	Enabled bool   `json:"enabled"`
+}
+
+// TransferGroupParams are the params for the "transfer_group" action.
+type TransferGroupParams struct {
+	GroupID string `json:"group_id"`
+	UserID  string `json:"user_id"`
+}
+
+// GroupMuteAllParams are the params for the "group_mute_all" action.
+type GroupMuteAllParams struct {
+	GroupID string `json:"group_id"`
+	Enabled bool   `json:"enabled"`
+}
+
 // FriendRequestParams are the params for the "friend_request" action.
 type FriendRequestParams struct {
 	UserID  string `json:"user_id"`
@@ -315,20 +354,23 @@ type User struct {
 
 // Group represents a group in API responses.
 type Group struct {
-	GroupID     string `json:"group_id"`
-	Name        string `json:"name"`
-	Avatar      string `json:"avatar_url,omitempty"`
-	OwnerID     string `json:"owner_id"`
-	MemberCount int    `json:"member_count"`
+	GroupID      string `json:"group_id"`
+	Name         string `json:"name"`
+	Avatar       string `json:"avatar_url,omitempty"`
+	Announcement string `json:"announcement,omitempty"`
+	OwnerID      string `json:"owner_id"`
+	MemberCount  int    `json:"member_count"`
+	MuteAll      bool   `json:"mute_all"`
 }
 
 // GroupMember represents a member in a group.
 type GroupMember struct {
-	UserID   string `json:"user_id"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar_url,omitempty"`
-	Role     string `json:"role"` // "owner", "admin", "member"
-	JoinedAt int64  `json:"joined_at,omitempty"`
+	UserID     string `json:"user_id"`
+	Nickname   string `json:"nickname"`
+	Avatar     string `json:"avatar_url,omitempty"`
+	Role       string `json:"role"` // "owner", "admin", "member"
+	JoinedAt   int64  `json:"joined_at,omitempty"`
+	MutedUntil int64  `json:"muted_until,omitempty"`
 }
 
 // Conversation represents a conversation in API responses.

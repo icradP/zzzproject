@@ -89,16 +89,16 @@ class OneBotSender {
   }
 
   Map<String, dynamic> toJson() => {
-        'user_id': userId,
-        if (nickname.isNotEmpty) 'nickname': nickname,
-        if (sex != null) 'sex': sex,
-        if (age != null) 'age': age,
-        if (card != null) 'card': card,
-        if (area != null) 'area': area,
-        if (level != null) 'level': level,
-        if (role != null) 'role': role,
-        if (title != null) 'title': title,
-      };
+    'user_id': userId,
+    if (nickname.isNotEmpty) 'nickname': nickname,
+    if (sex != null) 'sex': sex,
+    if (age != null) 'age': age,
+    if (card != null) 'card': card,
+    if (area != null) 'area': area,
+    if (level != null) 'level': level,
+    if (role != null) 'role': role,
+    if (title != null) 'title': title,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +191,11 @@ class OneBotMessageSegment {
   static OneBotMessageSegment shake() =>
       const OneBotMessageSegment(type: 'shake', data: {});
 
-  static OneBotMessageSegment poke({String type_ = '1', String id = '1', String? name}) {
+  static OneBotMessageSegment poke({
+    String type_ = '1',
+    String id = '1',
+    String? name,
+  }) {
     final d = <String, dynamic>{'type': type_, 'id': id};
     if (name != null) d['name'] = name;
     return OneBotMessageSegment(type: 'poke', data: d);
@@ -212,11 +216,16 @@ class OneBotMessageSegment {
     return OneBotMessageSegment(type: 'share', data: d);
   }
 
-  static OneBotMessageSegment contact({required String type_, required String id}) =>
-      OneBotMessageSegment(type: 'contact', data: {'type': type_, 'id': id});
+  static OneBotMessageSegment contact({
+    required String type_,
+    required String id,
+  }) => OneBotMessageSegment(type: 'contact', data: {'type': type_, 'id': id});
 
   static OneBotMessageSegment groupContact(String groupId) =>
-      OneBotMessageSegment(type: 'contact', data: {'type': 'group', 'id': groupId});
+      OneBotMessageSegment(
+        type: 'contact',
+        data: {'type': 'group', 'id': groupId},
+      );
 
   static OneBotMessageSegment location({
     required double lat,
@@ -224,10 +233,7 @@ class OneBotMessageSegment {
     String? title,
     String? content,
   }) {
-    final d = <String, dynamic>{
-      'lat': lat.toString(),
-      'lon': lon.toString(),
-    };
+    final d = <String, dynamic>{'lat': lat.toString(), 'lon': lon.toString()};
     if (title != null) d['title'] = title;
     if (content != null) d['content'] = content;
     return OneBotMessageSegment(type: 'location', data: d);
@@ -236,8 +242,7 @@ class OneBotMessageSegment {
   static OneBotMessageSegment music({
     required String type_,
     required String id,
-  }) =>
-      OneBotMessageSegment(type: 'music', data: {'type': type_, 'id': id});
+  }) => OneBotMessageSegment(type: 'music', data: {'type': type_, 'id': id});
 
   static OneBotMessageSegment customMusic({
     required String url,
@@ -301,13 +306,13 @@ String oneBotPlainText(List<OneBotMessageSegment> segments) =>
 /// Converts a List of [OneBotMessageSegment] to the JSON-serialisable form.
 List<Map<String, dynamic>> oneBotChainToJson(
   List<OneBotMessageSegment> segments,
-) =>
-    segments.map((s) => s.toJson()).toList();
+) => segments.map((s) => s.toJson()).toList();
 
 /// Converts a raw JSON array to segments.
-List<OneBotMessageSegment> oneBotChainFromJson(List<dynamic> json) => json
-    .map((e) => OneBotMessageSegment.fromJson(e as Map<String, dynamic>))
-    .toList();
+List<OneBotMessageSegment> oneBotChainFromJson(List<dynamic> json) =>
+    json
+        .map((e) => OneBotMessageSegment.fromJson(e as Map<String, dynamic>))
+        .toList();
 
 // ---------------------------------------------------------------------------
 // CQ code parser / serializer
@@ -326,7 +331,10 @@ List<OneBotMessageSegment> parseCqCode(String raw) {
   for (final match in re.allMatches(raw)) {
     // Plain text before this CQ code
     if (match.start > lastEnd) {
-      final text = _cqUnescape(raw.substring(lastEnd, match.start), inCq: false);
+      final text = _cqUnescape(
+        raw.substring(lastEnd, match.start),
+        inCq: false,
+      );
       if (text.isNotEmpty) segments.add(OneBotMessageSegment.plain(text));
     }
 
@@ -380,13 +388,19 @@ String segmentsToCqCode(List<OneBotMessageSegment> segments) {
 }
 
 String _cqUnescape(String s, {required bool inCq}) {
-  s = s.replaceAll('&amp;', '&').replaceAll('&#91;', '[').replaceAll('&#93;', ']');
+  s = s
+      .replaceAll('&amp;', '&')
+      .replaceAll('&#91;', '[')
+      .replaceAll('&#93;', ']');
   if (inCq) s = s.replaceAll('&#44;', ',');
   return s;
 }
 
 String _cqEscape(String s, {required bool inCq}) {
-  s = s.replaceAll('&', '&amp;').replaceAll('[', '&#91;').replaceAll(']', '&#93;');
+  s = s
+      .replaceAll('&', '&amp;')
+      .replaceAll('[', '&#91;')
+      .replaceAll(']', '&#93;');
   if (inCq) s = s.replaceAll(',', '&#44;');
   return s;
 }
@@ -477,9 +491,12 @@ class OneBotGroupMessageEvent {
       rawMessage: (json['raw_message'] as String?) ?? '',
       sender: OneBotSender.fromJson(json['sender'] as Map<String, dynamic>),
       subType: json['sub_type'] as String?,
-      anonymous: json['anonymous'] != null
-          ? OneBotAnonymous.fromJson(json['anonymous'] as Map<String, dynamic>)
-          : null,
+      anonymous:
+          json['anonymous'] != null
+              ? OneBotAnonymous.fromJson(
+                json['anonymous'] as Map<String, dynamic>,
+              )
+              : null,
       font: json['font'] as int?,
       messageSeq: json['message_seq'] as int?,
     );
@@ -487,10 +504,7 @@ class OneBotGroupMessageEvent {
 }
 
 sealed class OneBotNoticeEvent {
-  const OneBotNoticeEvent({
-    required this.time,
-    required this.selfId,
-  });
+  const OneBotNoticeEvent({required this.time, required this.selfId});
 
   final int time;
   final String selfId;
@@ -510,9 +524,7 @@ sealed class OneBotNoticeEvent {
           selfId: selfId,
           groupId: json['group_id'].toString(),
           userId: json['user_id'].toString(),
-          file: OneBotFileInfo.fromJson(
-            json['file'] as Map<String, dynamic>,
-          ),
+          file: OneBotFileInfo.fromJson(json['file'] as Map<String, dynamic>),
         );
       case 'group_admin':
         return OneBotGroupAdminNotice(
@@ -579,7 +591,8 @@ sealed class OneBotNoticeEvent {
           groupId: json['group_id'].toString(),
           userId: json['user_id'].toString(),
           messageId: json['message_id'] as int,
-          likes: (json['likes'] as List<dynamic>?)
+          likes:
+              (json['likes'] as List<dynamic>?)
                   ?.map(
                     (e) => OneBotEmojiLikeEntry.fromJson(
                       e as Map<String, dynamic>,
@@ -926,7 +939,7 @@ class OneBotMessageEvent extends OneBotEvent {
   const OneBotMessageEvent(this.event) : _raw = null;
 
   const OneBotMessageEvent._raw(this._raw, {OneBotPrivateMessageEvent? private})
-      : event = private;
+    : event = private;
 
   final OneBotPrivateMessageEvent? event;
   final Map<String, dynamic>? _raw;
@@ -942,9 +955,7 @@ class OneBotMessageEvent extends OneBotEvent {
   factory OneBotMessageEvent.fromJson(Map<String, dynamic> json) {
     final messageType = json['message_type'] as String?;
     if (messageType == 'private') {
-      return OneBotMessageEvent(
-        OneBotPrivateMessageEvent.fromJson(json),
-      );
+      return OneBotMessageEvent(OneBotPrivateMessageEvent.fromJson(json));
     }
     return OneBotMessageEvent._raw(json);
   }
@@ -1023,18 +1034,15 @@ class OneBotFileInfo {
 /// Quick operations that can be returned as a response to a private-message
 /// event (HTTP POST) or sent via [.handle_quick_operation].
 class OneBotPrivateMessageQuickOp {
-  const OneBotPrivateMessageQuickOp({
-    this.reply,
-    this.autoEscape = false,
-  });
+  const OneBotPrivateMessageQuickOp({this.reply, this.autoEscape = false});
 
   final dynamic reply; // message type
   final bool autoEscape;
 
   Map<String, dynamic> toJson() => {
-        if (reply != null) 'reply': reply,
-        if (autoEscape) 'auto_escape': autoEscape,
-      };
+    if (reply != null) 'reply': reply,
+    if (autoEscape) 'auto_escape': autoEscape,
+  };
 }
 
 class OneBotGroupMessageQuickOp {
@@ -1057,44 +1065,38 @@ class OneBotGroupMessageQuickOp {
   final int banDuration;
 
   Map<String, dynamic> toJson() => {
-        if (reply != null) 'reply': reply,
-        if (autoEscape) 'auto_escape': autoEscape,
-        if (!atSender) 'at_sender': atSender,
-        if (delete) 'delete': delete,
-        if (kick) 'kick': kick,
-        if (ban) 'ban': ban,
-        if (ban) 'ban_duration': banDuration,
-      };
+    if (reply != null) 'reply': reply,
+    if (autoEscape) 'auto_escape': autoEscape,
+    if (!atSender) 'at_sender': atSender,
+    if (delete) 'delete': delete,
+    if (kick) 'kick': kick,
+    if (ban) 'ban': ban,
+    if (ban) 'ban_duration': banDuration,
+  };
 }
 
 class OneBotFriendRequestQuickOp {
-  const OneBotFriendRequestQuickOp({
-    this.approve,
-    this.remark,
-  });
+  const OneBotFriendRequestQuickOp({this.approve, this.remark});
 
   final bool? approve;
   final String? remark;
 
   Map<String, dynamic> toJson() => {
-        if (approve != null) 'approve': approve,
-        if (remark != null) 'remark': remark,
-      };
+    if (approve != null) 'approve': approve,
+    if (remark != null) 'remark': remark,
+  };
 }
 
 class OneBotGroupRequestQuickOp {
-  const OneBotGroupRequestQuickOp({
-    this.approve,
-    this.reason,
-  });
+  const OneBotGroupRequestQuickOp({this.approve, this.reason});
 
   final bool? approve;
   final String? reason;
 
   Map<String, dynamic> toJson() => {
-        if (approve != null) 'approve': approve,
-        if (reason != null) 'reason': reason,
-      };
+    if (approve != null) 'approve': approve,
+    if (reason != null) 'reason': reason,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1124,9 +1126,10 @@ class OneBotApiResponse<T> {
     return OneBotApiResponse(
       status: json['status'] as String,
       retcode: json['retcode'] as int,
-      data: json['data'] != null && fromData != null
-          ? fromData(json['data'])
-          : null,
+      data:
+          json['data'] != null && fromData != null
+              ? fromData(json['data'])
+              : null,
       echo: echoFrom(),
     );
   }
@@ -1141,7 +1144,8 @@ class OneBotLoginInfo {
   final String userId;
   final String nickname;
 
-  factory OneBotLoginInfo.fromJson(Map<String, dynamic> json) => OneBotLoginInfo(
+  factory OneBotLoginInfo.fromJson(Map<String, dynamic> json) =>
+      OneBotLoginInfo(
         userId: '${json['user_id']}',
         nickname: (json['nickname'] as String?) ?? '',
       );
@@ -1224,6 +1228,7 @@ class OneBotGroupMemberInfo {
     this.title,
     this.titleExpireTime,
     this.cardChangeable,
+    this.shutUpTimestamp,
   });
   final String groupId;
   final String userId;
@@ -1240,6 +1245,7 @@ class OneBotGroupMemberInfo {
   final String? title;
   final int? titleExpireTime;
   final bool? cardChangeable;
+  final int? shutUpTimestamp;
 
   factory OneBotGroupMemberInfo.fromJson(Map<String, dynamic> json) =>
       OneBotGroupMemberInfo(
@@ -1258,6 +1264,7 @@ class OneBotGroupMemberInfo {
         title: json['title'] as String?,
         titleExpireTime: json['title_expire_time'] as int?,
         cardChangeable: json['card_changeable'] as bool?,
+        shutUpTimestamp: json['shut_up_timestamp'] as int?,
       );
 }
 
@@ -1282,16 +1289,29 @@ class OneBotGroupHonorInfo {
   factory OneBotGroupHonorInfo.fromJson(Map<String, dynamic> json) =>
       OneBotGroupHonorInfo(
         groupId: '${json['group_id']}',
-        currentTalkative: json['current_talkative'] != null
-            ? OneBotHonorUser.fromJson(
-                json['current_talkative'] as Map<String, dynamic>)
-            : null,
-        talkativeList: _listOrNull(json['talkative_list'], OneBotHonorUser.fromJson),
-        performerList: _listOrNull(json['performer_list'], OneBotHonorUser.fromJson),
+        currentTalkative:
+            json['current_talkative'] != null
+                ? OneBotHonorUser.fromJson(
+                  json['current_talkative'] as Map<String, dynamic>,
+                )
+                : null,
+        talkativeList: _listOrNull(
+          json['talkative_list'],
+          OneBotHonorUser.fromJson,
+        ),
+        performerList: _listOrNull(
+          json['performer_list'],
+          OneBotHonorUser.fromJson,
+        ),
         legendList: _listOrNull(json['legend_list'], OneBotHonorUser.fromJson),
-        strongNewbieList:
-            _listOrNull(json['strong_newbie_list'], OneBotHonorUser.fromJson),
-        emotionList: _listOrNull(json['emotion_list'], OneBotHonorUser.fromJson),
+        strongNewbieList: _listOrNull(
+          json['strong_newbie_list'],
+          OneBotHonorUser.fromJson,
+        ),
+        emotionList: _listOrNull(
+          json['emotion_list'],
+          OneBotHonorUser.fromJson,
+        ),
       );
 }
 
@@ -1412,8 +1432,7 @@ class OneBotForwardResult {
   /// (including inline nested forwards), use `NapCatApi` from the app layer.
   factory OneBotForwardResult.fromJson(Map<String, dynamic> json) {
     final raw = json['messages'] ?? json['message'];
-    return OneBotForwardResult(
-        message: raw != null ? _parseMessage(raw) : []);
+    return OneBotForwardResult(message: raw != null ? _parseMessage(raw) : []);
   }
 }
 
@@ -1441,10 +1460,11 @@ List<OneBotMessageSegment> _parseMessage(dynamic message) {
   return [];
 }
 
-List<T>? _listOrNull<T>(dynamic json, T Function(Map<String, dynamic>) fromJson) {
+List<T>? _listOrNull<T>(
+  dynamic json,
+  T Function(Map<String, dynamic>) fromJson,
+) {
   if (json == null) return null;
   final list = json as List<dynamic>;
-  return list
-      .map((e) => fromJson(e as Map<String, dynamic>))
-      .toList();
+  return list.map((e) => fromJson(e as Map<String, dynamic>)).toList();
 }

@@ -43,6 +43,11 @@ type Store interface {
 	GetGroup(id string) (*Group, error)
 	GetGroups() ([]*Group, error)
 	GetUserGroups(userID string) ([]*Group, error)
+	UpdateGroup(groupID, name, avatar, announcement string, muteAll bool) error
+	SetGroupMemberRole(groupID, userID, role string) error
+	SetGroupMemberMute(groupID, userID string, mutedUntil time.Time) error
+	TransferGroupOwnership(groupID, currentOwnerID, newOwnerID string) error
+	DeleteGroup(groupID string) error
 	AddGroupMember(groupID, userID string) (bool, error)
 	RemoveGroupMember(groupID, userID string) (bool, error)
 	IsGroupMember(groupID, userID string) (bool, error)
@@ -127,19 +132,22 @@ type Session struct {
 
 // Group represents a group.
 type Group struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Avatar    string         `json:"avatar_url,omitempty"`
-	OwnerID   string         `json:"owner_id"`
-	Members   []*GroupMember `json:"members,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Avatar       string         `json:"avatar_url,omitempty"`
+	Announcement string         `json:"announcement,omitempty"`
+	OwnerID      string         `json:"owner_id"`
+	MuteAll      bool           `json:"mute_all"`
+	Members      []*GroupMember `json:"members,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
 
 // GroupMember represents a member in a group.
 type GroupMember struct {
-	UserID   string    `json:"user_id"`
-	Role     string    `json:"role"` // "owner", "admin", "member"
-	JoinedAt time.Time `json:"joined_at"`
+	UserID     string    `json:"user_id"`
+	Role       string    `json:"role"` // "owner", "admin", "member"
+	JoinedAt   time.Time `json:"joined_at"`
+	MutedUntil time.Time `json:"muted_until,omitempty"`
 }
 
 // FriendRequest represents a pending friend request.

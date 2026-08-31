@@ -142,6 +142,134 @@ func TestGroupRemovalRolesNotificationsAndParticipantSync(t *testing.T) {
 	}
 }
 
+func TestGroupGovernanceAndMuteEnforcement(t *testing.T) {
+	database, websocketURL := newGroupManagementServer(t)
+	owner := authenticatedGroupClient(t, websocketURL, "owner")
+	admin := authenticatedGroupClient(t, websocketURL, "admin")
+	member := authenticatedGroupClient(t, websocketURL, "member")
+	for _, userID := range []string{"admin", "member"} {
+		addTestFriend(t, database, "owner", userID)
+	}
+
+	created := request(t, owner, "create_group", map[string]interface{}{
+		"name": "Governance", "members": []string{"admin", "member"},
+	})
+	assertOK(t, created)
+	groupID := responseData(t, created)["group_id"].(string)
+	assertGroupNotice(t, readJSON(t, admin), "group_increase", groupID, "admin", "owner")
+	assertGroupNotice(t, readJSON(t, member), "group_increase", groupID, "member", "owner")
+
+	deniedUpdate := request(t, member, "update_group", map[string]interface{}{
+		"group_id": groupID, "name": "Hijacked",
+	})
+	if deniedUpdate["status"] == "ok" {
+		t.Fatalf("ordinary member updated the group: %#v", deniedUpdate)
+	}
+
+	assertOK(t, request(t, owner, "set_group_admin", map[string]interface{}{
+		"group_id": groupID, "user_id": "admin", "enabled": true,
+	}))
+	assertGovernanceNotice(t, readJSON(t, owner), "group_admin", groupID, "admin", "owner")
+	assertGovernanceNotice(t, readJSON(t, admin), "group_admin", groupID, "admin", "owner")
+	assertGovernanceNotice(t, readJSON(t, member), "group_admin", groupID, "admin", "owner")
+
+	assertOK(t, request(t, admin, "update_group", map[string]interface{}{
+		"group_id": groupID,
+		"name":     "Core operations", "avatar_url": "https://example.test/group.png",
+		"announcement": "Ship carefully.",
+	}))
+	for _, client := range []*websocket.Conn{owner, admin, member} {
+		assertGovernanceNotice(t, readJSON(t, client), "group_update", groupID, "", "admin")
+	}
+	info := responseData(t, request(t, member, "get_group_info", map[string]interface{}{"group_id": groupID}))
+	if info["name"] != "Core operations" || info["announcement"] != "Ship carefully." || info["avatar_url"] != "https://example.test/group.png" {
+		t.Fatalf("group profile was not updated: %#v", info)
+	}
+	members := info["members"].([]interface{})
+	adminInfo := groupMemberData(t, members, "admin")
+	if adminInfo["role"] != "admin" {
+		t.Fatalf("administrator role missing from group info: %#v", adminInfo)
+	}
+
+	assertOK(t, request(t, admin, "group_ban", map[string]interface{}{
+		"group_id": groupID, "user_id": "member", "duration": 3600,
+	}))
+	for _, client := range []*websocket.Conn{owner, admin, member} {
+		assertGovernanceNotice(t, readJSON(t, client), "group_ban", groupID, "member", "admin")
+	}
+	mutedSend := request(t, member, "send_message", map[string]interface{}{
+		"conversation_id": groupID,
+		"message":         []map[string]interface{}{{"type": "text", "data": map[string]interface{}{"text": "blocked"}}},
+	})
+	if mutedSend["status"] == "ok" || !strings.Contains(mutedSend["msg"].(string), "muted until") {
+		t.Fatalf("muted member sent a message: %#v", mutedSend)
+	}
+
+	assertOK(t, request(t, owner, "group_ban", map[string]interface{}{
+		"group_id": groupID, "user_id": "member", "duration": 0,
+	}))
+	for _, client := range []*websocket.Conn{owner, admin, member} {
+		assertGovernanceNotice(t, readJSON(t, client), "group_ban", groupID, "member", "owner")
+	}
+	assertOK(t, request(t, admin, "group_mute_all", map[string]interface{}{
+		"group_id": groupID, "enabled": true,
+	}))
+	for _, client := range []*websocket.Conn{owner, admin, member} {
+		assertGovernanceNotice(t, readJSON(t, client), "group_mute_all", groupID, "", "admin")
+	}
+	wholeMutedSend := request(t, member, "send_message", map[string]interface{}{
+		"conversation_id": groupID,
+		"message":         []map[string]interface{}{{"type": "text", "data": map[string]interface{}{"text": "still blocked"}}},
+	})
+	if wholeMutedSend["status"] == "ok" || !strings.Contains(wholeMutedSend["msg"].(string), "muted for all") {
+		t.Fatalf("member bypassed whole-group mute: %#v", wholeMutedSend)
+	}
+
+	deniedOwnerBan := request(t, admin, "group_ban", map[string]interface{}{
+		"group_id": groupID, "user_id": "owner", "duration": 60,
+	})
+	if deniedOwnerBan["status"] == "ok" {
+		t.Fatalf("administrator muted the owner: %#v", deniedOwnerBan)
+	}
+}
+
+func TestGroupOwnershipTransferAndDismissal(t *testing.T) {
+	database, websocketURL := newGroupManagementServer(t)
+	owner := authenticatedGroupClient(t, websocketURL, "owner")
+	member := authenticatedGroupClient(t, websocketURL, "member")
+	addTestFriend(t, database, "owner", "member")
+	created := request(t, owner, "create_group", map[string]interface{}{
+		"name": "Transfer", "members": []string{"member"},
+	})
+	assertOK(t, created)
+	groupID := responseData(t, created)["group_id"].(string)
+	assertGroupNotice(t, readJSON(t, member), "group_increase", groupID, "member", "owner")
+
+	assertOK(t, request(t, owner, "transfer_group", map[string]interface{}{
+		"group_id": groupID, "user_id": "member",
+	}))
+	assertGovernanceNotice(t, readJSON(t, owner), "group_transfer", groupID, "member", "owner")
+	assertGovernanceNotice(t, readJSON(t, member), "group_transfer", groupID, "member", "owner")
+	group, err := database.GetGroup(groupID)
+	if err != nil || group == nil || group.OwnerID != "member" || groupMemberRoleForTest(t, group, "owner") != "member" || groupMemberRoleForTest(t, group, "member") != "owner" {
+		t.Fatalf("ownership transfer was not persisted: %#v err=%v", group, err)
+	}
+
+	deniedDismiss := request(t, owner, "dismiss_group", map[string]interface{}{"group_id": groupID})
+	if deniedDismiss["status"] == "ok" {
+		t.Fatalf("former owner dismissed the group: %#v", deniedDismiss)
+	}
+	assertOK(t, request(t, member, "dismiss_group", map[string]interface{}{"group_id": groupID}))
+	assertGovernanceNotice(t, readJSON(t, member), "group_dismiss", groupID, "", "member")
+	assertGovernanceNotice(t, readJSON(t, owner), "group_dismiss", groupID, "", "member")
+	if deleted, err := database.GetGroup(groupID); err != nil || deleted != nil {
+		t.Fatalf("dismissed group still exists: %#v err=%v", deleted, err)
+	}
+	if conversation, err := database.GetConversation(groupID); err != nil || conversation != nil {
+		t.Fatalf("dismissed group conversation still exists: %#v err=%v", conversation, err)
+	}
+}
+
 func newGroupManagementServer(t *testing.T) (*store.MemoryStore, string) {
 	t.Helper()
 	database := store.NewMemoryStore()
@@ -190,6 +318,39 @@ func assertGroupNotice(t *testing.T, notice map[string]interface{}, noticeType, 
 		notice["operator_id"] != operatorID {
 		t.Fatalf("unexpected group notice: %#v", notice)
 	}
+}
+
+func assertGovernanceNotice(t *testing.T, notice map[string]interface{}, noticeType, groupID, userID, operatorID string) {
+	t.Helper()
+	if notice["post_type"] != "notice" || notice["notice_type"] != noticeType || notice["group_id"] != groupID || notice["operator_id"] != operatorID {
+		t.Fatalf("unexpected governance notice: %#v", notice)
+	}
+	if userID != "" && notice["user_id"] != userID {
+		t.Fatalf("unexpected governance notice target: %#v", notice)
+	}
+}
+
+func groupMemberData(t *testing.T, members []interface{}, userID string) map[string]interface{} {
+	t.Helper()
+	for _, raw := range members {
+		member := raw.(map[string]interface{})
+		if member["user_id"] == userID {
+			return member
+		}
+	}
+	t.Fatalf("group member %s not found in %#v", userID, members)
+	return nil
+}
+
+func groupMemberRoleForTest(t *testing.T, group *store.Group, userID string) string {
+	t.Helper()
+	for _, member := range group.Members {
+		if member.UserID == userID {
+			return member.Role
+		}
+	}
+	t.Fatalf("group member %s not found", userID)
+	return ""
 }
 
 func assertConversationParticipants(t *testing.T, database *store.MemoryStore, groupID string, expected []string) {

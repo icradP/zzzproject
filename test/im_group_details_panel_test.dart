@@ -44,7 +44,9 @@ void main() {
     await tester.tap(find.byTooltip('Members'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('group-member-wise')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('group-remove-wise')));
+    await tester.tap(find.byKey(const ValueKey('group-member-actions-wise')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove from group'));
     await tester.pumpAndSettle();
     expect(find.byType(ZzzModalPanel), findsNWidgets(2));
     await tester.tap(find.byKey(const ValueKey('group-confirm-remove')));
@@ -83,6 +85,9 @@ void main() {
       await tester.tap(find.byTooltip('Invite members'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('group-invite-tab')), findsOneWidget);
+      await tester.tap(find.byTooltip('Group settings'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('group-settings-tab')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
@@ -121,6 +126,66 @@ void main() {
     expect(repository.leftGroup, isTrue);
     expect(left, isTrue);
     expect(find.byKey(const ValueKey('group-details-panel')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('owner edits settings and promotes a member', (tester) async {
+    tester.view
+      ..physicalSize = const Size(800, 760)
+      ..devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final repository = MockImRepository();
+    addTearDown(repository.dispose);
+    final conversation = await repository.getConversation(
+      'group_cunning_hares',
+    );
+    await _pumpLauncher(tester, repository, conversation!);
+    await tester.tap(find.byKey(const ValueKey('open-group-management')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Group settings'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('group-profile-settings')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('group-moderation-settings')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('group-name-input')),
+      'Commission Board',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('group-announcement-input')),
+      'Meet at Random Play.',
+    );
+    await tester.tap(find.byKey(const ValueKey('group-settings-save')));
+    await tester.pumpAndSettle();
+    var details = await repository.getGroupDetails('group_cunning_hares');
+    expect(details.conversation.title, 'Commission Board');
+    expect(details.announcement, 'Meet at Random Play.');
+
+    await tester.tap(find.byKey(const ValueKey('group-mute-all')));
+    await tester.pumpAndSettle();
+    details = await repository.getGroupDetails('group_cunning_hares');
+    expect(details.muteAll, isTrue);
+
+    await tester.tap(find.byTooltip('Members'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('group-member-actions-nicole')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Make administrator'));
+    await tester.pumpAndSettle();
+    details = await repository.getGroupDetails('group_cunning_hares');
+    expect(
+      details.members.singleWhere((m) => m.user.id == 'nicole').role,
+      ImGroupRole.admin,
+    );
     expect(tester.takeException(), isNull);
   });
 }

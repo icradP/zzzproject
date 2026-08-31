@@ -13,6 +13,11 @@ void main() {
     final sockets = <WebSocket>[];
     final actions = <Map<String, dynamic>>[];
     var memberIDs = <String>['me', 'bob', 'carol'];
+    var groupName = 'Team';
+    var announcement = '';
+    var muteAll = false;
+    final roles = <String, String>{'me': 'owner', 'bob': 'admin'};
+    final mutedUntil = <String, int>{};
     server.listen((request) async {
       final socket = await WebSocketTransformer.upgrade(request);
       sockets.add(socket);
@@ -33,6 +38,28 @@ void main() {
         if (action == 'group_kick') {
           memberIDs.remove('${params['user_id']}');
         }
+        if (action == 'update_group') {
+          groupName = '${params['name'] ?? groupName}';
+          announcement = '${params['announcement'] ?? announcement}';
+        }
+        if (action == 'set_group_admin') {
+          roles['${params['user_id']}'] =
+              params['enabled'] == true ? 'admin' : 'member';
+        }
+        if (action == 'group_ban') {
+          final duration = params['duration'] as int? ?? 0;
+          mutedUntil['${params['user_id']}'] =
+              duration == 0
+                  ? 0
+                  : DateTime.now().millisecondsSinceEpoch ~/ 1000 + duration;
+        }
+        if (action == 'group_mute_all') {
+          muteAll = params['enabled'] == true;
+        }
+        if (action == 'transfer_group') {
+          roles['me'] = 'member';
+          roles['${params['user_id']}'] = 'owner';
+        }
         final data = switch (action) {
           'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
           'get_friends' => [
@@ -45,7 +72,7 @@ void main() {
             {
               'conversation_id': 'group_team',
               'type': 'group',
-              'title': 'Team',
+              'title': groupName,
               'participants': memberIDs,
               'avatar_url': '/files/team',
             },
@@ -53,9 +80,14 @@ void main() {
           'get_messages' => <Object?>[],
           'get_group_info' => {
             'group_id': 'group_team',
-            'name': 'Team',
+            'name': groupName,
             'avatar_url': '/files/team',
-            'owner_id': 'me',
+            'announcement': announcement,
+            'mute_all': muteAll,
+            'owner_id':
+                roles.entries
+                    .singleWhere((entry) => entry.value == 'owner')
+                    .key,
             'member_count': memberIDs.length,
             'members': [
               for (final userID in memberIDs)
@@ -63,13 +95,9 @@ void main() {
                   'user_id': userID,
                   'nickname': userID[0].toUpperCase() + userID.substring(1),
                   'avatar_url': userID == 'bob' ? '/files/bob' : '',
-                  'role':
-                      userID == 'me'
-                          ? 'owner'
-                          : userID == 'bob'
-                          ? 'admin'
-                          : 'member',
+                  'role': roles[userID] ?? 'member',
                   'joined_at': 1700000000,
+                  'muted_until': mutedUntil[userID] ?? 0,
                 },
             ],
           },
@@ -109,6 +137,9 @@ void main() {
     expect(details.currentMember?.role, ImGroupRole.owner);
     expect(details.canInviteMembers, isTrue);
     expect(details.canLeave, isFalse);
+    expect(details.canEditSettings, isTrue);
+    expect(details.canTransferOwnership, isTrue);
+    expect(details.canDismiss, isTrue);
     expect(
       details.members.singleWhere((member) => member.user.id == 'bob').role,
       ImGroupRole.admin,
@@ -121,6 +152,38 @@ void main() {
       'http://127.0.0.1:${server.port}/files/bob',
     );
     expect(details.members.first.joinedAt, isNotNull);
+
+    await source.updateGroup(
+      groupId: 'group_team',
+      name: 'Operations',
+      announcement: 'Ship carefully.',
+    );
+    var updated = await source.getGroupDetails('group_team');
+    expect(updated.conversation.title, 'Operations');
+    expect(updated.announcement, 'Ship carefully.');
+    await source.setGroupAdmin(
+      groupId: 'group_team',
+      userId: 'carol',
+      enabled: true,
+    );
+    await source.setGroupMemberMute(
+      groupId: 'group_team',
+      userId: 'carol',
+      duration: const Duration(hours: 1),
+    );
+    await source.setGroupMuteAll(groupId: 'group_team', enabled: true);
+    updated = await source.getGroupDetails('group_team');
+    expect(
+      updated.members.singleWhere((member) => member.user.id == 'carol').role,
+      ImGroupRole.admin,
+    );
+    expect(
+      updated.members
+          .singleWhere((member) => member.user.id == 'carol')
+          .isMuted,
+      isTrue,
+    );
+    expect(updated.muteAll, isTrue);
 
     await source.inviteGroupMembers(
       groupId: 'group_team',
@@ -181,6 +244,26 @@ void main() {
           .singleWhere((conversation) => conversation.id == 'group_team')
           .participantIds,
       contains('eve'),
+    );
+
+    await source.transferGroupOwnership(groupId: 'group_team', userId: 'bob');
+    updated = await source.getGroupDetails('group_team');
+    expect(updated.currentMember?.role, ImGroupRole.member);
+    expect(
+      updated.members.singleWhere((member) => member.user.id == 'bob').role,
+      ImGroupRole.owner,
+    );
+    await source.dismissGroup('group_team');
+    expect(
+      actions.map((request) => request['action']),
+      containsAll([
+        'update_group',
+        'set_group_admin',
+        'group_ban',
+        'group_mute_all',
+        'transfer_group',
+        'dismiss_group',
+      ]),
     );
   });
 }

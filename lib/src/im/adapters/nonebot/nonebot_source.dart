@@ -95,6 +95,7 @@ class NoneBotSource implements ImMessageSource {
   final _groupNames = <String, String>{};
   final _groupMemberIds = <String, List<String>>{};
   final _groupAvatarPaths = <String, String>{};
+  final _groupMuteAll = <String, bool>{};
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
   final _conversationControllers =
@@ -254,6 +255,7 @@ class NoneBotSource implements ImMessageSource {
     _groupNames.remove(parsed.targetId);
     _groupMemberIds.remove(parsed.targetId);
     _groupAvatarPaths.remove(parsed.targetId);
+    _groupMuteAll.remove(parsed.targetId);
     _conversations.remove(groupId);
     _emitConversations();
   }
@@ -656,6 +658,12 @@ class NoneBotSource implements ImMessageSource {
                     : DateTime.fromMillisecondsSinceEpoch(
                       remote.joinTime! * 1000,
                     ),
+            mutedUntil:
+                remote.shutUpTimestamp == null || remote.shutUpTimestamp! <= 0
+                    ? null
+                    : DateTime.fromMillisecondsSinceEpoch(
+                      remote.shutUpTimestamp! * 1000,
+                    ),
           ),
         );
       }
@@ -720,6 +728,12 @@ class NoneBotSource implements ImMessageSource {
           _client != null &&
           currentRole != null &&
           currentRole != ImGroupRole.owner,
+      supportsNameEditing: _client != null,
+      muteAll: _groupMuteAll[parsed.targetId] ?? false,
+      supportsAdminManagement: _client != null,
+      supportsMemberMuting: _client != null,
+      supportsWholeGroupMute: _client != null,
+      supportsDismissal: _client != null,
     );
   }
 
@@ -755,6 +769,105 @@ class NoneBotSource implements ImMessageSource {
     }
     await _client!.setGroupKick(groupId: parsed.targetId, userId: userId);
     await _populateGroupMembers(parsed.targetId);
+  }
+
+  @override
+  Future<void> updateGroup({
+    required String groupId,
+    String? name,
+    ImMediaUpload? avatar,
+    String? announcement,
+  }) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError('Edit groups through the connected platform.');
+    }
+    if (avatar != null || announcement != null) {
+      throw UnsupportedError(
+        'OneBot v11 does not expose group avatars or announcements.',
+      );
+    }
+    final value = name?.trim();
+    if (value == null || value.isEmpty) return;
+    await _client!.setGroupName(groupId: parsed.targetId, groupName: value);
+    _groupNames[parsed.targetId] = value;
+    final existing = _conversations[groupId];
+    if (existing != null) {
+      _conversations[groupId] = existing.copyWith(title: value);
+    }
+    _emitConversations();
+  }
+
+  @override
+  Future<void> setGroupAdmin({
+    required String groupId,
+    required String userId,
+    required bool enabled,
+  }) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError(
+        'Manage administrators through the connected platform.',
+      );
+    }
+    await _client!.setGroupAdmin(
+      groupId: parsed.targetId,
+      userId: userId,
+      enable: enabled,
+    );
+    await _populateGroupMembers(parsed.targetId);
+  }
+
+  @override
+  Future<void> setGroupMemberMute({
+    required String groupId,
+    required String userId,
+    required Duration duration,
+  }) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError('Mute members through the connected platform.');
+    }
+    await _client!.setGroupBan(
+      groupId: parsed.targetId,
+      userId: userId,
+      duration: duration.inSeconds,
+    );
+  }
+
+  @override
+  Future<void> setGroupMuteAll({
+    required String groupId,
+    required bool enabled,
+  }) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError('Mute groups through the connected platform.');
+    }
+    await _client!.setGroupWholeBan(groupId: parsed.targetId, enable: enabled);
+    _groupMuteAll[parsed.targetId] = enabled;
+  }
+
+  @override
+  Future<void> dismissGroup(String groupId) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError('Dismiss groups through the connected platform.');
+    }
+    await _client!.setGroupLeave(groupId: parsed.targetId, isDismiss: true);
+    _groupMuteAll.remove(parsed.targetId);
+    _conversations.remove(groupId);
+    _emitConversations();
+  }
+
+  @override
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String userId,
+  }) async {
+    throw UnsupportedError(
+      'OneBot v11 does not expose group ownership transfer.',
+    );
   }
 
   @override

@@ -9,11 +9,12 @@ import 'package:zzzproject/src/im/data/im_storage_config.dart';
 import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
-  test('NoneBot maps numeric member IDs and routes kicks', () async {
+  test('NoneBot maps group governance actions', () async {
     final temp = await Directory.systemTemp.createTemp('zzz-nonebot-group-');
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final sockets = <WebSocket>[];
     final actions = <Map<String, dynamic>>[];
+    var groupName = 'Numeric group';
     var members = <Map<String, Object?>>[
       {
         'group_id': 9001,
@@ -57,13 +58,45 @@ void main() {
                   )
                   .toList();
         }
+        if (action == 'set_group_name') {
+          groupName = '${params['group_name']}';
+        }
+        if (action == 'set_group_admin') {
+          members =
+              members.map((member) {
+                if ('${member['user_id']}' != '${params['user_id']}') {
+                  return member;
+                }
+                return <String, Object?>{
+                  ...member,
+                  'role': params['enable'] == true ? 'admin' : 'member',
+                };
+              }).toList();
+        }
+        if (action == 'set_group_ban') {
+          final duration = params['duration'] as int? ?? 0;
+          members =
+              members.map((member) {
+                if ('${member['user_id']}' != '${params['user_id']}') {
+                  return member;
+                }
+                return <String, Object?>{
+                  ...member,
+                  'shut_up_timestamp':
+                      duration == 0
+                          ? 0
+                          : DateTime.now().millisecondsSinceEpoch ~/ 1000 +
+                              duration,
+                };
+              }).toList();
+        }
         final data = switch (action) {
           'get_login_info' => {'user_id': 10001, 'nickname': 'Owner'},
           'get_friend_list' => <Object?>[],
           'get_group_list' => [
             {
               'group_id': 9001,
-              'group_name': 'Numeric group',
+              'group_name': groupName,
               'member_count': members.length,
               'max_member_count': 200,
             },
@@ -107,6 +140,13 @@ void main() {
     expect(details.supportsInvites, isFalse);
     expect(details.supportsMemberRemoval, isTrue);
     expect(details.canLeave, isFalse);
+    expect(details.supportsNameEditing, isTrue);
+    expect(details.supportsAvatarEditing, isFalse);
+    expect(details.supportsAdminManagement, isTrue);
+    expect(details.supportsMemberMuting, isTrue);
+    expect(details.supportsWholeGroupMute, isTrue);
+    expect(details.supportsOwnershipTransfer, isFalse);
+    expect(details.supportsDismissal, isTrue);
     expect(details.members.map((member) => member.user.id), [
       '10001',
       '10002',
@@ -114,6 +154,37 @@ void main() {
     ]);
     expect(details.members[1].role, ImGroupRole.admin);
     expect(details.members[2].role, ImGroupRole.member);
+
+    await source.updateGroup(groupId: group.id, name: 'Renamed group');
+    expect((await source.getGroupList()).single.title, 'Renamed group');
+    await source.setGroupAdmin(
+      groupId: group.id,
+      userId: '10002',
+      enabled: false,
+    );
+    expect(
+      (await source.getGroupDetails(
+        group.id,
+      )).members.singleWhere((member) => member.user.id == '10002').role,
+      ImGroupRole.member,
+    );
+    await source.setGroupMemberMute(
+      groupId: group.id,
+      userId: '10003',
+      duration: const Duration(hours: 1),
+    );
+    expect(
+      (await source.getGroupDetails(
+        group.id,
+      )).members.singleWhere((member) => member.user.id == '10003').isMuted,
+      isTrue,
+    );
+    await source.setGroupMuteAll(groupId: group.id, enabled: true);
+    expect((await source.getGroupDetails(group.id)).muteAll, isTrue);
+    await expectLater(
+      source.transferGroupOwnership(groupId: group.id, userId: '10002'),
+      throwsUnsupportedError,
+    );
 
     await source.removeGroupMember(groupId: group.id, userId: '10003');
     final kick = actions.lastWhere(
@@ -126,6 +197,17 @@ void main() {
         group.id,
       )).members.map((member) => member.user.id),
       isNot(contains('10003')),
+    );
+    await source.dismissGroup(group.id);
+    expect(
+      actions.map((request) => request['action']),
+      containsAll([
+        'set_group_name',
+        'set_group_admin',
+        'set_group_ban',
+        'set_group_whole_ban',
+        'set_group_leave',
+      ]),
     );
   });
 }
