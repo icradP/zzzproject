@@ -175,8 +175,11 @@ class _ZzzModalPanelState extends State<ZzzModalPanel> {
               const Divider(height: 1, color: Colors.white12),
               if (widget.collapsible)
                 Flexible(
-                  child: ZzzReveal(
-                    expanded: _expanded,
+                  // Keep the body's original constraints. A SizeTransition
+                  // loosens height constraints, which breaks children that
+                  // use Expanded (for example the group member browser).
+                  child: Offstage(
+                    offstage: !_expanded,
                     child: widget.child,
                   ),
                 )
