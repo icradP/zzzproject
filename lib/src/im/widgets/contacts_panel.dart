@@ -460,41 +460,92 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       onSubmitted: (_) => _submit(),
     );
 
-    if (compact) {
-      return Row(
-        key: const ValueKey('create-group-profile'),
-        children: [
-          _GroupAvatarPreview(users: selectedUsers, size: 54),
-          const SizedBox(width: 12),
-          Expanded(child: nameInput),
-        ],
-      );
-    }
+    final profile =
+        compact
+            ? Row(
+              children: [
+                _buildGroupAvatarWithCount(users: selectedUsers, size: 54),
+                const SizedBox(width: 12),
+                Expanded(child: nameInput),
+              ],
+            )
+            : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Group identity',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _buildGroupAvatarWithCount(
+                    users: selectedUsers,
+                    size: 72,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                nameInput,
+                const SizedBox(height: 8),
+                Text(
+                  selectedUsers.isEmpty
+                      ? 'Choose contacts to build the group roster.'
+                      : '${selectedUsers.length} selected. You can manage members after the group is created.',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            );
 
-    return Column(
+    return Container(
       key: const ValueKey('create-group-profile'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: EdgeInsets.all(compact ? 4 : 12),
+      decoration: BoxDecoration(
+        color: ZzzColors.yellow.withValues(alpha: compact ? 0.04 : 0.07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ZzzColors.yellow.withValues(alpha: 0.16)),
+      ),
+      child: profile,
+    );
+  }
+
+  Widget _buildGroupAvatarWithCount({
+    required List<ImUser> users,
+    required double size,
+  }) {
+    return Stack(
+      clipBehavior: Clip.none,
       children: [
-        const Text(
-          'Group identity',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.2,
+        _GroupAvatarPreview(users: users, size: size),
+        Positioned(
+          right: -4,
+          bottom: -4,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            decoration: BoxDecoration(
+              color: ZzzColors.yellow,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: ZzzColors.panel, width: 2),
+            ),
+            child: Text(
+              '${users.length}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ),
-        ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: _GroupAvatarPreview(users: selectedUsers, size: 72),
-        ),
-        const SizedBox(height: 12),
-        nameInput,
-        const SizedBox(height: 8),
-        const Text(
-          'Pick a name now. You can manage members after the group is created.',
-          style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.35),
         ),
       ],
     );

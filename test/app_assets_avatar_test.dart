@@ -40,4 +40,23 @@ void main() {
     expect(first, second);
     expect(AppAssets.fallbackAvatarPool, contains(first));
   });
+
+  test('synthetic account aliases use varied stable portrait art', () {
+    const ids = [
+      'smoke-qa',
+      'smoke-ios',
+      'smoke-android',
+      'smoke-desktop',
+      'smoke-mobile',
+      'probe-ios',
+      'probe-web',
+    ];
+    final avatars = ids.map(AppAssets.fallbackAvatarForId).toList();
+
+    expect(avatars.toSet(), hasLength(ids.length));
+    expect(
+      AppAssets.fallbackAvatarForId('SMOKE-QA'),
+      AppAssets.fallbackAvatarForId('smoke-qa'),
+    );
+  });
 }
