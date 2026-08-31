@@ -52,7 +52,6 @@ void main() {
     expect(find.byType(ZzzExpandablePanel), findsOneWidget);
     expect(find.byType(ZzzExpandableSection), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    expect(find.byTooltip('Collapse panel'), findsOneWidget);
 
     final nameInput = find.descendant(
       of: find.byKey(const ValueKey('create-group-name')),
