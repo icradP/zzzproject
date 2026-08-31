@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../assets/app_assets.dart';
@@ -140,6 +143,7 @@ class _ContactsPanelState extends State<ContactsPanel> {
       final group = await repository.createGroup(
         name: request.name,
         memberIds: request.memberIds,
+        avatar: request.avatar,
       );
       if (!mounted) return;
       setState(() => _groups = [..._groups, group]);
@@ -278,10 +282,15 @@ class _ContactsPanelState extends State<ContactsPanel> {
 }
 
 class _CreateGroupRequest {
-  const _CreateGroupRequest({required this.name, required this.memberIds});
+  const _CreateGroupRequest({
+    required this.name,
+    required this.memberIds,
+    this.avatar,
+  });
 
   final String name;
   final List<String> memberIds;
+  final ImMediaUpload? avatar;
 }
 
 class _CreateGroupPanel extends StatefulWidget {
@@ -297,6 +306,10 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   final _nameController = TextEditingController();
   final _memberSearchController = TextEditingController();
   final _selectedMemberIds = <String>{};
+  Uint8List? _avatarBytes;
+  String? _avatarName;
+  String? _avatarMime;
+  String? _avatarError;
   String _memberQuery = '';
   bool _showSelectedOnly = false;
 
@@ -338,8 +351,37 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       _CreateGroupRequest(
         name: name,
         memberIds: _selectedMemberIds.toList(growable: false),
+        avatar:
+            _avatarBytes == null
+                ? null
+                : ImMediaUpload(
+                  kind: ImMessageKind.image,
+                  fileName: _avatarName ?? 'group-avatar.jpg',
+                  bytes: _avatarBytes,
+                  mimeType: _avatarMime,
+                ),
       ),
     );
+  }
+
+  Future<void> _pickGroupAvatar() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+      allowMultiple: false,
+    );
+    final file = result?.files.single;
+    if (file == null || file.bytes == null || !mounted) return;
+    if (file.bytes!.length > 5 * 1024 * 1024) {
+      setState(() => _avatarError = 'Group avatar must be 5 MB or smaller.');
+      return;
+    }
+    setState(() {
+      _avatarBytes = file.bytes;
+      _avatarName = file.name;
+      _avatarMime = file.extension == null ? null : 'image/${file.extension}';
+      _avatarError = null;
+    });
   }
 
   void _toggleMember(ImUser user) {
@@ -377,6 +419,7 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       icon: Icons.group_add_outlined,
       maxWidth: 780,
       maxHeight: 700,
+      collapsible: true,
       actions: [
         TextButton.icon(
           onPressed: () => Navigator.of(context).pop(),
@@ -462,11 +505,28 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
 
     final profile =
         compact
-            ? Row(
+            ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildGroupAvatarWithCount(users: selectedUsers, size: 54),
-                const SizedBox(width: 12),
-                Expanded(child: nameInput),
+                Row(
+                  children: [
+                    _buildGroupAvatarWithCount(users: selectedUsers, size: 54),
+                    const SizedBox(width: 12),
+                    Expanded(child: nameInput),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _buildAvatarPickerButton(),
+                if (_avatarError != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _avatarError!,
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ],
             )
             : Column(
@@ -502,6 +562,18 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
                     height: 1.35,
                   ),
                 ),
+                const SizedBox(height: 10),
+                _buildAvatarPickerButton(),
+                if (_avatarError != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _avatarError!,
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ],
             );
 
@@ -524,7 +596,27 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        _GroupAvatarPreview(users: users, size: size),
+        _avatarBytes == null
+            ? _GroupAvatarPreview(users: users, size: size)
+            : Semantics(
+              label: 'Uploaded group avatar',
+              child: Container(
+                key: const ValueKey('create-group-uploaded-avatar'),
+                width: size,
+                height: size,
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: ZzzColors.yellow.withValues(alpha: 0.8),
+                    width: 2,
+                  ),
+                ),
+                child: ClipOval(
+                  child: Image.memory(_avatarBytes!, fit: BoxFit.cover),
+                ),
+              ),
+            ),
         Positioned(
           right: -4,
           bottom: -4,
@@ -548,6 +640,20 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildAvatarPickerButton() {
+    return OutlinedButton.icon(
+      key: const ValueKey('create-group-avatar-pick'),
+      onPressed: _pickGroupAvatar,
+      icon: const Icon(Icons.upload_rounded, size: 18),
+      label: Text(
+        _avatarBytes == null
+            ? 'Upload group avatar'
+            : _avatarName ?? 'Image selected',
+        overflow: TextOverflow.ellipsis,
+      ),
     );
   }
 

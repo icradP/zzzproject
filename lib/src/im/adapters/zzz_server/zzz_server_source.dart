@@ -565,6 +565,9 @@ class ZzzServerSource implements ImMessageSource {
     String? avatarUrl;
     if (avatar != null) {
       final bytes = await readUploadBytes(avatar);
+      if (bytes.length > 5 * 1024 * 1024) {
+        throw StateError('Group avatars must be 5 MB or smaller.');
+      }
       final upload = await _request('upload_file', {
         'file': base64Encode(bytes),
         'file_name': avatar.fileName,

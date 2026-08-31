@@ -36,7 +36,7 @@ Future<T?> showZzzModalPanel<T>({
 }
 
 /// Responsive modal surface with the same visual language as [ZzzPanel].
-class ZzzModalPanel extends StatelessWidget {
+class ZzzModalPanel extends StatefulWidget {
   const ZzzModalPanel({
     required this.title,
     required this.child,
@@ -46,6 +46,8 @@ class ZzzModalPanel extends StatelessWidget {
     this.maxWidth = 520,
     this.maxHeight = 640,
     this.onClose,
+    this.collapsible = false,
+    this.initiallyExpanded = true,
     super.key,
   });
 
@@ -57,13 +59,37 @@ class ZzzModalPanel extends StatelessWidget {
   final double maxWidth;
   final double maxHeight;
   final VoidCallback? onClose;
+  final bool collapsible;
+  final bool initiallyExpanded;
+
+  @override
+  State<ZzzModalPanel> createState() => _ZzzModalPanelState();
+}
+
+class _ZzzModalPanelState extends State<ZzzModalPanel> {
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initiallyExpanded;
+  }
+
+  @override
+  void didUpdateWidget(covariant ZzzModalPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initiallyExpanded != oldWidget.initiallyExpanded ||
+        widget.collapsible != oldWidget.collapsible) {
+      _expanded = widget.initiallyExpanded;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final availableHeight = media.size.height - media.viewInsets.vertical - 32;
     final resolvedMaxHeight =
-        availableHeight < maxHeight ? availableHeight : maxHeight;
+        availableHeight < widget.maxHeight ? availableHeight : widget.maxHeight;
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -71,7 +97,7 @@ class ZzzModalPanel extends StatelessWidget {
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: maxWidth,
+          maxWidth: widget.maxWidth,
           maxHeight: resolvedMaxHeight < 180 ? 180 : resolvedMaxHeight,
         ),
         child: ZzzPanel(
@@ -85,7 +111,7 @@ class ZzzModalPanel extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
                 child: Row(
                   children: [
-                    if (icon != null) ...[
+                    if (widget.icon != null) ...[
                       Container(
                         width: 38,
                         height: 38,
@@ -93,7 +119,7 @@ class ZzzModalPanel extends StatelessWidget {
                           color: ZzzColors.yellow,
                           shape: BoxShape.circle,
                         ),
-                        child: Icon(icon, color: Colors.black, size: 21),
+                        child: Icon(widget.icon, color: Colors.black, size: 21),
                       ),
                       const SizedBox(width: 12),
                     ],
@@ -102,7 +128,7 @@ class ZzzModalPanel extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            title,
+                            widget.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -110,9 +136,9 @@ class ZzzModalPanel extends StatelessWidget {
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          if (subtitle != null)
+                          if (widget.subtitle != null)
                             Text(
-                              subtitle!,
+                              widget.subtitle!,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -123,18 +149,40 @@ class ZzzModalPanel extends StatelessWidget {
                         ],
                       ),
                     ),
+                    if (widget.collapsible)
+                      IconButton(
+                        key: const ValueKey('zzz-modal-panel-collapse'),
+                        tooltip:
+                            _expanded ? 'Collapse panel' : 'Expand panel',
+                        onPressed: () => setState(() => _expanded = !_expanded),
+                        icon: AnimatedRotation(
+                          duration: _kZzzAnimExpand,
+                          curve: _kZzzCurve,
+                          turns: _expanded ? 0 : 0.5,
+                          child: const Icon(Icons.expand_more_rounded),
+                        ),
+                      ),
                     IconButton(
                       tooltip: 'Close',
                       onPressed:
-                          onClose ?? () => Navigator.of(context).maybePop(),
+                          widget.onClose ??
+                          () => Navigator.of(context).maybePop(),
                       icon: const Icon(Icons.close_rounded),
                     ),
                   ],
                 ),
               ),
               const Divider(height: 1, color: Colors.white12),
-              Flexible(child: child),
-              if (actions.isNotEmpty) ...[
+              if (widget.collapsible)
+                Flexible(
+                  child: ZzzReveal(
+                    expanded: _expanded,
+                    child: widget.child,
+                  ),
+                )
+              else
+                Flexible(child: widget.child),
+              if (widget.actions.isNotEmpty) ...[
                 const Divider(height: 1, color: Colors.white12),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
@@ -142,7 +190,7 @@ class ZzzModalPanel extends StatelessWidget {
                     alignment: MainAxisAlignment.end,
                     spacing: 8,
                     overflowSpacing: 8,
-                    children: actions,
+                    children: widget.actions,
                   ),
                 ),
               ],

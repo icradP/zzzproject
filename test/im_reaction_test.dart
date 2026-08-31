@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:zzzproject/src/im/data/mock_im_repository.dart';
+import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/widgets/im_chat_room_view/im_reaction_chips.dart';
 
 void main() {
