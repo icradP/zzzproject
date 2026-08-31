@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -38,6 +40,7 @@ class _ImHomePageState extends State<ImHomePage>
   /// Cached snapshot data so switching conversations doesn't flash empty.
   final _conversationCache = <String, List<ImConversation>>{};
   final _messageCache = <String, List<ImMessage>>{};
+  final _readMarksInFlight = <String>{};
 
   @override
   void initState() {
@@ -73,7 +76,17 @@ class _ImHomePageState extends State<ImHomePage>
       _pendingConversation = conversation;
     });
     ImScope.interactionsOf(context).onConversationOpened(conversation);
-    ImScope.repositoryOf(context).markConversationRead(conversation.id);
+    _requestMarkRead(ImScope.repositoryOf(context), conversation.id);
+  }
+
+  void _requestMarkRead(ImRepository repository, String conversationId) {
+    if (!_readMarksInFlight.add(conversationId)) return;
+    unawaited(
+      repository
+          .markConversationRead(conversationId)
+          .catchError((_) {})
+          .whenComplete(() => _readMarksInFlight.remove(conversationId)),
+    );
   }
 
   void _clearSelection() {
@@ -492,6 +505,12 @@ class _ImHomePageState extends State<ImHomePage>
           }
           // Promote to non-null for use inside nested closures.
           final conv = selected;
+          if (conv.unreadCount > 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _selectedConversationId != conv.id) return;
+              _requestMarkRead(repository, conv.id);
+            });
+          }
 
           // Determine slide direction and distance from the conversation
           // list order so the panel slides in from the right direction.

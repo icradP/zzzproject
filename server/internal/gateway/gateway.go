@@ -723,23 +723,37 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 		return
 	}
 
-	convs, _ := g.store.GetUserConversations(client.userID)
+	convs, err := g.store.GetUserConversations(client.userID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load conversations")
+		return
+	}
 	result := make([]protocol.Conversation, len(convs))
 	for i, conv := range convs {
 		lastMsg := ""
 		var lastTs int64
-		msgs, _ := g.store.GetMessages(conv.ID, 1)
+		msgs, err := g.store.GetMessages(conv.ID, 1)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to load conversations")
+			return
+		}
 		if len(msgs) > 0 {
 			if len(msgs[0].Segments) > 0 && msgs[0].Segments[0].Type == "text" {
 				lastMsg, _ = msgs[0].Segments[0].Data["text"].(string)
 			}
 			lastTs = msgs[0].Timestamp.Unix()
 		}
+		unreadCount, err := g.store.CountUnreadMessages(conv.ID, client.userID)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to load unread count")
+			return
+		}
 		result[i] = protocol.Conversation{
 			ConversationID: conv.ID,
 			Type:           conv.Type,
 			Title:          conv.Title,
 			Avatar:         conv.Avatar,
+			UnreadCount:    unreadCount,
 			LastMessage:    lastMsg,
 			LastTimestamp:  lastTs,
 			Participants:   conv.Participants,
@@ -781,12 +795,40 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 		limit = int(l)
 	}
 
-	msgs, _ := g.store.GetMessages(convID, limit)
+	msgs, err := g.store.GetMessages(convID, limit)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load messages")
+		return
+	}
+	readStates, err := g.store.GetConversationReadStates(convID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load read state")
+		return
+	}
+	readStateByUser := make(map[string]*store.ReadState, len(readStates))
+	for _, state := range readStates {
+		readStateByUser[state.UserID] = state
+	}
+	recipients := g.conversationRecipients(convID, client.userID)
 	result := make([]map[string]interface{}, len(msgs))
 	for i, msg := range msgs {
 		senderAvatar := ""
 		if sender, err := g.store.GetUser(msg.SenderID); err == nil && sender != nil {
 			senderAvatar = sender.Avatar
+		}
+		status := "sent"
+		readCount := 0
+		recipientCount := 0
+		if msg.SenderID == client.userID {
+			recipientCount = len(recipients)
+			for _, recipientID := range recipients {
+				if hasReadMessage(readStateByUser[recipientID], msg) {
+					readCount++
+				}
+			}
+			if readCount > 0 {
+				status = "read"
+			}
 		}
 		result[i] = map[string]interface{}{
 			"message_id":      msg.ID,
@@ -796,9 +838,12 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 				"nickname":   msg.SenderNickname,
 				"avatar_url": senderAvatar,
 			},
-			"message":   msg.Segments,
-			"timestamp": msg.Timestamp.Unix(),
-			"recalled":  msg.Recalled,
+			"message":         msg.Segments,
+			"timestamp":       msg.Timestamp.Unix(),
+			"recalled":        msg.Recalled,
+			"status":          status,
+			"read_count":      readCount,
+			"recipient_count": recipientCount,
 		}
 	}
 
@@ -811,12 +856,52 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 }
 
 func (g *Gateway) handleMarkRead(client *Client, req *protocol.Request) {
-	// For MVP, just acknowledge
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid params")
+		return
+	}
+	conversationID, _ := params["conversation_id"].(string)
+	if conversationID == "" {
+		g.sendError(client, req.Echo, "conversation_id required")
+		return
+	}
+	if !g.canAccessConversation(client.userID, conversationID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
+	state, err := g.store.MarkConversationRead(conversationID, client.userID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to mark conversation read")
+		return
+	}
 	g.sendJSON(client, protocol.Response{
 		Status:  "ok",
 		RetCode: 0,
+		Data:    state,
 		Echo:    req.Echo,
 	})
+	g.broadcastToConversation(conversationID, protocol.NoticeEvent{
+		PostType:          "notice",
+		NoticeType:        protocol.NoticeTypeMessageRead,
+		UserID:            client.userID,
+		ConversationID:    conversationID,
+		LastReadMessageID: state.LastReadMessageID,
+		ReadAt:            state.ReadAt.Unix(),
+	}, client.userID)
+}
+
+func hasReadMessage(state *store.ReadState, message *store.Message) bool {
+	if state == nil || message == nil {
+		return false
+	}
+	return state.ReadAt.After(message.Timestamp) ||
+		state.ReadAt.Equal(message.Timestamp) ||
+		state.LastReadMessageID == message.ID
 }
 
 func (g *Gateway) handleGetUser(client *Client, req *protocol.Request) {

@@ -102,17 +102,21 @@ const (
 	NoticeTypeGroupAdmin    NoticeType = "group_admin"
 	NoticeTypeGroupBan      NoticeType = "group_ban"
 	NoticeTypePoke          NoticeType = "poke"
+	NoticeTypeMessageRead   NoticeType = "message_read"
 )
 
 // NoticeEvent is pushed for non-message events (recall, group changes, etc.).
 type NoticeEvent struct {
-	PostType   string     `json:"post_type"`
-	NoticeType NoticeType `json:"notice_type"`
-	UserID     string     `json:"user_id,omitempty"`
-	GroupID    string     `json:"group_id,omitempty"`
-	MessageID  string     `json:"message_id,omitempty"`
-	OperatorID string     `json:"operator_id,omitempty"`
-	TargetID   string     `json:"target_id,omitempty"`
+	PostType          string     `json:"post_type"`
+	NoticeType        NoticeType `json:"notice_type"`
+	UserID            string     `json:"user_id,omitempty"`
+	GroupID           string     `json:"group_id,omitempty"`
+	MessageID         string     `json:"message_id,omitempty"`
+	OperatorID        string     `json:"operator_id,omitempty"`
+	TargetID          string     `json:"target_id,omitempty"`
+	ConversationID    string     `json:"conversation_id,omitempty"`
+	LastReadMessageID string     `json:"last_read_message_id,omitempty"`
+	ReadAt            int64      `json:"read_at,omitempty"`
 }
 
 // RequestType represents different request event types.

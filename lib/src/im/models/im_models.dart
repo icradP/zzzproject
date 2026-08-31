@@ -236,6 +236,8 @@ class ImMessage {
     required this.sentAt,
     this.kind = ImMessageKind.text,
     this.status = ImMessageStatus.sent,
+    this.readCount = 0,
+    this.recipientCount = 0,
     this.isMine = false,
     this.segments,
     this.mediaPath,
@@ -259,6 +261,8 @@ class ImMessage {
   final DateTime sentAt;
   final ImMessageKind kind;
   final ImMessageStatus status;
+  final int readCount;
+  final int recipientCount;
   final bool isMine;
 
   /// Raw OneBot message segments for reconstructing rich content.
@@ -297,6 +301,8 @@ class ImMessage {
     String? id,
     String? text,
     ImMessageStatus? status,
+    int? readCount,
+    int? recipientCount,
     String? mediaPath,
     String? thumbnailPath,
     List<ImReaction>? reactions,
@@ -312,6 +318,8 @@ class ImMessage {
       sentAt: sentAt,
       kind: kind,
       status: status ?? this.status,
+      readCount: readCount ?? this.readCount,
+      recipientCount: recipientCount ?? this.recipientCount,
       isMine: isMine,
       segments: segments,
       mediaPath: mediaPath ?? this.mediaPath,

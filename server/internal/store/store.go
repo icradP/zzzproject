@@ -33,6 +33,10 @@ type Store interface {
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
 	RecallMessage(msgID string) (bool, error)
+	MarkConversationRead(conversationID, userID string) (*ReadState, error)
+	GetConversationRead(conversationID, userID string) (*ReadState, error)
+	GetConversationReadStates(conversationID string) ([]*ReadState, error)
+	CountUnreadMessages(conversationID, userID string) (int, error)
 
 	// ---- Group operations ----
 	CreateGroup(id, name, avatar, ownerID string) (*Group, error)
@@ -81,6 +85,14 @@ type Message struct {
 	Segments       []protocol.MessageSegment `json:"segments"`
 	Timestamp      time.Time                 `json:"timestamp"`
 	Recalled       bool                      `json:"recalled"`
+}
+
+// ReadState stores a user's durable read cursor within a conversation.
+type ReadState struct {
+	ConversationID    string    `json:"conversation_id"`
+	UserID            string    `json:"user_id"`
+	LastReadMessageID string    `json:"last_read_message_id,omitempty"`
+	ReadAt            time.Time `json:"read_at"`
 }
 
 // Conversation represents a chat thread.

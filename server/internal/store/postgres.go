@@ -86,6 +86,17 @@ func (s *PostgresStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 	CREATE INDEX IF NOT EXISTS idx_messages_content_text ON messages USING GIN (to_tsvector('simple', COALESCE(content_text, '')));
 
+	CREATE TABLE IF NOT EXISTS conversation_reads (
+		conversation_id VARCHAR(32) NOT NULL,
+		user_id VARCHAR(32) NOT NULL,
+		last_read_message_id VARCHAR(32) DEFAULT '',
+		read_at TIMESTAMP NOT NULL,
+		PRIMARY KEY (conversation_id, user_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_conversation_reads_conversation
+		ON conversation_reads(conversation_id);
+
 	CREATE TABLE IF NOT EXISTS groups (
 		id VARCHAR(32) PRIMARY KEY,
 		name VARCHAR(128) NOT NULL,
@@ -367,6 +378,9 @@ func (s *PostgresStore) GetUserConversations(userID string) ([]*Conversation, er
 }
 
 func (s *PostgresStore) DeleteConversation(id string) error {
+	if _, err := s.db.Exec("DELETE FROM conversation_reads WHERE conversation_id = $1", id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec("DELETE FROM messages WHERE conversation_id = $1", id)
 	if err != nil {
 		return err

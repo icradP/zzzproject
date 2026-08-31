@@ -441,10 +441,7 @@ class ImMessageBubble extends StatelessWidget {
             ),
           if (!hideTimestamp) ...[
             const SizedBox(height: 2),
-            Text(
-              _formatClock(message.sentAt),
-              style: const TextStyle(color: Colors.white30, fontSize: 10),
-            ),
+            _buildMessageMeta(),
           ],
         ],
       ),
@@ -484,6 +481,70 @@ class ImMessageBubble extends StatelessWidget {
     );
   }
 
+  Widget _buildMessageMeta() {
+    final status = message.isMine ? _statusPresentation() : null;
+    return Wrap(
+      alignment: message.isMine ? WrapAlignment.end : WrapAlignment.start,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 2,
+      children: [
+        Text(
+          _formatClock(message.sentAt),
+          style: const TextStyle(color: Colors.white30, fontSize: 10),
+        ),
+        if (status != null)
+          Semantics(
+            label: '消息状态：${status.label}',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(status.icon, size: 12, color: status.color),
+                const SizedBox(width: 3),
+                Text(
+                  status.label,
+                  style: TextStyle(color: status.color, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  _MessageStatusPresentation _statusPresentation() {
+    return switch (message.status) {
+      ImMessageStatus.sending => const _MessageStatusPresentation(
+        label: '发送中',
+        icon: Icons.schedule_rounded,
+        color: Colors.white38,
+      ),
+      ImMessageStatus.sent => const _MessageStatusPresentation(
+        label: '已发送',
+        icon: Icons.done_rounded,
+        color: Colors.white38,
+      ),
+      ImMessageStatus.delivered => const _MessageStatusPresentation(
+        label: '已送达',
+        icon: Icons.done_all_rounded,
+        color: Colors.white54,
+      ),
+      ImMessageStatus.read => _MessageStatusPresentation(
+        label:
+            message.recipientCount > 1
+                ? '已读 ${message.readCount}/${message.recipientCount}'
+                : '已读',
+        icon: Icons.done_all_rounded,
+        color: const Color(0xFF61D095),
+      ),
+      ImMessageStatus.failed => const _MessageStatusPresentation(
+        label: '发送失败',
+        icon: Icons.error_outline_rounded,
+        color: Color(0xFFFF6B6B),
+      ),
+    };
+  }
+
   String _formatClock(DateTime time) {
     final hour = time.hour.toString().padLeft(2, '0');
     final minute = time.minute.toString().padLeft(2, '0');
@@ -509,4 +570,16 @@ class ImMessageBubble extends StatelessWidget {
       const SnackBar(content: Text('Unable to open this attachment.')),
     );
   }
+}
+
+class _MessageStatusPresentation {
+  const _MessageStatusPresentation({
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
 }

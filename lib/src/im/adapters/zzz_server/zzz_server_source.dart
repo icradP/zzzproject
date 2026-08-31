@@ -269,12 +269,27 @@ class ZzzServerSource implements ImMessageSource {
   @override
   Future<void> markConversationRead(String conversationId) async {
     final conversation = _conversations[conversationId];
+    final previousUnreadCount = conversation?.unreadCount ?? 0;
     if (conversation != null && conversation.unreadCount != 0) {
       _conversations[conversationId] = conversation.copyWith(unreadCount: 0);
       _emitConversations();
     }
     if (_status == ConnectionStatus.connected) {
-      await _request('mark_read', {'conversation_id': conversationId});
+      try {
+        final response = await _request('mark_read', {
+          'conversation_id': conversationId,
+        });
+        _requireOk(response, 'Mark conversation read');
+      } catch (_) {
+        final current = _conversations[conversationId];
+        if (current != null && previousUnreadCount > 0) {
+          _conversations[conversationId] = current.copyWith(
+            unreadCount: current.unreadCount + previousUnreadCount,
+          );
+          _emitConversations();
+        }
+        rethrow;
+      }
     }
   }
 
@@ -715,6 +730,10 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   void _handleNoticeEvent(Map<String, dynamic> json) {
+    if (json['notice_type'] == 'message_read') {
+      _handleMessageRead(json);
+      return;
+    }
     if (json['notice_type'] != 'friend_recall' &&
         json['notice_type'] != 'group_recall') {
       return;
@@ -729,6 +748,44 @@ class ZzzServerSource implements ImMessageSource {
       entry.value[index] = entry.value[index].copyWith(recalled: true);
       _emitMessages(entry.key);
       break;
+    }
+  }
+
+  void _handleMessageRead(Map<String, dynamic> json) {
+    final conversationId = '${json['conversation_id'] ?? ''}';
+    final lastReadMessageId = '${json['last_read_message_id'] ?? ''}';
+    if (conversationId.isEmpty || lastReadMessageId.isEmpty) return;
+    final messages = _messages[conversationId];
+    if (messages == null) return;
+    final cursor = messages.indexWhere(
+      (message) => message.id == lastReadMessageId,
+    );
+    if (cursor < 0) return;
+    var changed = false;
+    for (var index = 0; index <= cursor; index++) {
+      final message = messages[index];
+      if (!message.isMine || message.status == ImMessageStatus.failed) {
+        continue;
+      }
+      final readCount =
+          message.recipientCount <= 1
+              ? 1
+              : message.readCount < 1
+              ? 1
+              : message.readCount;
+      if (message.status == ImMessageStatus.read &&
+          message.readCount == readCount) {
+        continue;
+      }
+      messages[index] = message.copyWith(
+        status: ImMessageStatus.read,
+        readCount: readCount,
+      );
+      changed = true;
+    }
+    if (changed) _emitMessages(conversationId);
+    if (_conversations[conversationId]?.isGroup ?? false) {
+      unawaited(_syncMessages(conversationId).catchError((_) {}));
     }
   }
 
@@ -778,6 +835,9 @@ class ZzzServerSource implements ImMessageSource {
           ((json['timestamp'] as num?)?.toInt() ?? 0) * 1000,
         ),
         kind: _kindForSegment(first?['type'] as String?),
+        status: _statusFromJson(json['status']),
+        readCount: (json['read_count'] as num?)?.toInt() ?? 0,
+        recipientCount: (json['recipient_count'] as num?)?.toInt() ?? 0,
         isMine: senderId == _selfId,
         mediaPath: _resolveMediaUrl(mediaUrl),
         mediaUrl: mediaUrl,
@@ -814,6 +874,14 @@ class ZzzServerSource implements ImMessageSource {
     'forward' => ImMessageKind.forward,
     'json' => ImMessageKind.json,
     _ => ImMessageKind.text,
+  };
+
+  ImMessageStatus _statusFromJson(Object? value) => switch ('$value') {
+    'sending' => ImMessageStatus.sending,
+    'delivered' => ImMessageStatus.delivered,
+    'read' => ImMessageStatus.read,
+    'failed' => ImMessageStatus.failed,
+    _ => ImMessageStatus.sent,
   };
 
   void _addMessageToStream(ImMessage message) {
@@ -869,6 +937,12 @@ class ZzzServerSource implements ImMessageSource {
       text: segments.map(_segmentDisplayText).join().trim(),
       sentAt: DateTime.now(),
       kind: _kindForSegment(segments.first['type'] as String?),
+      status: ImMessageStatus.sent,
+      recipientCount:
+          conversation?.participantIds
+              .where((participantId) => participantId != _selfId)
+              .length ??
+          0,
       isMine: true,
       mediaPath: _resolveMediaUrl(mediaUrl),
       mediaUrl: mediaUrl,

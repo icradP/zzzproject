@@ -16,7 +16,8 @@ type MemoryStore struct {
 	sessions          map[string]*Session // SHA-256 token hash -> session
 	groups            map[string]*Group
 	conversations     map[string]*Conversation
-	messages          map[string][]*Message // conversationID -> messages
+	messages          map[string][]*Message            // conversationID -> messages
+	readStates        map[string]map[string]*ReadState // conversationID -> userID -> cursor
 	friendRequests    map[string]*FriendRequest
 	friendships       map[string]map[string]time.Time
 	forwards          map[string]*ForwardMessage
@@ -33,6 +34,7 @@ func NewMemoryStore() *MemoryStore {
 		groups:            make(map[string]*Group),
 		conversations:     make(map[string]*Conversation),
 		messages:          make(map[string][]*Message),
+		readStates:        make(map[string]map[string]*ReadState),
 		friendRequests:    make(map[string]*FriendRequest),
 		friendships:       make(map[string]map[string]time.Time),
 		forwards:          make(map[string]*ForwardMessage),
@@ -146,6 +148,7 @@ func (s *MemoryStore) DeleteConversation(id string) error {
 	defer s.mu.Unlock()
 	delete(s.conversations, id)
 	delete(s.messages, id)
+	delete(s.readStates, id)
 	return nil
 }
 

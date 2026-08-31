@@ -115,6 +115,13 @@ func TestWebSocketChatHistoryAndPush(t *testing.T) {
 	if len(conversations) != 1 || conversations[0].(map[string]interface{})["conversation_id"] != conversationID {
 		t.Fatalf("unexpected conversations: %#v", conversations)
 	}
+	if conversations[0].(map[string]interface{})["unread_count"] != float64(1) {
+		t.Fatalf("unexpected unread count before mark_read: %#v", conversations)
+	}
+	aliceConversations := responseDataList(t, request(t, alice, "get_conversations", map[string]interface{}{}))
+	if aliceConversations[0].(map[string]interface{})["unread_count"] != float64(0) {
+		t.Fatalf("sender's own message counted as unread: %#v", aliceConversations)
+	}
 
 	messages := responseDataList(t, request(t, bob, "get_messages", map[string]interface{}{
 		"conversation_id": conversationID,
@@ -122,6 +129,30 @@ func TestWebSocketChatHistoryAndPush(t *testing.T) {
 	}))
 	if len(messages) != 1 || messages[0].(map[string]interface{})["message_id"] != messageID {
 		t.Fatalf("unexpected message history: %#v", messages)
+	}
+
+	assertOK(t, request(t, bob, "mark_read", map[string]interface{}{
+		"conversation_id": conversationID,
+	}))
+	readNotice := readJSON(t, alice)
+	if readNotice["notice_type"] != "message_read" ||
+		readNotice["conversation_id"] != conversationID ||
+		readNotice["last_read_message_id"] != messageID ||
+		readNotice["user_id"] != "bob" {
+		t.Fatalf("unexpected message read notice: %#v", readNotice)
+	}
+	conversations = responseDataList(t, request(t, bob, "get_conversations", map[string]interface{}{}))
+	if conversations[0].(map[string]interface{})["unread_count"] != float64(0) {
+		t.Fatalf("unread count was not cleared: %#v", conversations)
+	}
+	aliceMessages := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	if aliceMessages[0].(map[string]interface{})["status"] != "read" ||
+		aliceMessages[0].(map[string]interface{})["read_count"] != float64(1) ||
+		aliceMessages[0].(map[string]interface{})["recipient_count"] != float64(1) {
+		t.Fatalf("sender did not receive canonical read status: %#v", aliceMessages)
 	}
 
 	assertOK(t, request(t, bob, "unregister_push", map[string]interface{}{
@@ -237,6 +268,12 @@ func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
 		"type":            "private",
 		"participants":    []string{"alice", "bob"},
 	}))
+	deniedRead := request(t, eve, "mark_read", map[string]interface{}{
+		"conversation_id": "private_alice_bob",
+	})
+	if deniedRead["status"] == "ok" {
+		t.Fatalf("non-participant marked conversation read: %#v", deniedRead)
+	}
 
 	assertOK(t, request(t, alice, "remove_friend", map[string]interface{}{"user_id": "bob"}))
 	removeNotice := readJSON(t, bob)

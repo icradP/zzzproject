@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zzzproject/src/im/adapters/composite_im_repository.dart';
 import 'package:zzzproject/src/im/data/mock_im_repository.dart';
+import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/models/im_source_address.dart';
 
 void main() {
@@ -88,5 +89,38 @@ void main() {
     expect(zzzMessages, hasLength(3));
     expect(qqSelf.id, 'qq::me');
     expect(ImSourceAddress.localIdOf(qqSelf.id), 'me');
+  });
+
+  test('preserves read receipt metadata across source namespacing', () {
+    final repository = CompositeImRepository(
+      registrations: [
+        ImRepositoryRegistration(
+          id: 'zzz',
+          label: 'ZZZ Server',
+          repository: MockImRepository(),
+        ),
+      ],
+      primarySourceId: 'zzz',
+    );
+    addTearDown(repository.dispose);
+
+    final scoped = repository.scopeMessage(
+      'zzz',
+      ImMessage(
+        id: 'message-1',
+        conversationId: 'group-1',
+        senderId: 'me',
+        text: 'hello',
+        sentAt: DateTime(2026, 9, 1),
+        status: ImMessageStatus.read,
+        readCount: 12,
+        recipientCount: 128,
+        isMine: true,
+      ),
+    );
+
+    expect(scoped.status, ImMessageStatus.read);
+    expect(scoped.readCount, 12);
+    expect(scoped.recipientCount, 128);
   });
 }

@@ -486,6 +486,8 @@ class CompositeImRepository implements ImRepository {
       sentAt: message.sentAt,
       kind: message.kind,
       status: message.status,
+      readCount: message.readCount,
+      recipientCount: message.recipientCount,
       isMine: message.isMine,
       segments: _scopeSegments(registration.id, message.segments),
       mediaPath: message.mediaPath,
