@@ -9,6 +9,7 @@ class ImMemberGrid extends StatelessWidget {
     required this.participantIds,
     required this.resolveUserName,
     required this.resolveUserAvatar,
+    super.key,
   });
 
   final List<String> participantIds;

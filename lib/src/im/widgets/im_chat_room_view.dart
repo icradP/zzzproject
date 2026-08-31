@@ -78,6 +78,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     final convChanged = widget.conversation.id != oldWidget.conversation.id;
     if (convChanged) {
       _lastMaxExtent = 0;
+      _showMembers = false;
     }
     if (convChanged || widget.messages.length != oldWidget.messages.length) {
       _scrollToBottom();
@@ -300,20 +301,37 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _buildHeader(),
-        Expanded(child: _buildMessages()),
-        if (_showMembers)
-          ImMemberGrid(
-            participantIds: widget.conversation.participantIds,
-            resolveUserName: widget.resolveUserName,
-            resolveUserAvatar: widget.resolveUserAvatar,
-          ),
-        if (_pendingMedia.isNotEmpty) _buildPendingPreview(),
-        if (_showAttach) _buildAttachPanel(),
-        _buildComposer(),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final memberPanelHeight = (constraints.maxHeight * 0.32).clamp(
+          96.0,
+          220.0,
+        );
+        return Column(
+          children: [
+            _buildHeader(),
+            ZzzReveal(
+              key: const ValueKey('group-member-reveal'),
+              expanded: _showMembers && widget.conversation.isGroup,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: memberPanelHeight),
+                  child: ImMemberGrid(
+                    participantIds: widget.conversation.participantIds,
+                    resolveUserName: widget.resolveUserName,
+                    resolveUserAvatar: widget.resolveUserAvatar,
+                  ),
+                ),
+              ),
+            ),
+            Expanded(child: _buildMessages()),
+            if (_pendingMedia.isNotEmpty) _buildPendingPreview(),
+            if (_showAttach) _buildAttachPanel(),
+            _buildComposer(),
+          ],
+        );
+      },
     );
   }
 
