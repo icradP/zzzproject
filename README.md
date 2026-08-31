@@ -60,6 +60,20 @@ The shared token is an access gate for testing, not a multi-user production
 authentication system. Replace it with account-specific credentials before
 using the server for sensitive or untrusted traffic.
 
+To serve the PWA from the same `icrad.ltd` origin, build with a root base path,
+package `build/web`, and activate it with the versioned deployment script:
+
+```bash
+flutter build web --release --base-href / \
+  --dart-define=ZZZ_SERVER_URL=wss://icrad.ltd/im/ws
+tar -czf /tmp/zzz-pwa.tar.gz -C build/web .
+sudo ./deploy/zzz-im/deploy-pwa.sh /tmp/zzz-pwa.tar.gz <release-id>
+```
+
+Each release is stored below `/srv/www/zzz-im/releases`; `current` is switched
+atomically, so rollback only requires repointing that symlink and reloading is
+not needed for ordinary PWA updates.
+
 If the target host cannot reach Docker Hub, cross-compile static Linux amd64
 binaries into `dist/` and run `deploy/zzz-im/deploy-native.sh`. The included
 systemd unit runs the service as the dedicated `zzz-im` user with a read-only
