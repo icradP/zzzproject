@@ -513,10 +513,10 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
                     _buildGroupAvatarWithCount(users: selectedUsers, size: 54),
                     const SizedBox(width: 12),
                     Expanded(child: nameInput),
+                    const SizedBox(width: 4),
+                    _buildAvatarPickerButton(compact: true),
                   ],
                 ),
-                const SizedBox(height: 8),
-                _buildAvatarPickerButton(),
                 if (_avatarError != null) ...[
                   const SizedBox(height: 6),
                   Text(
@@ -563,7 +563,7 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                _buildAvatarPickerButton(),
+                _buildAvatarPickerButton(compact: false),
                 if (_avatarError != null) ...[
                   const SizedBox(height: 6),
                   Text(
@@ -643,7 +643,27 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
     );
   }
 
-  Widget _buildAvatarPickerButton() {
+  Widget _buildAvatarPickerButton({required bool compact}) {
+    if (compact) {
+      return IconButton(
+        key: const ValueKey('create-group-avatar-pick'),
+        tooltip:
+            _avatarBytes == null ? 'Upload group avatar' : 'Change group avatar',
+        onPressed: _pickGroupAvatar,
+        icon: Icon(
+          _avatarBytes == null
+              ? Icons.add_a_photo_outlined
+              : Icons.edit_outlined,
+          size: 20,
+        ),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(40, 40),
+          fixedSize: const Size(40, 40),
+          padding: EdgeInsets.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      );
+    }
     return OutlinedButton.icon(
       key: const ValueKey('create-group-avatar-pick'),
       onPressed: _pickGroupAvatar,
