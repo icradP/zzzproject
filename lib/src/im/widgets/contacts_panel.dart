@@ -323,6 +323,8 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       title: 'Create group',
       subtitle: '$selectedCount selected',
       icon: Icons.group_add_outlined,
+      maxWidth: 780,
+      maxHeight: 700,
       actions: [
         TextButton.icon(
           onPressed: () => Navigator.of(context).pop(),
@@ -337,109 +339,282 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       ],
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ZzzTextInput(
-              key: const ValueKey('create-group-name'),
-              controller: _nameController,
-              autofocus: true,
-              hintText: 'Group name',
-              prefixIcon: const Icon(Icons.edit_outlined),
-              fillColor: Colors.white.withValues(alpha: 0.08),
-              foregroundColor: Colors.white,
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) => _submit(),
-            ),
-            ZzzReveal(
-              expanded: selectedUsers.isNotEmpty,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 14),
-                child: SizedBox(
-                  height: 68,
-                  child: ListView.separated(
-                    key: const ValueKey('selected-group-members'),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: selectedUsers.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (context, index) {
-                      final user = selectedUsers[index];
-                      return ZzzSelectableAvatar(
-                        image: user.avatarImage(
-                          AppAssets.fallbackAvatarForId(user.id),
-                        ),
-                        label: user.displayName,
-                        selected: true,
-                        size: 38,
-                        onSelect: () => _toggleMember(user),
-                      );
-                    },
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 620;
+            final memberBrowser = _buildMemberBrowser(filteredUsers);
+            final groupProfile = _buildGroupProfile(
+              selectedUsers,
+              compact: !isWide,
+            );
+            final selectedMembers = _buildSelectedMembers(
+              selectedUsers,
+              initiallyExpanded: isWide,
+            );
+
+            if (!isWide) {
+              return Column(
+                key: const ValueKey('create-group-compact-layout'),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  groupProfile,
+                  const SizedBox(height: 4),
+                  selectedMembers,
+                  const Divider(height: 12, color: Colors.white12),
+                  Expanded(child: memberBrowser),
+                ],
+              );
+            }
+
+            return Row(
+              key: const ValueKey('create-group-wide-layout'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(flex: 5, child: memberBrowser),
+                const VerticalDivider(width: 28, color: Colors.white12),
+                SizedBox(
+                  width: 270,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      groupProfile,
+                      const SizedBox(height: 8),
+                      selectedMembers,
+                    ],
                   ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 14, bottom: 8),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Members',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  if (selectedCount > 0)
-                    TextButton.icon(
-                      onPressed:
-                          () => setState(() => _selectedMemberIds.clear()),
-                      icon: const Icon(Icons.deselect_rounded, size: 18),
-                      label: const Text('Clear'),
-                    ),
-                ],
-              ),
-            ),
-            ZzzTextInput(
-              key: const ValueKey('create-group-member-search'),
-              controller: _memberSearchController,
-              hintText: 'Search members',
-              prefixIcon: const Icon(Icons.search_rounded),
-              fillColor: Colors.white.withValues(alpha: 0.08),
-              foregroundColor: Colors.white,
-              textInputAction: TextInputAction.search,
-              onChanged:
-                  (value) =>
-                      setState(() => _memberQuery = value.trim().toLowerCase()),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child:
-                  filteredUsers.isEmpty
-                      ? const Center(
-                        child: Text(
-                          'No matching contacts',
-                          style: TextStyle(color: Colors.white54),
-                        ),
-                      )
-                      : ListView.separated(
-                        key: const ValueKey('create-group-member-list'),
-                        itemCount: filteredUsers.length,
-                        separatorBuilder:
-                            (_, __) =>
-                                const Divider(height: 1, color: Colors.white10),
-                        itemBuilder: (context, index) {
-                          final user = filteredUsers[index];
-                          final selected = _selectedMemberIds.contains(user.id);
-                          return _CreateGroupMemberTile(
-                            key: ValueKey('create-group-member-${user.id}'),
-                            user: user,
-                            selected: selected,
-                            onTap: () => _toggleMember(user),
-                          );
-                        },
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGroupProfile(
+    List<ImUser> selectedUsers, {
+    required bool compact,
+  }) {
+    final nameInput = ZzzTextInput(
+      key: const ValueKey('create-group-name'),
+      controller: _nameController,
+      autofocus: true,
+      hintText: 'Group name',
+      prefixIcon: const Icon(Icons.edit_outlined),
+      fillColor: Colors.white.withValues(alpha: 0.08),
+      foregroundColor: Colors.white,
+      onChanged: (_) => setState(() {}),
+      onSubmitted: (_) => _submit(),
+    );
+
+    if (compact) {
+      return Row(
+        key: const ValueKey('create-group-profile'),
+        children: [
+          _GroupAvatarPreview(users: selectedUsers, size: 54),
+          const SizedBox(width: 12),
+          Expanded(child: nameInput),
+        ],
+      );
+    }
+
+    return Column(
+      key: const ValueKey('create-group-profile'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _GroupAvatarPreview(users: selectedUsers, size: 72),
+        ),
+        const SizedBox(height: 12),
+        nameInput,
+      ],
+    );
+  }
+
+  Widget _buildSelectedMembers(
+    List<ImUser> selectedUsers, {
+    required bool initiallyExpanded,
+  }) {
+    return ZzzExpandableSection(
+      key: const ValueKey('create-group-selected-section'),
+      title: 'Selected members',
+      subtitle:
+          selectedUsers.isEmpty
+              ? 'No members selected'
+              : '${selectedUsers.length} selected',
+      initiallyExpanded: initiallyExpanded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: selectedUsers.isEmpty ? 48 : 72,
+            child:
+                selectedUsers.isEmpty
+                    ? const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'No members selected',
+                        style: TextStyle(color: Colors.white38, fontSize: 12),
                       ),
+                    )
+                    : ListView.separated(
+                      key: const ValueKey('selected-group-members'),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: selectedUsers.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final user = selectedUsers[index];
+                        return ZzzSelectableAvatar(
+                          image: user.avatarImage(
+                            AppAssets.fallbackAvatarForId(user.id),
+                          ),
+                          label: user.displayName,
+                          selected: true,
+                          size: 38,
+                          onSelect: () => _toggleMember(user),
+                        );
+                      },
+                    ),
+          ),
+          if (selectedUsers.isNotEmpty)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _selectedMemberIds.clear()),
+                icon: const Icon(Icons.deselect_rounded, size: 18),
+                label: const Text('Clear'),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemberBrowser(List<ImUser> filteredUsers) {
+    return Column(
+      key: const ValueKey('create-group-member-browser'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Contacts',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            Text(
+              '${filteredUsers.length}',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
         ),
+        const SizedBox(height: 8),
+        ZzzTextInput(
+          key: const ValueKey('create-group-member-search'),
+          controller: _memberSearchController,
+          hintText: 'Search contacts',
+          prefixIcon: const Icon(Icons.search_rounded),
+          fillColor: Colors.white.withValues(alpha: 0.08),
+          foregroundColor: Colors.white,
+          textInputAction: TextInputAction.search,
+          onChanged:
+              (value) =>
+                  setState(() => _memberQuery = value.trim().toLowerCase()),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child:
+              filteredUsers.isEmpty
+                  ? const Center(
+                    child: Text(
+                      'No matching contacts',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                  : ListView.separated(
+                    key: const ValueKey('create-group-member-list'),
+                    itemCount: filteredUsers.length,
+                    separatorBuilder:
+                        (_, __) =>
+                            const Divider(height: 1, color: Colors.white10),
+                    itemBuilder: (context, index) {
+                      final user = filteredUsers[index];
+                      final selected = _selectedMemberIds.contains(user.id);
+                      return _CreateGroupMemberTile(
+                        key: ValueKey('create-group-member-${user.id}'),
+                        user: user,
+                        selected: selected,
+                        onTap: () => _toggleMember(user),
+                      );
+                    },
+                  ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GroupAvatarPreview extends StatelessWidget {
+  const _GroupAvatarPreview({required this.users, required this.size});
+
+  final List<ImUser> users;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleUsers = users.take(3).toList(growable: false);
+    final avatarSize = size * 0.64;
+    return Semantics(
+      label: users.isEmpty ? 'Empty group avatar' : 'Group avatar preview',
+      child: Container(
+        key: const ValueKey('create-group-avatar-preview'),
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.06),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white12),
+        ),
+        child:
+            visibleUsers.isEmpty
+                ? Icon(
+                  Icons.groups_2_outlined,
+                  color: Colors.white38,
+                  size: size * 0.44,
+                )
+                : Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    for (var index = 0; index < visibleUsers.length; index++)
+                      Positioned(
+                        left: index.isEven ? 0 : size - avatarSize,
+                        top:
+                            index == 0
+                                ? 0
+                                : index == 1
+                                ? 0
+                                : size - avatarSize,
+                        child: Container(
+                          padding: const EdgeInsets.all(1.5),
+                          decoration: const BoxDecoration(
+                            color: ZzzColors.panel,
+                            shape: BoxShape.circle,
+                          ),
+                          child: ZzzAvatar(
+                            image: visibleUsers[index].avatarImage(
+                              AppAssets.fallbackAvatarForId(
+                                visibleUsers[index].id,
+                              ),
+                            ),
+                            size: avatarSize,
+                            animateEntrance: true,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
       ),
     );
   }

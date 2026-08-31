@@ -90,8 +90,24 @@ class AppAssets {
     '${_characters}temp/Soukaku.png',
   ];
 
+  /// Stable profile art for the accounts used by deployment and smoke checks.
+  ///
+  /// These accounts deliberately carry different visual identities instead of
+  /// looking like a sequence produced by the generic fallback hash.
+  static const Map<String, String> smokeAccountAvatars = {
+    'deployment-check': '${_characters}JaneDoe.png',
+    'smoke-alice': '${_characters}temp/HoshimiMiyabi.png',
+    'smoke-bob': '${_characters}temp/Lighter.png',
+    'codex-pwa-probe': '${_characters}npcs/Enzo.png',
+    'alice': '${_characters}ZhuYuan.png',
+    'test1': '${_characters}temp/SethLowell.png',
+    'xiaodeng': '${_characters}Qingyi.png',
+  };
+
   /// Keeps generated avatars stable across sessions while distributing users.
   static String fallbackAvatarForId(String id) {
+    final smokeAvatar = smokeAccountAvatars[id.toLowerCase()];
+    if (smokeAvatar != null) return smokeAvatar;
     var hash = 0;
     for (final codeUnit in id.codeUnits) {
       hash = (hash * 31 + codeUnit) & 0x7fffffff;

@@ -49,6 +49,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('create-group-panel')), findsOneWidget);
     expect(find.byType(ZzzModalPanel), findsOneWidget);
+    expect(find.byType(ZzzExpandableSection), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
 
     final nameInput = find.descendant(
@@ -58,7 +59,17 @@ void main() {
     await tester.enterText(nameInput, 'Weekend plans');
     await tester.tap(find.byKey(const ValueKey('create-group-member-belle')));
     await tester.pumpAndSettle();
-    expect(find.text('1 selected'), findsOneWidget);
+    expect(find.text('1 selected'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('create-group-avatar-preview')),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Selected members'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('selected-group-members')),
+      findsOneWidget,
+    );
 
     final memberSearch = find.descendant(
       of: find.byKey(const ValueKey('create-group-member-search')),
@@ -109,10 +120,59 @@ void main() {
     final panelRect = tester.getRect(
       find.byKey(const ValueKey('create-group-panel')),
     );
+    expect(
+      find.byKey(const ValueKey('create-group-compact-layout')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('create-group-wide-layout')),
+      findsNothing,
+    );
     expect(panelRect.left, greaterThanOrEqualTo(0));
     expect(panelRect.right, lessThanOrEqualTo(320));
     expect(panelRect.top, greaterThanOrEqualTo(0));
     expect(panelRect.bottom, lessThanOrEqualTo(568));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('group panel uses a two-column workspace on desktop', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(1024, 768)
+      ..devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      ImScope(
+        repository: MockImRepository(),
+        interactions: const NoOpImInteractionHandler(),
+        nsfwChecker: StubNsfwChecker(),
+        nsfwStateCache: NsfwStateCache(),
+        pushManager: NoOpImPushManager(),
+        onConnectionsChanged: () async {},
+        child: MaterialApp(
+          home: Scaffold(body: ContactsPanel(onConversationSelected: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('群聊'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('create-group-wide-layout')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('create-group-compact-layout')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 }
