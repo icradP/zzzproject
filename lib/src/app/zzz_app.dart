@@ -8,13 +8,11 @@ import 'package:flutter/material.dart';
 import '../../../core/routes/index.dart';
 import '../assets/app_assets.dart';
 import '../im/adapters/im_message_source.dart';
-import '../im/adapters/nonebot/nonebot_models_web.dart'
-    if (dart.library.io) '../im/adapters/nonebot/nonebot_models.dart';
+import '../im/adapters/composite_im_repository.dart';
+import '../im/adapters/im_source_registry.dart';
 import '../im/adapters/nonebot/napcat_api.dart';
 import '../im/adapters/nonebot/nonebot_source_web.dart'
     if (dart.library.io) '../im/adapters/nonebot/nonebot_source.dart';
-import '../im/adapters/source_repository.dart';
-import '../im/adapters/zzz_server/zzz_server_source.dart';
 import '../im/data/im_animation_config.dart';
 import '../im/data/im_backdrop_config.dart';
 import '../im/data/im_connection_config.dart';
@@ -25,13 +23,13 @@ import '../im/data/im_logger.dart';
 import '../im/data/im_notification_service.dart';
 import '../im/data/im_media_cache.dart';
 import '../im/models/im_models.dart';
+import '../im/models/im_source_address.dart';
 import '../im/data/im_nsfw_checker.dart';
 import '../im/data/im_nsfw_checker_onnx.dart';
 import '../im/data/im_nsfw_checker_stub.dart';
 import '../im/data/im_nsfw_config.dart';
 import '../im/data/im_repository.dart';
 import '../im/data/im_push_manager.dart';
-import '../im/data/mock_im_repository.dart';
 import '../im/im_scope.dart';
 import '../im/pages/im_web_setup_page.dart';
 import '../theme/zzz_colors.dart';
@@ -50,6 +48,8 @@ class _ZzzAppState extends State<ZzzApp> {
   final _nsfwStateCache = NsfwStateCache();
   bool _needsWebSetup = false;
   ImPushManager _pushManager = NoOpImPushManager();
+  ImClientRuntime? _runtime;
+  var _repositoryGeneration = 0;
 
   @override
   void initState() {
@@ -79,35 +79,58 @@ class _ZzzAppState extends State<ZzzApp> {
     };
   }
 
-  NoneBotSource? _noneBotSource;
-
   Future<void> _initRepository() async {
-    final config = await ImConnectionConfig.loadOrDefault();
+    final generation = ++_repositoryGeneration;
+    final profiles = await ImConnectionProfiles.load();
     final storageConfig = await ImStorageConfig.load();
     await ImAnimationConfig.load();
     await ImBackdropConfig.load();
     await ImNsfwConfig.load();
-    if (kIsWeb && (!config.isZzzServer || config.serverUrl == null)) {
+    final hasWebServer = profiles.enabledProfiles.any(
+      (profile) =>
+          profile.config.isZzzServer &&
+          profile.config.serverUrl != null &&
+          profile.config.serverUrl!.isNotEmpty,
+    );
+    if (kIsWeb && !hasWebServer) {
       if (mounted) setState(() => _needsWebSetup = true);
       return;
     }
     if (ImNsfwConfig.instance.persistReveal) {
       await _nsfwStateCache.loadRevealed();
     }
-    final repo = _buildRepository(config, storageConfig);
-    Stream<ConnectionStatus>? status;
-    if (repo is SourceBackedRepository) {
-      status = repo.connectionStatus;
+    final runtime = ImSourceRegistry(
+      storageConfig: storageConfig,
+      avatarResolver: _zzzAvatarResolver,
+    ).build(profiles);
+    final repo = runtime.repository;
+    final status = runtime.compositeRepository?.connectionStatus;
+    if (!mounted || generation != _repositoryGeneration) {
+      repo.dispose();
+      return;
+    }
+
+    _pushManager.dispose();
+    _pushManager = NoOpImPushManager();
+    final preferredPushSource =
+        runtime.zzzServerSources[profiles.primaryProfileId] ??
+        (runtime.zzzServerSources.isEmpty
+            ? null
+            : runtime.zzzServerSources.values.first);
+    if (preferredPushSource != null) {
+      _pushManager = ZzzServerPushManager(source: preferredPushSource)..start();
     }
     final fallbackNsfw = StubNsfwChecker();
     _nsfwChecker?.dispose();
     _nsfwChecker = fallbackNsfw;
-    if (mounted) {
-      setState(() {
-        _repository = repo;
-        _connectionStatus = status;
-      });
-    }
+    final oldRepository = _repository;
+    setState(() {
+      _runtime = runtime;
+      _repository = repo;
+      _connectionStatus = status;
+      _needsWebSetup = false;
+    });
+    oldRepository?.dispose();
     unawaited(_initializeNsfwChecker(fallbackNsfw));
   }
 
@@ -129,59 +152,21 @@ class _ZzzAppState extends State<ZzzApp> {
   }
 
   Future<void> _applyWebConfig(ImConnectionConfig config) async {
-    await config.save();
-    _repository?.dispose();
+    await ImConnectionProfiles.replacePrimaryZzz(config);
     if (!mounted) return;
     setState(() {
-      _repository = null;
-      _connectionStatus = null;
       _needsWebSetup = false;
     });
     await _initRepository();
   }
 
-  ImRepository _buildRepository(
-    ImConnectionConfig config,
-    ImStorageConfig storageConfig,
-  ) {
-    _pushManager.dispose();
-    _pushManager = NoOpImPushManager();
-    _noneBotSource = null;
-    if (config.isNoneBot && config.wsEndpoint != null) {
-      final source = NoneBotSource.connected(
-        config: OneBotConfig(
-          selfId: config.selfId,
-          httpEndpoint: config.httpEndpoint,
-          wsEndpoint: config.wsEndpoint,
-          wsMode:
-              config.wsMode == WsMode.forward
-                  ? OneBotWsMode.forward
-                  : OneBotWsMode.reverse,
-          accessToken: config.accessToken,
-        ),
-        avatarResolver: _zzzAvatarResolver,
-      );
-      source.storageConfig = storageConfig;
-      _noneBotSource = source;
-      return SourceBackedRepository(source);
-    }
-    if (config.isZzzServer && config.serverUrl != null) {
-      final source = ZzzServerSource(
-        config: ZzzServerConfig(
-          serverUrl: config.serverUrl!,
-          authToken: config.accessToken ?? '',
-          selfId: config.selfId,
-        ),
-      );
-      _pushManager = ZzzServerPushManager(source: source)..start();
-      return SourceBackedRepository(source);
-    }
-    return MockImRepository();
-  }
-
   /// Interaction handler wired to the active source.
   ImInteractionHandler _buildInteractionHandler(ImRepository repository) =>
-      _ZzzImInteractionHandler(repository: repository, source: _noneBotSource);
+      _ZzzImInteractionHandler(
+        repository: repository,
+        compositeRepository: _runtime?.compositeRepository,
+        sources: _runtime?.noneBotSources ?? const {},
+      );
 
   String? _zzzAvatarResolver(String userId) {
     switch (userId) {
@@ -242,6 +227,7 @@ class _ZzzAppState extends State<ZzzApp> {
       nsfwChecker: _nsfwChecker!,
       nsfwStateCache: _nsfwStateCache,
       pushManager: _pushManager,
+      onConnectionsChanged: _initRepository,
       connectionStatus: _connectionStatus,
       child: MaterialApp.router(
         routerConfig: appRouter,
@@ -267,16 +253,30 @@ class _ZzzAppState extends State<ZzzApp> {
 /// Interaction handler that delegates record downloads to the source's
 /// media cache (on-demand, triggered by the voice bubble play button).
 class _ZzzImInteractionHandler implements ImInteractionHandler {
-  _ZzzImInteractionHandler({required this.repository, this.source});
+  _ZzzImInteractionHandler({
+    required this.repository,
+    required this.sources,
+    this.compositeRepository,
+  });
 
   final ImRepository repository;
-  final NoneBotSource? source;
-  ImMediaCache? _cache;
+  final Map<String, NoneBotSource> sources;
+  final CompositeImRepository? compositeRepository;
+  final Map<String, ImMediaCache> _caches = {};
 
-  ImMediaCache? _getCache() {
+  NoneBotSource? _sourceFor(String value) {
+    final sourceId = ImSourceAddress.sourceIdOf(value);
+    if (sourceId != null) return sources[sourceId];
+    return sources.length == 1 ? sources.values.first : null;
+  }
+
+  ImMediaCache? _getCache(String value) {
+    final sourceId = ImSourceAddress.sourceIdOf(value);
+    final source = _sourceFor(value);
     final c = source?.client;
     if (c == null) return null;
-    return _cache ??= ImMediaCache(client: c);
+    final key = sourceId ?? sources.keys.first;
+    return _caches.putIfAbsent(key, () => ImMediaCache(client: c));
   }
 
   @override
@@ -286,15 +286,19 @@ class _ZzzImInteractionHandler implements ImInteractionHandler {
     if (user?.avatarLocalPath != null) return user!.avatarLocalPath;
     if (user?.avatarAssetPath != null) return user!.avatarAssetPath;
     // Not cached — fetch from QQ via OneBot API.
-    return source?.fetchUserAvatar(userId);
+    return _sourceFor(
+      userId,
+    )?.fetchUserAvatar(ImSourceAddress.localIdOf(userId));
   }
 
   @override
   Future<ForwardGroup> getForwardMessages(String forwardId) async {
     // 1. Try SQLite cache first — re-parse raw JSON to preserve tree.
-    final source = this.source;
+    final sourceId = ImSourceAddress.sourceIdOf(forwardId);
+    final source = _sourceFor(forwardId);
     if (source == null) return const ForwardGroup();
-    final cachedRaw = await source.loadForwardRaw(forwardId);
+    final localForwardId = ImSourceAddress.localIdOf(forwardId);
+    final cachedRaw = await source.loadForwardRaw(localForwardId);
     if (cachedRaw != null) {
       try {
         final data = jsonDecode(cachedRaw) as Map<String, dynamic>;
@@ -303,7 +307,7 @@ class _ZzzImInteractionHandler implements ImInteractionHandler {
           ImLogger.event,
           'forward from cache: ${group.messages.length} msgs + ${group.children.length} nested',
         );
-        return group;
+        return _scopeForwardGroup(sourceId, group);
       } catch (_) {}
     }
 
@@ -311,7 +315,7 @@ class _ZzzImInteractionHandler implements ImInteractionHandler {
     final client = source.client;
     if (client == null) return const ForwardGroup();
     final api = NapCatApi(client);
-    final group = await api.getForwardGroup(forwardId);
+    final group = await api.getForwardGroup(localForwardId);
     ImLogger.logRaw(
       ImLogger.event,
       'forward api: ${group.messages.length} msgs + ${group.children.length} nested',
@@ -319,15 +323,34 @@ class _ZzzImInteractionHandler implements ImInteractionHandler {
 
     // 3. Download images & persist raw response.
     final flat = NapCatApi.flattenGroup(group);
-    await _cacheForwardImages(flat);
+    await _cacheForwardImages(flat, source);
     if (flat.isNotEmpty && api.lastRawData != null) {
-      await source.saveForwardRaw(forwardId, jsonEncode(api.lastRawData));
+      await source.saveForwardRaw(localForwardId, jsonEncode(api.lastRawData));
     }
-    return group;
+    return _scopeForwardGroup(sourceId, group);
   }
 
-  Future<void> _cacheForwardImages(List<ImMessage> msgs) async {
-    final client = source?.client;
+  ForwardGroup _scopeForwardGroup(String? sourceId, ForwardGroup group) {
+    if (sourceId == null || compositeRepository == null) return group;
+    return ForwardGroup(
+      title: group.title,
+      senderName: group.senderName,
+      messages: group.messages
+          .map(
+            (message) => compositeRepository!.scopeMessage(sourceId, message),
+          )
+          .toList(growable: false),
+      children: group.children
+          .map((child) => _scopeForwardGroup(sourceId, child))
+          .toList(growable: false),
+    );
+  }
+
+  Future<void> _cacheForwardImages(
+    List<ImMessage> msgs,
+    NoneBotSource source,
+  ) async {
+    final client = source.client;
     if (client == null) return;
     for (final msg in msgs) {
       final segs = msg.segments;
@@ -365,10 +388,13 @@ class _ZzzImInteractionHandler implements ImInteractionHandler {
 
   @override
   Future<String?> downloadRecord({required String fileId, String? url}) async {
-    final cache = _getCache();
+    final cache = _getCache(fileId);
     if (cache == null) return null;
     try {
-      final cached = await cache.downloadRecord(fileId: fileId, url: url);
+      final cached = await cache.downloadRecord(
+        fileId: ImSourceAddress.localIdOf(fileId),
+        url: url,
+      );
       return cached.localPath;
     } catch (_) {
       return null;

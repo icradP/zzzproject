@@ -261,7 +261,8 @@ class MockImRepository implements ImRepository {
   }
 
   @override
-  Future<ImUser> getCurrentUser() async => _users[_currentUserId]!;
+  Future<ImUser> getCurrentUser({String? sourceId}) async =>
+      _users[_currentUserId]!;
 
   @override
   Future<ImUser?> getUser(String userId) async => _users[userId];

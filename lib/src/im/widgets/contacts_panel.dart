@@ -4,6 +4,7 @@ import '../../assets/app_assets.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
+import '../models/im_source_address.dart';
 import 'contact_tile.dart';
 
 class ContactsPanel extends StatefulWidget {
@@ -68,9 +69,18 @@ class _ContactsPanelState extends State<ContactsPanel> {
   }
 
   void _onUserTap(ImUser user) async {
-    final self = await ImScope.repositoryOf(context).getCurrentUser();
-    final ids = [self.id, user.id]..sort();
-    final conversationId = 'dm_${ids[0]}_${ids[1]}';
+    final self = await ImScope.repositoryOf(
+      context,
+    ).getCurrentUser(sourceId: user.sourceId);
+    final localIds = [
+      ImSourceAddress.localIdOf(self.id),
+      ImSourceAddress.localIdOf(user.id),
+    ]..sort();
+    final localConversationId = 'dm_${localIds[0]}_${localIds[1]}';
+    final conversationId =
+        user.sourceId == null
+            ? localConversationId
+            : ImSourceAddress.scope(user.sourceId!, localConversationId);
     final conversation = ImConversation(
       id: conversationId,
       type: ImConversationType.direct,
@@ -78,6 +88,8 @@ class _ContactsPanelState extends State<ContactsPanel> {
       participantIds: [self.id, user.id],
       avatarAssetPath: user.avatarAssetPath,
       avatarLocalPath: user.avatarLocalPath,
+      sourceId: user.sourceId,
+      sourceLabel: user.sourceLabel,
     );
     if (mounted) widget.onConversationSelected(conversation);
   }
@@ -136,32 +148,38 @@ class _ContactsPanelState extends State<ContactsPanel> {
   Widget _buildPrivateTab({Key? key}) {
     final users = _filteredUsers;
     if (users.isEmpty) {
-      return _buildEmpty(_query.isEmpty ? 'No contacts yet' : 'No matches', key: key);
+      return _buildEmpty(
+        _query.isEmpty ? 'No contacts yet' : 'No matches',
+        key: key,
+      );
     }
     return ListView.separated(
       key: key,
       itemCount: users.length,
       separatorBuilder: (_, __) => const SizedBox(height: 2),
-      itemBuilder: (_, i) => ContactTile(
-        user: users[i],
-        onTap: () => _onUserTap(users[i]),
-      ),
+      itemBuilder:
+          (_, i) =>
+              ContactTile(user: users[i], onTap: () => _onUserTap(users[i])),
     );
   }
 
   Widget _buildGroupTab({Key? key}) {
     final groups = _filteredGroups;
     if (groups.isEmpty) {
-      return _buildEmpty(_query.isEmpty ? 'No groups yet' : 'No matches', key: key);
+      return _buildEmpty(
+        _query.isEmpty ? 'No groups yet' : 'No matches',
+        key: key,
+      );
     }
     return ListView.separated(
       key: key,
       itemCount: groups.length,
       separatorBuilder: (_, __) => const SizedBox(height: 2),
-      itemBuilder: (_, i) => GroupTile(
-        conversation: groups[i],
-        onTap: () => _onGroupTap(groups[i]),
-      ),
+      itemBuilder:
+          (_, i) => GroupTile(
+            conversation: groups[i],
+            onTap: () => _onGroupTap(groups[i]),
+          ),
     );
   }
 

@@ -7,44 +7,47 @@ import '../adapters/zzz_server/zzz_server_source.dart';
 import '../data/im_connection_config.dart';
 
 class ImWebSetupPage extends StatefulWidget {
-  const ImWebSetupPage({required this.onConfigured, super.key});
+  const ImWebSetupPage({
+    required this.onConfigured,
+    this.serverUrl = configuredServerUrl,
+    super.key,
+  });
+
+  static const configuredServerUrl = String.fromEnvironment(
+    'ZZZ_SERVER_URL',
+    defaultValue: 'ws://localhost:8080/ws',
+  );
 
   final Future<void> Function(ImConnectionConfig config) onConfigured;
+  final String serverUrl;
 
   @override
   State<ImWebSetupPage> createState() => _ImWebSetupPageState();
 }
 
 class _ImWebSetupPageState extends State<ImWebSetupPage> {
-  final _serverController = TextEditingController();
   final _userController = TextEditingController();
   final _tokenController = TextEditingController();
   bool _connecting = false;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _serverController.text = const String.fromEnvironment(
-      'ZZZ_SERVER_URL',
-      defaultValue: 'ws://localhost:8080/ws',
-    );
-  }
-
-  @override
   void dispose() {
-    _serverController.dispose();
     _userController.dispose();
     _tokenController.dispose();
     super.dispose();
   }
 
   Future<void> _connect() async {
-    final serverUrl = _serverController.text.trim();
+    final serverUrl = widget.serverUrl.trim();
     final userId = _userController.text.trim();
     final token = _tokenController.text.trim();
-    if (serverUrl.isEmpty || userId.isEmpty || token.isEmpty) {
-      setState(() => _error = 'Server URL, user ID and token are required.');
+    if (userId.isEmpty || token.isEmpty) {
+      setState(() => _error = 'User ID and access token are required.');
+      return;
+    }
+    if (!_isValidServerUrl(serverUrl)) {
+      setState(() => _error = 'Service is temporarily unavailable.');
       return;
     }
 
@@ -69,14 +72,24 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
     try {
       final error = await probe.testConnection();
       if (error != null) throw StateError(error);
-      await config.save();
       await widget.onConfigured(config);
-    } catch (error) {
-      if (mounted) setState(() => _error = '$error');
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = 'Unable to sign in. Check your credentials and retry.',
+        );
+      }
     } finally {
       probe.disconnect();
       if (mounted) setState(() => _connecting = false);
     }
+  }
+
+  bool _isValidServerUrl(String value) {
+    final uri = Uri.tryParse(value);
+    return uri != null &&
+        (uri.scheme == 'ws' || uri.scheme == 'wss') &&
+        uri.host.isNotEmpty;
   }
 
   @override
@@ -135,14 +148,6 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                           ),
                           const SizedBox(height: 24),
                           ZzzTextInput(
-                            controller: _serverController,
-                            hintText: 'wss://im.example.com/ws',
-                            prefixIcon: const Icon(Icons.dns_outlined),
-                            fillColor: Colors.white.withValues(alpha: 0.06),
-                            foregroundColor: Colors.white,
-                          ),
-                          const SizedBox(height: 12),
-                          ZzzTextInput(
                             controller: _userController,
                             hintText: 'User ID',
                             prefixIcon: const Icon(Icons.person_outline),
@@ -178,7 +183,7 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                                       ),
                                     )
                                     : const Icon(Icons.login_rounded),
-                            label: const Text('Connect'),
+                            label: const Text('Sign in'),
                           ),
                         ],
                       ),

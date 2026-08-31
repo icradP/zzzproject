@@ -55,6 +55,8 @@ class ImUser {
     this.avatarBytes,
     this.avatarLocalPath,
     this.isOnline = false,
+    this.sourceId,
+    this.sourceLabel,
   });
 
   final String id;
@@ -65,6 +67,8 @@ class ImUser {
   /// Local file path to a downloaded avatar (e.g. QQ avatar cached to disk).
   final String? avatarLocalPath;
   final bool isOnline;
+  final String? sourceId;
+  final String? sourceLabel;
 
   /// Builds an [ImageProvider] for this user's avatar, trying local file
   /// cache first, then asset path, then [fallbackAsset].
@@ -82,6 +86,8 @@ class ImUser {
     Uint8List? avatarBytes,
     String? avatarLocalPath,
     bool? isOnline,
+    String? sourceId,
+    String? sourceLabel,
   }) {
     return ImUser(
       id: id,
@@ -90,6 +96,8 @@ class ImUser {
       avatarBytes: avatarBytes ?? this.avatarBytes,
       avatarLocalPath: avatarLocalPath ?? this.avatarLocalPath,
       isOnline: isOnline ?? this.isOnline,
+      sourceId: sourceId ?? this.sourceId,
+      sourceLabel: sourceLabel ?? this.sourceLabel,
     );
   }
 }
@@ -107,6 +115,8 @@ class ImConversation {
     this.updatedAt,
     this.unreadCount = 0,
     this.isPinned = false,
+    this.sourceId,
+    this.sourceLabel,
   });
 
   final String id;
@@ -121,6 +131,8 @@ class ImConversation {
   final DateTime? updatedAt;
   final int unreadCount;
   final bool isPinned;
+  final String? sourceId;
+  final String? sourceLabel;
 
   bool get isGroup => type == ImConversationType.group;
 
@@ -142,6 +154,8 @@ class ImConversation {
     int? unreadCount,
     bool? isPinned,
     List<String>? participantIds,
+    String? sourceId,
+    String? sourceLabel,
   }) {
     return ImConversation(
       id: id,
@@ -154,6 +168,8 @@ class ImConversation {
       updatedAt: updatedAt ?? this.updatedAt,
       unreadCount: unreadCount ?? this.unreadCount,
       isPinned: isPinned ?? this.isPinned,
+      sourceId: sourceId ?? this.sourceId,
+      sourceLabel: sourceLabel ?? this.sourceLabel,
     );
   }
 }
@@ -178,6 +194,8 @@ class ImMessage {
     this.reactions,
     this.replyToMessageId,
     this.recalled = false,
+    this.sourceId,
+    this.sourceLabel,
   });
 
   final String id;
@@ -217,6 +235,8 @@ class ImMessage {
 
   /// Whether this message has been recalled by the sender or an admin.
   final bool recalled;
+  final String? sourceId;
+  final String? sourceLabel;
 
   bool get hasMedia => mediaPath != null;
   bool get isReply => replyToMessageId != null;
@@ -229,6 +249,8 @@ class ImMessage {
     String? thumbnailPath,
     List<ImReaction>? reactions,
     bool? recalled,
+    String? sourceId,
+    String? sourceLabel,
   }) {
     return ImMessage(
       id: id ?? this.id,
@@ -248,6 +270,8 @@ class ImMessage {
       reactions: reactions ?? this.reactions,
       replyToMessageId: replyToMessageId ?? this.replyToMessageId,
       recalled: recalled ?? this.recalled,
+      sourceId: sourceId ?? this.sourceId,
+      sourceLabel: sourceLabel ?? this.sourceLabel,
     );
   }
 }

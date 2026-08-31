@@ -22,7 +22,7 @@ class SourceBackedRepository implements ImRepository {
   Stream<ConnectionStatus> get connectionStatus => _source.connectionStatus;
 
   @override
-  Future<ImUser> getCurrentUser() => _source.getCurrentUser();
+  Future<ImUser> getCurrentUser({String? sourceId}) => _source.getCurrentUser();
 
   @override
   Future<ImUser?> getUser(String userId) => _source.getUser(userId);

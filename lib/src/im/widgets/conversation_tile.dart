@@ -45,19 +45,13 @@ class _ConversationTileState extends State<ConversationTile>
     _slide = Tween<Offset>(
       begin: Offset.zero,
       end: const Offset(-_btnWidth, 0),
-    ).animate(CurvedAnimation(
-      parent: _slideCtrl,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic));
 
     _exitCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
-    _exitSlide = CurvedAnimation(
-      parent: _exitCtrl,
-      curve: Curves.easeInCubic,
-    );
+    _exitSlide = CurvedAnimation(parent: _exitCtrl, curve: Curves.easeInCubic);
     _exitFade = Tween<double>(begin: 1, end: 0).animate(
       CurvedAnimation(parent: _exitCtrl, curve: const Interval(0.3, 1.0)),
     );
@@ -111,7 +105,10 @@ class _ConversationTileState extends State<ConversationTile>
           return Opacity(
             opacity: _exitFade.value,
             child: Transform.translate(
-              offset: Offset(-_exitSlide.value * MediaQuery.of(context).size.width, 0),
+              offset: Offset(
+                -_exitSlide.value * MediaQuery.of(context).size.width,
+                0,
+              ),
               child: child,
             ),
           );
@@ -124,9 +121,8 @@ class _ConversationTileState extends State<ConversationTile>
       onTapDown: _handleTapDown,
       onHorizontalDragUpdate: (details) {
         if (_exiting) return;
-        final newValue =
-            (_slideCtrl.value - details.delta.dx / _btnWidth)
-                .clamp(0.0, 1.0);
+        final newValue = (_slideCtrl.value - details.delta.dx / _btnWidth)
+            .clamp(0.0, 1.0);
         _slideCtrl.value = newValue;
       },
       onHorizontalDragEnd: (details) {
@@ -177,8 +173,9 @@ class _ConversationTileState extends State<ConversationTile>
   }
 
   Widget _buildTileContent() {
-    final avatarImage =
-        widget.conversation.avatarImage(AppAssets.characterWise);
+    final avatarImage = widget.conversation.avatarImage(
+      AppAssets.characterWise,
+    );
     final timeLabel = _formatTime(widget.conversation.updatedAt);
     final selected = widget.selected;
 
@@ -193,15 +190,16 @@ class _ConversationTileState extends State<ConversationTile>
           decoration: BoxDecoration(
             color: selected ? ZzzColors.yellow : Colors.transparent,
             borderRadius: BorderRadius.circular(36),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: ZzzColors.yellow.withValues(alpha: 0.3),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ]
-                : null,
+            boxShadow:
+                selected
+                    ? [
+                      BoxShadow(
+                        color: ZzzColors.yellow.withValues(alpha: 0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                    : null,
           ),
           child: Row(
             children: [
@@ -255,9 +253,10 @@ class _ConversationTileState extends State<ConversationTile>
                           Text(
                             timeLabel,
                             style: TextStyle(
-                              color: selected
-                                  ? Colors.black.withValues(alpha: 0.48)
-                                  : Colors.white38,
+                              color:
+                                  selected
+                                      ? Colors.black.withValues(alpha: 0.48)
+                                      : Colors.white38,
                               fontSize: 12,
                             ),
                           ),
@@ -266,15 +265,35 @@ class _ConversationTileState extends State<ConversationTile>
                     const SizedBox(height: 4),
                     Row(
                       children: [
+                        if (widget.conversation.sourceLabel != null) ...[
+                          Flexible(
+                            flex: 0,
+                            child: Text(
+                              widget.conversation.sourceLabel!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color:
+                                    selected
+                                        ? Colors.black.withValues(alpha: 0.62)
+                                        : ZzzColors.blue,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
                         Expanded(
                           child: Text(
                             widget.conversation.subtitle ?? 'No messages yet',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: selected
-                                  ? Colors.black.withValues(alpha: 0.48)
-                                  : widget.conversation.unreadCount > 0
+                              color:
+                                  selected
+                                      ? Colors.black.withValues(alpha: 0.48)
+                                      : widget.conversation.unreadCount > 0
                                       ? Colors.white70
                                       : Colors.white38,
                               fontSize: 13,
@@ -289,9 +308,7 @@ class _ConversationTileState extends State<ConversationTile>
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: selected
-                                  ? Colors.black
-                                  : ZzzColors.yellow,
+                              color: selected ? Colors.black : ZzzColors.yellow,
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -299,9 +316,8 @@ class _ConversationTileState extends State<ConversationTile>
                                   ? '99+'
                                   : '${widget.conversation.unreadCount}',
                               style: TextStyle(
-                                color: selected
-                                    ? ZzzColors.yellow
-                                    : Colors.black,
+                                color:
+                                    selected ? ZzzColors.yellow : Colors.black,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w800,
                               ),

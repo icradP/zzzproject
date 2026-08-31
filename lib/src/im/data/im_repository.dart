@@ -5,7 +5,7 @@ import '../models/im_models.dart';
 /// Replace [MockImRepository] with a network / local DB implementation later.
 abstract class ImRepository {
   /// The signed-in user.
-  Future<ImUser> getCurrentUser();
+  Future<ImUser> getCurrentUser({String? sourceId});
 
   /// Lookup a user by id.
   Future<ImUser?> getUser(String userId);

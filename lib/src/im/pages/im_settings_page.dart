@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:onebot_flutter/onebot_flutter.dart'
     show OneBotClient, OneBotConfig, OneBotWsMode;
 
@@ -26,12 +27,17 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     with SingleTickerProviderStateMixin {
   ImPlatform _platform = ImPlatform.mock;
   WsMode _wsMode = WsMode.forward;
+  final _profileNameController = TextEditingController();
   final _httpController = TextEditingController();
   final _wsController = TextEditingController();
   final _tokenController = TextEditingController();
   final _selfIdController = TextEditingController();
   final _serverUrlController = TextEditingController();
   final _storagePathController = TextEditingController();
+  List<ImConnectionProfile> _profiles = const [];
+  String? _selectedProfileId;
+  String? _primaryProfileId;
+  bool _profileEnabled = true;
   bool _saving = false;
   bool _testing = false;
   String? _testResult;
@@ -89,6 +95,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   @override
   void dispose() {
     _httpController.dispose();
+    _profileNameController.dispose();
     _wsController.dispose();
     _tokenController.dispose();
     _selfIdController.dispose();
@@ -102,7 +109,19 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   }
 
   Future<void> _loadConfig() async {
-    final config = await ImConnectionConfig.loadOrDefault();
+    var profiles = await ImConnectionProfiles.load();
+    if (profiles.profiles.isEmpty) {
+      final platform = kIsWeb ? ImPlatform.zzzServer : ImPlatform.mock;
+      final profile = ImConnectionProfile(
+        id: ImConnectionProfile.createId(platform),
+        name: ImConnectionProfile.defaultName(platform),
+        config: ImConnectionConfig(platform: platform),
+      );
+      profiles = ImConnectionProfiles(
+        profiles: [profile],
+        primaryProfileId: profile.id,
+      );
+    }
     final storage = await ImStorageConfig.load();
     final anim = await ImAnimationConfig.load();
     _animConfig = anim;
@@ -113,43 +132,108 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     _nsfwConfig = nsfw;
     _refreshNsfwControllers();
     setState(() {
-      _platform = config.platform;
-      _wsMode = config.wsMode;
-      _httpController.text = config.httpEndpoint ?? '';
-      _wsController.text = config.wsEndpoint ?? '';
-      _tokenController.text = config.accessToken ?? '';
-      _selfIdController.text = config.selfId;
-      _serverUrlController.text = config.serverUrl ?? '';
+      _profiles = [...profiles.profiles];
+      _primaryProfileId = profiles.primaryProfileId ?? _profiles.first.id;
+      _loadProfileIntoEditor(
+        profiles.primaryProfile ?? profiles.profiles.first,
+      );
       _storagePathController.text = storage.basePath ?? '';
       _loaded = true;
+    });
+  }
+
+  void _loadProfileIntoEditor(ImConnectionProfile profile) {
+    final config = profile.config;
+    _selectedProfileId = profile.id;
+    _profileNameController.text = profile.name;
+    _profileEnabled = profile.enabled;
+    _platform = config.platform;
+    _wsMode = config.wsMode;
+    _httpController.text = config.httpEndpoint ?? '';
+    _wsController.text = config.wsEndpoint ?? '';
+    _tokenController.text = config.accessToken ?? '';
+    _selfIdController.text = config.selfId;
+    _serverUrlController.text = config.serverUrl ?? '';
+    _testResult = null;
+    _testSuccess = false;
+  }
+
+  ImConnectionProfile _profileFromEditor() {
+    final selectedId = _selectedProfileId;
+    if (selectedId == null) {
+      throw StateError('No connection profile is selected.');
+    }
+    final name = _profileNameController.text.trim();
+    return ImConnectionProfile(
+      id: selectedId,
+      name: name.isEmpty ? ImConnectionProfile.defaultName(_platform) : name,
+      enabled: _profileEnabled,
+      config: ImConnectionConfig(
+        platform: _platform,
+        wsMode: _wsMode,
+        httpEndpoint: _optionalText(_httpController),
+        wsEndpoint: _optionalText(_wsController),
+        accessToken: _optionalText(_tokenController),
+        selfId: _selfIdController.text.trim(),
+        serverUrl: _optionalText(_serverUrlController),
+      ),
+    );
+  }
+
+  String? _optionalText(TextEditingController controller) {
+    final value = controller.text.trim();
+    return value.isEmpty ? null : value;
+  }
+
+  void _commitProfileEditor() {
+    final selectedId = _selectedProfileId;
+    if (selectedId == null) return;
+    final index = _profiles.indexWhere((profile) => profile.id == selectedId);
+    if (index < 0) return;
+    _profiles = [..._profiles]..[index] = _profileFromEditor();
+  }
+
+  void _selectProfile(ImConnectionProfile profile) {
+    _commitProfileEditor();
+    setState(() => _loadProfileIntoEditor(profile));
+  }
+
+  void _addProfile(ImPlatform platform) {
+    _commitProfileEditor();
+    final profile = ImConnectionProfile(
+      id: ImConnectionProfile.createId(platform),
+      name: ImConnectionProfile.defaultName(platform),
+      config: ImConnectionConfig(platform: platform),
+    );
+    setState(() {
+      _profiles = [..._profiles, profile];
+      _primaryProfileId ??= profile.id;
+      _loadProfileIntoEditor(profile);
+    });
+  }
+
+  void _deleteSelectedProfile() {
+    if (_profiles.length <= 1 || _selectedProfileId == null) return;
+    final deletedId = _selectedProfileId;
+    setState(() {
+      _profiles =
+          _profiles.where((profile) => profile.id != deletedId).toList();
+      if (_primaryProfileId == deletedId) {
+        _primaryProfileId = _profiles.first.id;
+      }
+      _loadProfileIntoEditor(_profiles.first);
     });
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      final config = ImConnectionConfig(
-        platform: _platform,
-        wsMode: _wsMode,
-        httpEndpoint:
-            _httpController.text.trim().isEmpty
-                ? null
-                : _httpController.text.trim(),
-        wsEndpoint:
-            _wsController.text.trim().isEmpty
-                ? null
-                : _wsController.text.trim(),
-        accessToken:
-            _tokenController.text.trim().isEmpty
-                ? null
-                : _tokenController.text.trim(),
-        selfId: _selfIdController.text.trim(),
-        serverUrl:
-            _serverUrlController.text.trim().isEmpty
-                ? null
-                : _serverUrlController.text.trim(),
+      _commitProfileEditor();
+      final profiles = ImConnectionProfiles(
+        profiles: _profiles,
+        primaryProfileId: _primaryProfileId,
       );
-      await config.save();
+      await profiles.save();
       final storage = ImStorageConfig(
         basePath:
             _storagePathController.text.trim().isEmpty
@@ -160,10 +244,11 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       await _animConfig.save();
       await _backdropConfig.save();
       await _nsfwConfig.save();
+      if (mounted) await ImScope.reloadConnections(context);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Saved. Restart the app to apply.'),
+            content: Text('Saved and applied.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -180,6 +265,15 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       _testResult = null;
       _testSuccess = false;
     });
+
+    if (_platform == ImPlatform.mock) {
+      setState(() {
+        _testing = false;
+        _testSuccess = true;
+        _testResult = 'Local demo is ready';
+      });
+      return;
+    }
 
     if (_platform == ImPlatform.zzzServer) {
       final source = ZzzServerSource(
@@ -340,8 +434,8 @@ class _ImSettingsPageState extends State<ImSettingsPage>
                         _buildHeader(),
                         const SizedBox(height: 20),
                         ZzzExpandableSection(
-                          title: 'Connection',
-                          subtitle: 'OneBot / NapCatQQ WebSocket',
+                          title: 'Connections',
+                          subtitle: 'Client-managed IM sources',
                           initiallyExpanded: false,
                           child: _buildConnectionFields(),
                         ),
@@ -419,12 +513,105 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Row(
+          children: [
+            const Expanded(child: _FieldLabel('Connection profiles')),
+            PopupMenuButton<ImPlatform>(
+              tooltip: 'Add connection',
+              icon: const Icon(Icons.add_rounded),
+              onSelected: _addProfile,
+              itemBuilder:
+                  (context) => [
+                    if (!kIsWeb)
+                      const PopupMenuItem(
+                        value: ImPlatform.nonebot,
+                        child: ListTile(
+                          leading: Icon(Icons.hub_outlined),
+                          title: Text('QQ / NoneBot'),
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: ImPlatform.zzzServer,
+                      child: ListTile(
+                        leading: Icon(Icons.dns_outlined),
+                        title: Text('ZZZ Server'),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: ImPlatform.mock,
+                      child: ListTile(
+                        leading: Icon(Icons.science_outlined),
+                        title: Text('Local demo'),
+                      ),
+                    ),
+                  ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ..._profiles.map(_buildProfileTile),
+        const SizedBox(height: 14),
+        ZzzTextInput(
+          controller: _profileNameController,
+          hintText: 'Connection name',
+          prefixIcon: const Icon(Icons.label_outline),
+          fillColor: Colors.white.withValues(alpha: 0.06),
+          foregroundColor: Colors.white,
+        ),
+        const SizedBox(height: 10),
+        ZzzSwitchTile(
+          value: _profileEnabled,
+          title: 'Enabled',
+          subtitle: _profileEnabled ? 'Connected on app start' : 'Kept offline',
+          onChanged: (value) => setState(() => _profileEnabled = value),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed:
+                    _selectedProfileId == _primaryProfileId
+                        ? null
+                        : () => setState(
+                          () => _primaryProfileId = _selectedProfileId,
+                        ),
+                icon: const Icon(Icons.star_outline_rounded, size: 18),
+                label: Text(
+                  _selectedProfileId == _primaryProfileId
+                      ? 'Primary connection'
+                      : 'Make primary',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Delete connection',
+              onPressed: _profiles.length > 1 ? _deleteSelectedProfile : null,
+              icon: const Icon(Icons.delete_outline_rounded),
+            ),
+          ],
+        ),
+        const Divider(color: Colors.white12, height: 28),
         const _FieldLabel('Platform'),
         const SizedBox(height: 8),
         ZzzSegmentedControl<ImPlatform>(
-          items: _platformItems,
+          items: _platformItems
+              .where((item) => !kIsWeb || item.value != ImPlatform.nonebot)
+              .toList(growable: false),
           value: _platform,
-          onChanged: (v) => setState(() => _platform = v),
+          onChanged: (value) {
+            final oldDefault = ImConnectionProfile.defaultName(_platform);
+            setState(() {
+              _platform = value;
+              if (_profileNameController.text.trim().isEmpty ||
+                  _profileNameController.text.trim() == oldDefault) {
+                _profileNameController.text = ImConnectionProfile.defaultName(
+                  value,
+                );
+              }
+            });
+          },
         ),
         if (_platform == ImPlatform.nonebot) ...[
           const SizedBox(height: 14),
@@ -463,6 +650,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           ZzzTextInput(
             controller: _tokenController,
             hintText: 'Access token (optional)',
+            obscureText: true,
             prefixIcon: const Icon(Icons.key_outlined),
             fillColor: Colors.white.withValues(alpha: 0.06),
             foregroundColor: Colors.white,
@@ -495,6 +683,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           ZzzTextInput(
             controller: _tokenController,
             hintText: 'Auth token',
+            obscureText: true,
             prefixIcon: const Icon(Icons.key_outlined),
             fillColor: Colors.white.withValues(alpha: 0.06),
             foregroundColor: Colors.white,
@@ -509,6 +698,47 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       ],
     );
   }
+
+  Widget _buildProfileTile(ImConnectionProfile profile) {
+    final selected = profile.id == _selectedProfileId;
+    final primary = profile.id == _primaryProfileId;
+    return Material(
+      color:
+          selected
+              ? ZzzColors.yellow.withValues(alpha: 0.12)
+              : Colors.transparent,
+      child: ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+        leading: Icon(switch (profile.config.platform) {
+          ImPlatform.mock => Icons.science_outlined,
+          ImPlatform.nonebot => Icons.hub_outlined,
+          ImPlatform.zzzServer => Icons.dns_outlined,
+        }, color: selected ? ZzzColors.yellow : Colors.white54),
+        title: Text(profile.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          '${_platformName(profile.config.platform)}${profile.enabled ? '' : ' · Disabled'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing:
+            primary
+                ? const Tooltip(
+                  message: 'Primary connection',
+                  child: Icon(Icons.star_rounded, color: ZzzColors.yellow),
+                )
+                : null,
+        selected: selected,
+        onTap: () => _selectProfile(profile),
+      ),
+    );
+  }
+
+  String _platformName(ImPlatform platform) => switch (platform) {
+    ImPlatform.mock => 'Local demo',
+    ImPlatform.nonebot => 'QQ / NoneBot',
+    ImPlatform.zzzServer => 'ZZZ Server',
+  };
 
   Widget _buildNotificationFields() {
     final manager = ImScope.pushManagerOf(context);

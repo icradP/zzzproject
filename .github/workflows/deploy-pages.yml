@@ -39,7 +39,14 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('web/manifest.json', 'utf8'))"
 
       - name: Build Web release
-        run: flutter build web --release --base-href /zzzproject/
+        env:
+          ZZZ_SERVER_URL: ${{ vars.ZZZ_SERVER_URL }}
+        run: |
+          build_args=(--release --base-href /zzzproject/)
+          if [[ -n "$ZZZ_SERVER_URL" ]]; then
+            build_args+=(--dart-define="ZZZ_SERVER_URL=$ZZZ_SERVER_URL")
+          fi
+          flutter build web "${build_args[@]}"
 
       - uses: actions/upload-artifact@v4
         with:

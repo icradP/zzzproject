@@ -15,6 +15,7 @@ class ImScope extends InheritedWidget {
     required this.nsfwChecker,
     required this.nsfwStateCache,
     required this.pushManager,
+    required this.onConnectionsChanged,
     this.connectionStatus,
     required super.child,
     super.key,
@@ -25,6 +26,7 @@ class ImScope extends InheritedWidget {
   final ImNsfwChecker nsfwChecker;
   final NsfwStateCache nsfwStateCache;
   final ImPushManager pushManager;
+  final Future<void> Function() onConnectionsChanged;
   final Stream<ConnectionStatus>? connectionStatus;
 
   static ImScope of(BuildContext context) {
@@ -48,6 +50,9 @@ class ImScope extends InheritedWidget {
   static ImPushManager pushManagerOf(BuildContext context) =>
       of(context).pushManager;
 
+  static Future<void> reloadConnections(BuildContext context) =>
+      of(context).onConnectionsChanged();
+
   static Stream<ConnectionStatus>? connectionStatusOf(BuildContext context) =>
       of(context).connectionStatus;
 
@@ -58,6 +63,7 @@ class ImScope extends InheritedWidget {
         nsfwChecker != oldWidget.nsfwChecker ||
         nsfwStateCache != oldWidget.nsfwStateCache ||
         pushManager != oldWidget.pushManager ||
+        onConnectionsChanged != oldWidget.onConnectionsChanged ||
         connectionStatus != oldWidget.connectionStatus;
   }
 }

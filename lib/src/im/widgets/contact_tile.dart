@@ -6,11 +6,7 @@ import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
 
 class ContactTile extends StatelessWidget {
-  const ContactTile({
-    required this.user,
-    required this.onTap,
-    super.key,
-  });
+  const ContactTile({required this.user, required this.onTap, super.key});
 
   final ImUser user;
   final VoidCallback onTap;
@@ -31,14 +27,29 @@ class ContactTile extends StatelessWidget {
               ZzzAvatar(image: avatarImage, size: 46),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  user.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (user.sourceLabel != null)
+                      Text(
+                        user.sourceLabel!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: ZzzColors.blue,
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               Container(
@@ -58,11 +69,7 @@ class ContactTile extends StatelessWidget {
 }
 
 class GroupTile extends StatelessWidget {
-  const GroupTile({
-    required this.conversation,
-    required this.onTap,
-    super.key,
-  });
+  const GroupTile({required this.conversation, required this.onTap, super.key});
 
   final ImConversation conversation;
   final VoidCallback onTap;
@@ -117,7 +124,17 @@ class GroupTile extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (conversation.participantIds.length > 1)
+                    if (conversation.sourceLabel != null)
+                      Text(
+                        conversation.sourceLabel!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: ZzzColors.blue,
+                          fontSize: 11,
+                        ),
+                      )
+                    else if (conversation.participantIds.length > 1)
                       Text(
                         '${conversation.participantIds.length} members',
                         style: const TextStyle(
