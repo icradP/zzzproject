@@ -43,6 +43,32 @@ abstract class ImRepository {
   /// All known groups as lightweight conversation stubs.
   Future<List<ImConversation>> getGroupList();
 
+  /// Update the signed-in user's profile. Sources that do not support remote
+  /// profiles may throw [UnsupportedError].
+  Future<ImUser> updateProfile({
+    String? nickname,
+    ImMediaUpload? avatar,
+  }) async {
+    throw UnsupportedError('Profile editing is not supported by this source.');
+  }
+
+  /// Create a remote group and return its conversation representation.
+  Future<ImConversation> createGroup({
+    required String name,
+    List<String> memberIds = const [],
+    ImMediaUpload? avatar,
+  }) async {
+    throw UnsupportedError('Group management is not supported by this source.');
+  }
+
+  Future<void> joinGroup(String groupId) async {
+    throw UnsupportedError('Group management is not supported by this source.');
+  }
+
+  Future<void> leaveGroup(String groupId) async {
+    throw UnsupportedError('Group management is not supported by this source.');
+  }
+
   /// Ensure a conversation appears in [watchConversations], adding it if absent.
   Future<void> ensureConversation(ImConversation conversation);
 

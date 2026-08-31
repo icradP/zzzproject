@@ -41,6 +41,7 @@ func (s *PostgresStore) initSchema() error {
 		id VARCHAR(32) PRIMARY KEY,
 		nickname VARCHAR(64) NOT NULL,
 		avatar_url TEXT DEFAULT '',
+		password_hash TEXT DEFAULT '',
 		online BOOLEAN DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT NOW()
 	);
@@ -129,6 +130,10 @@ func (s *PostgresStore) initSchema() error {
 	`
 
 	_, err := s.db.Exec(schema)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT ''")
 	return err
 }
 
@@ -142,9 +147,9 @@ func (s *PostgresStore) Close() error {
 func (s *PostgresStore) GetUser(id string) (*User, error) {
 	user := &User{}
 	err := s.db.QueryRow(
-		"SELECT id, nickname, avatar_url, online, created_at FROM users WHERE id = $1",
+		"SELECT id, nickname, avatar_url, online, password_hash, created_at FROM users WHERE id = $1",
 		id,
-	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.CreatedAt)
+	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -156,16 +161,16 @@ func (s *PostgresStore) GetUser(id string) (*User, error) {
 
 func (s *PostgresStore) SetUser(user *User) error {
 	_, err := s.db.Exec(
-		`INSERT INTO users (id, nickname, avatar_url, online)
-		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (id) DO UPDATE SET nickname = $2, avatar_url = $3, online = $4`,
-		user.ID, user.Nickname, user.Avatar, user.Online,
+		`INSERT INTO users (id, nickname, avatar_url, online, password_hash)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (id) DO UPDATE SET nickname = $2, avatar_url = $3, online = $4, password_hash = $5`,
+		user.ID, user.Nickname, user.Avatar, user.Online, user.PasswordHash,
 	)
 	return err
 }
 
 func (s *PostgresStore) GetUsers() ([]*User, error) {
-	rows, err := s.db.Query("SELECT id, nickname, avatar_url, online, created_at FROM users")
+	rows, err := s.db.Query("SELECT id, nickname, avatar_url, online, password_hash, created_at FROM users")
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +179,7 @@ func (s *PostgresStore) GetUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		user := &User{}
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -473,6 +478,11 @@ func (s *PostgresStore) GetGroups() ([]*Group, error) {
 		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
 			return nil, err
 		}
+		members, err := s.GetGroupMembers(group.ID)
+		if err != nil {
+			return nil, err
+		}
+		group.Members = members
 		groups = append(groups, group)
 	}
 	return groups, nil
@@ -497,6 +507,11 @@ func (s *PostgresStore) GetUserGroups(userID string) ([]*Group, error) {
 		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
 			return nil, err
 		}
+		members, err := s.GetGroupMembers(group.ID)
+		if err != nil {
+			return nil, err
+		}
+		group.Members = members
 		groups = append(groups, group)
 	}
 	return groups, nil

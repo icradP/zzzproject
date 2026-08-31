@@ -151,6 +151,7 @@ type Response struct {
 // Action types
 const (
 	ActionAuth               = "auth"
+	ActionRegister           = "register"
 	ActionPing               = "ping"
 	ActionSendMessage        = "send_message"
 	ActionEnsureConversation = "ensure_conversation"
@@ -159,6 +160,7 @@ const (
 	ActionGetMessages        = "get_messages"
 	ActionMarkRead           = "mark_read"
 	ActionGetUser            = "get_user"
+	ActionUpdateProfile      = "update_profile"
 	ActionGetUsers           = "get_users"
 	ActionGetFriends         = "get_friends"
 	ActionGetGroupList       = "get_group_list"
@@ -179,8 +181,18 @@ const (
 
 // AuthParams are the params for the "auth" action.
 type AuthParams struct {
-	Token    string `json:"token"`
-	DeviceID string `json:"device_id"`
+	Token        string `json:"token"`
+	SessionToken string `json:"session_token,omitempty"`
+	Password     string `json:"password,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+	DeviceID     string `json:"device_id"`
+}
+
+// RegisterParams are the params for the "register" action.
+type RegisterParams struct {
+	UserID   string `json:"user_id"`
+	Password string `json:"password"`
+	Nickname string `json:"nickname,omitempty"`
 }
 
 // SendMessageParams are the params for the "send_message" action.
@@ -259,11 +271,18 @@ type GetForwardMsgParams struct {
 	ForwardID string `json:"forward_id"`
 }
 
+// UpdateProfileParams are the params for the "update_profile" action.
+type UpdateProfileParams struct {
+	Nickname string `json:"nickname,omitempty"`
+	Avatar   string `json:"avatar_url,omitempty"`
+}
+
 // User represents a user in API responses.
 type User struct {
 	UserID   string `json:"user_id"`
 	Nickname string `json:"nickname"`
 	Avatar   string `json:"avatar_url,omitempty"`
+	Online   bool   `json:"online"`
 }
 
 // Group represents a group in API responses.

@@ -219,6 +219,33 @@ class NoneBotSource implements ImMessageSource {
   Future<ImUser?> getUser(String userId) async => _users[userId];
 
   @override
+  Future<ImUser> updateProfile({
+    String? nickname,
+    ImMediaUpload? avatar,
+  }) async {
+    throw UnsupportedError('NoneBot does not own the user profile.');
+  }
+
+  @override
+  Future<ImConversation> createGroup({
+    required String name,
+    List<String> memberIds = const [],
+    ImMediaUpload? avatar,
+  }) async {
+    throw UnsupportedError('Create groups through the connected platform.');
+  }
+
+  @override
+  Future<void> joinGroup(String groupId) async {
+    throw UnsupportedError('Join groups through the connected platform.');
+  }
+
+  @override
+  Future<void> leaveGroup(String groupId) async {
+    throw UnsupportedError('Leave groups through the connected platform.');
+  }
+
+  @override
   Stream<List<ImConversation>> watchConversations() {
     final c = _conversationControllers.putIfAbsent(
       'all',

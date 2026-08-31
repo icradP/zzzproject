@@ -87,11 +87,12 @@ type Conversation struct {
 
 // User represents a user.
 type User struct {
-	ID        string    `json:"id"`
-	Nickname  string    `json:"nickname"`
-	Avatar    string    `json:"avatar_url,omitempty"`
-	Online    bool      `json:"online"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Nickname     string    `json:"nickname"`
+	Avatar       string    `json:"avatar_url,omitempty"`
+	Online       bool      `json:"online"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // Group represents a group.

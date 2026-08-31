@@ -19,6 +19,20 @@ class ZzzServerConfig {
   final String selfId;
 }
 
+class ZzzAccountResult {
+  const ZzzAccountResult({
+    required this.userId,
+    required this.nickname,
+    required this.avatarUrl,
+    required this.sessionToken,
+  });
+
+  final String userId;
+  final String nickname;
+  final String avatarUrl;
+  final String sessionToken;
+}
+
 /// WebSocket-backed source shared by PWA and native clients.
 class ZzzServerSource implements ImMessageSource {
   ZzzServerSource({required this.config, bool allowReconnect = true})
@@ -236,9 +250,143 @@ class ZzzServerSource implements ImMessageSource {
       _users.values.where((user) => user.id != _selfId).toList(growable: false);
 
   @override
-  Future<List<ImConversation>> getGroupList() async => _conversations.values
-      .where((conversation) => conversation.isGroup)
-      .toList(growable: false);
+  Future<List<ImConversation>> getGroupList() async {
+    if (_status == ConnectionStatus.connected) {
+      final response = await _request('get_group_list', const {});
+      _requireOk(response, 'Load groups');
+      final groups = <ImConversation>[];
+      for (final raw in (response['data'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        final json = Map<String, dynamic>.from(raw);
+        final id = '${json['group_id'] ?? ''}';
+        if (id.isEmpty) continue;
+        var participants = <String>[_selfId];
+        try {
+          final info = await _request('get_group_info', {'group_id': id});
+          if (info['status'] == 'ok') {
+            final infoData = Map<String, dynamic>.from(
+              info['data'] as Map? ?? const {},
+            );
+            participants =
+                (infoData['members'] as List? ?? const [])
+                    .whereType<Map>()
+                    .map((m) => '${m['user_id'] ?? ''}')
+                    .where((v) => v.isNotEmpty)
+                    .toList();
+          }
+        } catch (_) {}
+        final conversation = ImConversation(
+          id: id,
+          type: ImConversationType.group,
+          title: '${json['name'] ?? id}',
+          participantIds: participants,
+          avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+        );
+        _conversations[id] = conversation;
+        groups.add(conversation);
+      }
+      _emitConversations();
+      return groups;
+    }
+    return _conversations.values
+        .where((conversation) => conversation.isGroup)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<ImUser> updateProfile({
+    String? nickname,
+    ImMediaUpload? avatar,
+  }) async {
+    String? avatarUrl;
+    if (avatar != null) {
+      final bytes = await readUploadBytes(avatar);
+      if (bytes.length > 5 * 1024 * 1024) {
+        throw StateError('Avatars must be 5 MB or smaller.');
+      }
+      final upload = await _request('upload_file', {
+        'file': base64Encode(bytes),
+        'file_name': avatar.fileName,
+        'file_type': 'image',
+        'mime_type': avatar.mimeType ?? 'image/jpeg',
+      });
+      _requireOk(upload, 'Upload avatar');
+      avatarUrl = (upload['data'] as Map?)?['url'] as String?;
+    }
+    final params = <String, dynamic>{};
+    if (nickname != null) params['nickname'] = nickname.trim();
+    if (avatarUrl != null && avatarUrl.isNotEmpty) {
+      params['avatar_url'] = avatarUrl;
+    }
+    if (params.isEmpty) return getCurrentUser();
+    final response = await _request('update_profile', params);
+    _requireOk(response, 'Update profile');
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final user = _userFromJson(data, fallbackId: _selfId);
+    _users[_selfId] = user;
+    return user;
+  }
+
+  @override
+  Future<ImConversation> createGroup({
+    required String name,
+    List<String> memberIds = const [],
+    ImMediaUpload? avatar,
+  }) async {
+    String? avatarUrl;
+    if (avatar != null) {
+      final bytes = await readUploadBytes(avatar);
+      final upload = await _request('upload_file', {
+        'file': base64Encode(bytes),
+        'file_name': avatar.fileName,
+        'file_type': 'image',
+        'mime_type': avatar.mimeType ?? 'image/jpeg',
+      });
+      _requireOk(upload, 'Upload group avatar');
+      avatarUrl = (upload['data'] as Map?)?['url'] as String?;
+    }
+    final response = await _request('create_group', {
+      'name': name.trim(),
+      if (avatarUrl != null) 'avatar': avatarUrl,
+      if (memberIds.isNotEmpty) 'members': memberIds,
+    });
+    _requireOk(response, 'Create group');
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final id = '${data['group_id'] ?? ''}';
+    if (id.isEmpty) throw StateError('Create group failed: missing group id');
+    final conversation = ImConversation(
+      id: id,
+      type: ImConversationType.group,
+      title: '${data['name'] ?? name.trim()}',
+      participantIds:
+          (data['participants'] as List?)?.map((v) => '$v').toList() ??
+          [_selfId],
+      avatarAssetPath: _resolveMediaUrl(data['avatar_url'] as String?),
+      sourceId: null,
+    );
+    _conversations[id] = conversation;
+    _emitConversations();
+    return conversation;
+  }
+
+  @override
+  Future<void> joinGroup(String groupId) async {
+    final response = await _request('join_group', {'group_id': groupId});
+    _requireOk(response, 'Join group');
+    await _syncFromServer();
+  }
+
+  @override
+  Future<void> leaveGroup(String groupId) async {
+    final response = await _request('leave_group', {'group_id': groupId});
+    _requireOk(response, 'Leave group');
+    _conversations.remove(groupId);
+    _emitConversations();
+  }
 
   @override
   Future<void> ensureConversation(ImConversation conversation) async {
@@ -319,6 +467,7 @@ class ZzzServerSource implements ImMessageSource {
         id: id,
         displayName: '${json['nickname'] ?? id}',
         isOnline: json['online'] as bool? ?? false,
+        avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
       );
     }
   }
@@ -365,6 +514,7 @@ class ZzzServerSource implements ImMessageSource {
       title: '${json['title'] ?? id}',
       participantIds: participants,
       subtitle: json['last_message'] as String?,
+      avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
       updatedAt:
           timestamp > 0
@@ -448,6 +598,7 @@ class ZzzServerSource implements ImMessageSource {
       _users[senderId] = ImUser(
         id: senderId,
         displayName: '${sender['nickname'] ?? senderId}',
+        avatarAssetPath: _resolveMediaUrl(sender['avatar_url'] as String?),
         isOnline: true,
       );
       final mediaUrl = (data['url'] as String?) ?? (data['file'] as String?);
@@ -607,6 +758,7 @@ class ZzzServerSource implements ImMessageSource {
   Future<void> _authenticate() async {
     final response = await _request('auth', {
       'token': config.authToken,
+      'session_token': config.authToken,
       'user_id': config.selfId,
     });
     _requireOk(response, 'Authentication');
@@ -618,6 +770,96 @@ class ZzzServerSource implements ImMessageSource {
       id: _selfId,
       displayName: '${json['nickname'] ?? _selfId}',
       isOnline: true,
+      avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+    );
+  }
+
+  ImUser _userFromJson(
+    Map<String, dynamic> json, {
+    required String fallbackId,
+  }) {
+    final id = '${json['user_id'] ?? json['id'] ?? fallbackId}';
+    return ImUser(
+      id: id,
+      displayName: '${json['nickname'] ?? id}',
+      avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
+      isOnline: json['online'] as bool? ?? true,
+    );
+  }
+
+  /// Registers an account without opening an authenticated long-lived source.
+  static Future<ZzzAccountResult> registerAccount({
+    required String serverUrl,
+    required String userId,
+    required String password,
+    String? nickname,
+  }) async {
+    final response = await _accountRequest(serverUrl, 'register', {
+      'user_id': userId,
+      'password': password,
+      if (nickname != null && nickname.trim().isNotEmpty)
+        'nickname': nickname.trim(),
+    });
+    return _accountResult(response);
+  }
+
+  /// Logs in with username/password and returns a session token suitable for
+  /// [ZzzServerConfig.authToken].
+  static Future<ZzzAccountResult> loginAccount({
+    required String serverUrl,
+    required String userId,
+    required String password,
+  }) async {
+    final response = await _accountRequest(serverUrl, 'auth', {
+      'user_id': userId,
+      'password': password,
+      'device_id': 'pwa-${DateTime.now().millisecondsSinceEpoch}',
+    });
+    return _accountResult(response);
+  }
+
+  static Future<Map<String, dynamic>> _accountRequest(
+    String serverUrl,
+    String action,
+    Map<String, dynamic> params,
+  ) async {
+    final channel = WebSocketChannel.connect(Uri.parse(serverUrl));
+    final echo = 'account_${DateTime.now().microsecondsSinceEpoch}';
+    try {
+      await channel.ready.timeout(const Duration(seconds: 10));
+      channel.sink.add(
+        jsonEncode({'action': action, 'params': params, 'echo': echo}),
+      );
+      await for (final raw in channel.stream.timeout(
+        const Duration(seconds: 12),
+      )) {
+        final decoded = jsonDecode(raw as String);
+        if (decoded is! Map || decoded['echo'] != echo) continue;
+        final response = Map<String, dynamic>.from(decoded);
+        if (response['status'] != 'ok') {
+          throw StateError('${response['msg'] ?? 'Request failed'}');
+        }
+        return response;
+      }
+      throw StateError('Server closed the connection.');
+    } finally {
+      await channel.sink.close();
+    }
+  }
+
+  static ZzzAccountResult _accountResult(Map<String, dynamic> response) {
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final token = '${data['session_token'] ?? ''}';
+    if (token.isEmpty) {
+      throw StateError('Server did not return a session token.');
+    }
+    return ZzzAccountResult(
+      userId: '${data['user_id'] ?? ''}',
+      nickname: '${data['nickname'] ?? data['user_id'] ?? ''}',
+      avatarUrl: '${data['avatar_url'] ?? ''}',
+      sessionToken: token,
     );
   }
 

@@ -77,6 +77,12 @@ class ImUser {
       return createFileImageProvider(avatarLocalPath!);
     }
     if (avatarBytes != null) return MemoryImage(avatarBytes!);
+    final remote = avatarAssetPath;
+    final parsed = remote == null ? null : Uri.tryParse(remote);
+    if (parsed != null &&
+        (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+      return NetworkImage(remote!);
+    }
     return AssetImage(avatarAssetPath ?? fallbackAsset);
   }
 
@@ -141,6 +147,12 @@ class ImConversation {
   ImageProvider avatarImage(String fallbackAsset) {
     if (avatarLocalPath != null) {
       return createFileImageProvider(avatarLocalPath!);
+    }
+    final remote = avatarAssetPath;
+    final parsed = remote == null ? null : Uri.tryParse(remote);
+    if (parsed != null &&
+        (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+      return NetworkImage(remote!);
     }
     return AssetImage(avatarAssetPath ?? fallbackAsset);
   }

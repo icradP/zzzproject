@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Client represents a connected WebSocket client.
@@ -33,8 +35,10 @@ type Gateway struct {
 	accessToken string
 	upgrader    websocket.Upgrader
 
-	mu      sync.RWMutex
-	clients map[string]*Client // userID -> Client
+	mu        sync.RWMutex
+	clients   map[string]*Client // userID -> Client
+	sessionMu sync.RWMutex
+	sessions  map[string]string // opaque session token -> userID
 }
 
 // PushSender abstracts VAPID delivery so the gateway remains testable.
@@ -59,7 +63,8 @@ func NewGateway(database store.Store, pushSenders ...PushSender) *Gateway {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients: make(map[string]*Client),
+		clients:  make(map[string]*Client),
+		sessions: make(map[string]string),
 	}
 }
 
@@ -131,6 +136,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 	switch req.Action {
 	case protocol.ActionAuth:
 		g.handleAuth(client, req)
+	case protocol.ActionRegister:
+		g.handleRegister(client, req)
 	case protocol.ActionPing:
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
@@ -152,6 +159,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleMarkRead(client, req)
 	case protocol.ActionGetUser:
 		g.handleGetUser(client, req)
+	case protocol.ActionUpdateProfile:
+		g.handleUpdateProfile(client, req)
 	case protocol.ActionGetUsers:
 		g.handleGetUsers(client, req)
 	case protocol.ActionGetFriends:
@@ -204,6 +213,14 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 		g.sendError(client, req.Echo, "conversation_id required")
 		return
 	}
+	if strings.HasPrefix(id, "group_") {
+		if group, _ := g.store.GetGroup(id); group != nil {
+			if member, _ := g.store.IsGroupMember(id, client.userID); !member {
+				g.sendError(client, req.Echo, "group access denied")
+				return
+			}
+		}
+	}
 	convType, _ := params["type"].(string)
 	if convType != "group" {
 		convType = "private"
@@ -254,25 +271,42 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	}
 
 	token, _ := params["token"].(string)
+	sessionToken, _ := params["session_token"].(string)
 	userID, _ := params["user_id"].(string)
+	password, _ := params["password"].(string)
 	deviceID, _ := params["device_id"].(string)
+	if sessionToken == "" {
+		sessionToken = token
+	}
+	authenticatedBySession := false
 
-	if token == "" {
-		g.sendError(client, req.Echo, "token required")
+	// New clients authenticate with a session token, or with username/password
+	// on their first login. The shared token path remains for old test clients.
+	if sessionToken != "" {
+		if resolved, ok := g.userForSession(sessionToken); ok {
+			userID = resolved
+			authenticatedBySession = true
+		} else if g.accessToken != "" && subtle.ConstantTimeCompare([]byte(sessionToken), []byte(g.accessToken)) != 1 {
+			if password == "" {
+				g.sendError(client, req.Echo, "invalid credentials")
+				return
+			}
+		}
+	}
+	if password != "" {
+		user, _ := g.store.GetUser(userID)
+		if user == nil || user.PasswordHash == "" || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+			g.sendError(client, req.Echo, "invalid credentials")
+			return
+		}
+	}
+	if password == "" && userID == "" && g.accessToken == "" {
+		g.sendError(client, req.Echo, "user_id required")
 		return
 	}
-	if g.accessToken != "" && subtle.ConstantTimeCompare(
-		[]byte(token),
-		[]byte(g.accessToken),
-	) != 1 {
+	if password == "" && !authenticatedBySession && g.accessToken != "" && subtle.ConstantTimeCompare([]byte(sessionToken), []byte(g.accessToken)) != 1 {
 		g.sendError(client, req.Echo, "invalid credentials")
 		return
-	}
-
-	// Preserve the original local-development behavior for older clients that
-	// do not send user_id. Public deployments should configure accessToken.
-	if userID == "" && g.accessToken == "" {
-		userID = token
 	}
 	if !validUserID(userID) {
 		g.sendError(client, req.Echo, "valid user_id required")
@@ -285,6 +319,10 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	// Ensure user exists in store.
 	user, _ := g.store.GetUser(userID)
 	if user == nil {
+		if password != "" {
+			g.sendError(client, req.Echo, "account not found")
+			return
+		}
 		user = &store.User{
 			ID:       userID,
 			Nickname: userID,
@@ -296,17 +334,134 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	}
 
 	// Send success response.
+	responseData := map[string]interface{}{
+		"user_id":    user.ID,
+		"nickname":   user.Nickname,
+		"avatar_url": user.Avatar,
+	}
+	if password != "" {
+		if session, err := g.issueSession(userID); err == nil {
+			responseData["session_token"] = session
+		}
+	}
 	g.sendJSON(client, protocol.Response{
 		Status:  "ok",
 		RetCode: 0,
-		Data: map[string]interface{}{
-			"user_id":  user.ID,
-			"nickname": user.Nickname,
-		},
-		Echo: req.Echo,
+		Data:    responseData,
+		Echo:    req.Echo,
 	})
 
 	log.Printf("[gateway] user %s authenticated (device=%s)", userID, deviceID)
+}
+
+func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid register params")
+		return
+	}
+	userID, _ := params["user_id"].(string)
+	password, _ := params["password"].(string)
+	nickname, _ := params["nickname"].(string)
+	userID = strings.TrimSpace(userID)
+	nickname = strings.TrimSpace(nickname)
+	if !validUserID(userID) || len(userID) < 3 || len(userID) > 32 {
+		g.sendError(client, req.Echo, "user_id must be 3-32 characters")
+		return
+	}
+	if len(password) < 8 || len(password) > 128 {
+		g.sendError(client, req.Echo, "password must be 8-128 characters")
+		return
+	}
+	if nickname == "" {
+		nickname = userID
+	}
+	if len(nickname) > 64 {
+		g.sendError(client, req.Echo, "nickname is too long")
+		return
+	}
+	if existing, _ := g.store.GetUser(userID); existing != nil {
+		g.sendError(client, req.Echo, "account already exists")
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to create account")
+		return
+	}
+	user := &store.User{ID: userID, Nickname: nickname, PasswordHash: string(hash), Online: true, CreatedAt: time.Now()}
+	if err := g.store.SetUser(user); err != nil {
+		g.sendError(client, req.Echo, "failed to create account")
+		return
+	}
+	session, err := g.issueSession(userID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to create session")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
+		"user_id": user.ID, "nickname": user.Nickname, "avatar_url": user.Avatar, "session_token": session,
+	}})
+}
+
+func (g *Gateway) handleUpdateProfile(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid update_profile params")
+		return
+	}
+	user, err := g.store.GetUser(client.userID)
+	if err != nil || user == nil {
+		g.sendError(client, req.Echo, "account not found")
+		return
+	}
+	if nickname, exists := params["nickname"]; exists {
+		value, ok := nickname.(string)
+		value = strings.TrimSpace(value)
+		if !ok || value == "" || len(value) > 64 {
+			g.sendError(client, req.Echo, "nickname must be 1-64 characters")
+			return
+		}
+		user.Nickname = value
+	}
+	if avatar, exists := params["avatar_url"]; exists {
+		value, ok := avatar.(string)
+		if !ok || len(value) > 2048 {
+			g.sendError(client, req.Echo, "avatar url is invalid")
+			return
+		}
+		user.Avatar = value
+	}
+	if err := g.store.SetUser(user); err != nil {
+		g.sendError(client, req.Echo, "failed to update profile")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
+		"user_id": user.ID, "nickname": user.Nickname, "avatar_url": user.Avatar,
+	}})
+}
+
+func (g *Gateway) issueSession(userID string) (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw[:])
+	g.sessionMu.Lock()
+	g.sessions[token] = userID
+	g.sessionMu.Unlock()
+	return token, nil
+}
+
+func (g *Gateway) userForSession(token string) (string, bool) {
+	g.sessionMu.RLock()
+	userID, ok := g.sessions[token]
+	g.sessionMu.RUnlock()
+	return userID, ok
 }
 
 func validUserID(value string) bool {
@@ -314,6 +469,41 @@ func validUserID(value string) bool {
 		len(value) <= 128 &&
 		value == strings.TrimSpace(value) &&
 		strings.IndexFunc(value, unicode.IsControl) == -1
+}
+
+func (g *Gateway) canAccessConversation(userID, conversationID string) bool {
+	if userID == "" || conversationID == "" {
+		return false
+	}
+	if strings.HasPrefix(conversationID, "group_") {
+		member, err := g.store.IsGroupMember(conversationID, userID)
+		return err == nil && member
+	}
+	conversation, err := g.store.GetConversation(conversationID)
+	if err != nil || conversation == nil {
+		// A new direct conversation is allowed; ensure_conversation will record
+		// its participants before the first message is sent.
+		return true
+	}
+	for _, participant := range conversation.Participants {
+		if participant == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) isGroupAdmin(groupID, userID string) bool {
+	members, err := g.store.GetGroupMembers(groupID)
+	if err != nil {
+		return false
+	}
+	for _, member := range members {
+		if member.UserID == userID {
+			return member.Role == "owner" || member.Role == "admin"
+		}
+	}
+	return false
 }
 
 func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
@@ -351,6 +541,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	if len(convID) > 6 && convID[:6] == "group_" {
 		convType = "group"
 	}
+	if !g.canAccessConversation(client.userID, convID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
 	if _, err := g.store.GetOrCreateConversation(convID, convType, convID); err != nil {
 		g.sendError(client, req.Echo, "failed to load conversation")
 		return
@@ -359,8 +553,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	// Store message.
 	user, _ := g.store.GetUser(client.userID)
 	nickname := client.userID
+	avatar := ""
 	if user != nil {
 		nickname = user.Nickname
+		avatar = user.Avatar
 	}
 	msg, err := g.store.StoreMessage(convID, client.userID, nickname, segments)
 	if err != nil {
@@ -387,6 +583,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		Sender: protocol.Sender{
 			UserID:   client.userID,
 			Nickname: nickname,
+			Avatar:   avatar,
 		},
 		Message:   segments,
 		Timestamp: msg.Timestamp.Unix(),
@@ -466,6 +663,7 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 			ConversationID: conv.ID,
 			Type:           conv.Type,
 			Title:          conv.Title,
+			Avatar:         conv.Avatar,
 			LastMessage:    lastMsg,
 			LastTimestamp:  lastTs,
 			Participants:   conv.Participants,
@@ -497,6 +695,10 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "conversation_id required")
 		return
 	}
+	if !g.canAccessConversation(client.userID, convID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
 
 	limit := 50
 	if l, ok := params["limit"].(float64); ok {
@@ -506,12 +708,17 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 	msgs, _ := g.store.GetMessages(convID, limit)
 	result := make([]map[string]interface{}, len(msgs))
 	for i, msg := range msgs {
+		senderAvatar := ""
+		if sender, err := g.store.GetUser(msg.SenderID); err == nil && sender != nil {
+			senderAvatar = sender.Avatar
+		}
 		result[i] = map[string]interface{}{
 			"message_id":      msg.ID,
 			"conversation_id": msg.ConversationID,
 			"sender": map[string]interface{}{
-				"user_id":  msg.SenderID,
-				"nickname": msg.SenderNickname,
+				"user_id":    msg.SenderID,
+				"nickname":   msg.SenderNickname,
+				"avatar_url": senderAvatar,
 			},
 			"message":   msg.Segments,
 			"timestamp": msg.Timestamp.Unix(),
@@ -537,6 +744,10 @@ func (g *Gateway) handleMarkRead(client *Client, req *protocol.Request) {
 }
 
 func (g *Gateway) handleGetUser(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
 	params, ok := req.Params.(map[string]interface{})
 	if !ok {
 		g.sendError(client, req.Echo, "invalid params")
@@ -557,12 +768,17 @@ func (g *Gateway) handleGetUser(client *Client, req *protocol.Request) {
 			UserID:   user.ID,
 			Nickname: user.Nickname,
 			Avatar:   user.Avatar,
+			Online:   user.Online,
 		},
 		Echo: req.Echo,
 	})
 }
 
 func (g *Gateway) handleGetUsers(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
 	users, _ := g.store.GetUsers()
 	result := make([]protocol.User, len(users))
 	for i, u := range users {
@@ -570,6 +786,7 @@ func (g *Gateway) handleGetUsers(client *Client, req *protocol.Request) {
 			UserID:   u.ID,
 			Nickname: u.Nickname,
 			Avatar:   u.Avatar,
+			Online:   u.Online,
 		}
 	}
 
@@ -596,6 +813,7 @@ func (g *Gateway) handleGetFriends(client *Client, req *protocol.Request) {
 				UserID:   u.ID,
 				Nickname: u.Nickname,
 				Avatar:   u.Avatar,
+				Online:   u.Online,
 			})
 		}
 	}
@@ -624,6 +842,11 @@ func (g *Gateway) handleGetGroupList(client *Client, req *protocol.Request) {
 			OwnerID:     grp.OwnerID,
 			MemberCount: len(grp.Members),
 		}
+		if len(grp.Members) == 0 {
+			if members, err := g.store.GetGroupMembers(grp.ID); err == nil {
+				result[i].MemberCount = len(members)
+			}
+		}
 	}
 
 	g.sendJSON(client, protocol.Response{
@@ -635,6 +858,10 @@ func (g *Gateway) handleGetGroupList(client *Client, req *protocol.Request) {
 }
 
 func (g *Gateway) handleGetGroupInfo(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
 	params, ok := req.Params.(map[string]interface{})
 	if !ok {
 		g.sendError(client, req.Echo, "invalid params")
@@ -642,6 +869,10 @@ func (g *Gateway) handleGetGroupInfo(client *Client, req *protocol.Request) {
 	}
 
 	groupID, _ := params["group_id"].(string)
+	if member, _ := g.store.IsGroupMember(groupID, client.userID); !member {
+		g.sendError(client, req.Echo, "group access denied")
+		return
+	}
 	group, _ := g.store.GetGroup(groupID)
 	if group == nil {
 		g.sendError(client, req.Echo, "group not found")
@@ -692,28 +923,51 @@ func (g *Gateway) handleCreateGroup(client *Client, req *protocol.Request) {
 
 	name, _ := params["name"].(string)
 	avatar, _ := params["avatar"].(string)
-
-	allGroups, _ := g.store.GetGroups()
-	groupID := fmt.Sprintf("group_%d", len(allGroups)+1)
-	group, _ := g.store.CreateGroup(groupID, name, avatar, client.userID)
-
-	// Create group conversation
-	g.store.GetOrCreateConversation(groupID, "group", name)
-
-	// Add members if provided
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 80 {
+		g.sendError(client, req.Echo, "group name must be 1-80 characters")
+		return
+	}
+	if len(avatar) > 2048 {
+		g.sendError(client, req.Echo, "group avatar is invalid")
+		return
+	}
+	groupID := fmt.Sprintf("group_%d", time.Now().UnixNano())
+	group, err := g.store.CreateGroup(groupID, name, avatar, client.userID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "failed to create group")
+		return
+	}
+	participants := []string{client.userID}
+	seen := map[string]bool{client.userID: true}
+	// Add members if provided, but never create references to unknown users.
 	if members, ok := params["members"].([]interface{}); ok {
 		for _, m := range members {
-			if memberID, ok := m.(string); ok {
-				g.store.AddGroupMember(groupID, memberID)
+			if memberID, ok := m.(string); ok && validUserID(memberID) && !seen[memberID] {
+				if user, _ := g.store.GetUser(memberID); user != nil {
+					if added, addErr := g.store.AddGroupMember(groupID, memberID); addErr == nil && added {
+						participants = append(participants, memberID)
+						seen[memberID] = true
+					}
+				}
 			}
 		}
+	}
+	if err := g.store.SaveConversation(&store.Conversation{ID: groupID, Type: "group", Title: name, Avatar: avatar, OwnerID: client.userID, Participants: participants, CreatedAt: time.Now()}); err != nil {
+		g.sendError(client, req.Echo, "failed to create group conversation")
+		return
 	}
 
 	g.sendJSON(client, protocol.Response{
 		Status:  "ok",
 		RetCode: 0,
 		Data: map[string]interface{}{
-			"group_id": group.ID,
+			"group_id":     group.ID,
+			"name":         group.Name,
+			"avatar_url":   group.Avatar,
+			"owner_id":     group.OwnerID,
+			"member_count": len(participants),
+			"participants": participants,
 		},
 		Echo: req.Echo,
 	})
@@ -732,8 +986,12 @@ func (g *Gateway) handleJoinGroup(client *Client, req *protocol.Request) {
 	}
 
 	groupID, _ := params["group_id"].(string)
-	addOk, _ := g.store.AddGroupMember(groupID, client.userID)
-	if addOk {
+	if group, _ := g.store.GetGroup(groupID); group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	addOk, err := g.store.AddGroupMember(groupID, client.userID)
+	if err == nil && addOk {
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,
@@ -765,8 +1023,17 @@ func (g *Gateway) handleLeaveGroup(client *Client, req *protocol.Request) {
 	}
 
 	groupID, _ := params["group_id"].(string)
-	removeOk, _ := g.store.RemoveGroupMember(groupID, client.userID)
-	if removeOk {
+	group, _ := g.store.GetGroup(groupID)
+	if group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if group.OwnerID == client.userID {
+		g.sendError(client, req.Echo, "group owner cannot leave")
+		return
+	}
+	removeOk, err := g.store.RemoveGroupMember(groupID, client.userID)
+	if err == nil && removeOk {
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,
@@ -799,10 +1066,17 @@ func (g *Gateway) handleGroupKick(client *Client, req *protocol.Request) {
 
 	groupID, _ := params["group_id"].(string)
 	userID, _ := params["user_id"].(string)
-
-	// TODO: Check if requester is admin/owner
-	kickOk, _ := g.store.RemoveGroupMember(groupID, userID)
-	if kickOk {
+	group, _ := g.store.GetGroup(groupID)
+	if group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if !g.isGroupAdmin(groupID, client.userID) || userID == group.OwnerID {
+		g.sendError(client, req.Echo, "group permission denied")
+		return
+	}
+	kickOk, err := g.store.RemoveGroupMember(groupID, userID)
+	if err == nil && kickOk {
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,

@@ -27,23 +27,24 @@ class ImWebSetupPage extends StatefulWidget {
 
 class _ImWebSetupPageState extends State<ImWebSetupPage> {
   final _userController = TextEditingController();
-  final _tokenController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _connecting = false;
+  bool _registering = false;
   String? _error;
 
   @override
   void dispose() {
     _userController.dispose();
-    _tokenController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
   Future<void> _connect() async {
     final serverUrl = widget.serverUrl.trim();
     final userId = _userController.text.trim();
-    final token = _tokenController.text.trim();
-    if (userId.isEmpty || token.isEmpty) {
-      setState(() => _error = 'User ID and access token are required.');
+    final password = _passwordController.text;
+    if (userId.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Username and password are required.');
       return;
     }
     if (!_isValidServerUrl(serverUrl)) {
@@ -55,23 +56,25 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
       _connecting = true;
       _error = null;
     });
-    final config = ImConnectionConfig(
-      platform: ImPlatform.zzzServer,
-      serverUrl: serverUrl,
-      selfId: userId,
-      accessToken: token,
-    );
-    final probe = ZzzServerSource(
-      config: ZzzServerConfig(
-        serverUrl: serverUrl,
-        selfId: userId,
-        authToken: token,
-      ),
-      allowReconnect: false,
-    );
     try {
-      final error = await probe.testConnection();
-      if (error != null) throw StateError(error);
+      final account =
+          _registering
+              ? await ZzzServerSource.registerAccount(
+                serverUrl: serverUrl,
+                userId: userId,
+                password: password,
+              )
+              : await ZzzServerSource.loginAccount(
+                serverUrl: serverUrl,
+                userId: userId,
+                password: password,
+              );
+      final config = ImConnectionConfig(
+        platform: ImPlatform.zzzServer,
+        serverUrl: serverUrl,
+        selfId: account.userId,
+        accessToken: account.sessionToken,
+      );
       await widget.onConfigured(config);
     } catch (_) {
       if (mounted) {
@@ -80,7 +83,6 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
         );
       }
     } finally {
-      probe.disconnect();
       if (mounted) setState(() => _connecting = false);
     }
   }
@@ -156,8 +158,8 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                           ),
                           const SizedBox(height: 12),
                           ZzzTextInput(
-                            controller: _tokenController,
-                            hintText: 'Access token',
+                            controller: _passwordController,
+                            hintText: 'Password',
                             obscureText: true,
                             prefixIcon: const Icon(Icons.key_outlined),
                             fillColor: Colors.white.withValues(alpha: 0.06),
@@ -183,7 +185,24 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                                       ),
                                     )
                                     : const Icon(Icons.login_rounded),
-                            label: const Text('Sign in'),
+                            label: Text(
+                              _registering ? 'Create account' : 'Sign in',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextButton(
+                            onPressed:
+                                _connecting
+                                    ? null
+                                    : () => setState(() {
+                                      _registering = !_registering;
+                                      _error = null;
+                                    }),
+                            child: Text(
+                              _registering
+                                  ? 'Already have an account? Sign in'
+                                  : 'New here? Create an account',
+                            ),
                           ),
                         ],
                       ),

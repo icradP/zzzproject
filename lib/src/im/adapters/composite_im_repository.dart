@@ -209,6 +209,52 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<ImUser> updateProfile({
+    String? nickname,
+    ImMediaUpload? avatar,
+  }) async {
+    final registration = _registrationForValue('', sourceId: _primarySourceId);
+    final user = await registration.repository.updateProfile(
+      nickname: nickname,
+      avatar: avatar,
+    );
+    return _scopeUser(registration, user);
+  }
+
+  @override
+  Future<ImConversation> createGroup({
+    required String name,
+    List<String> memberIds = const [],
+    ImMediaUpload? avatar,
+  }) async {
+    final registration = _registrationForValue('', sourceId: _primarySourceId);
+    final group = await registration.repository.createGroup(
+      name: name,
+      memberIds: memberIds
+          .map(ImSourceAddress.localIdOf)
+          .toList(growable: false),
+      avatar: avatar,
+    );
+    return _scopeConversation(registration, group);
+  }
+
+  @override
+  Future<void> joinGroup(String groupId) {
+    final registration = _registrationForValue(groupId);
+    return registration.repository.joinGroup(
+      ImSourceAddress.localIdOf(groupId),
+    );
+  }
+
+  @override
+  Future<void> leaveGroup(String groupId) {
+    final registration = _registrationForValue(groupId);
+    return registration.repository.leaveGroup(
+      ImSourceAddress.localIdOf(groupId),
+    );
+  }
+
+  @override
   Future<void> ensureConversation(ImConversation conversation) {
     final registration = _registrationForValue(
       conversation.id,

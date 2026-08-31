@@ -247,6 +247,14 @@ class _ImHomePageState extends State<ImHomePage>
               ),
             ),
           IconButton(
+            tooltip: 'Profile',
+            onPressed: () => context.push(AppRoutes.profile),
+            icon: const Icon(
+              Icons.account_circle_outlined,
+              color: Colors.white70,
+            ),
+          ),
+          IconButton(
             tooltip: 'Settings',
             onPressed: () => context.push(AppRoutes.settings),
             icon: const Icon(Icons.settings_outlined, color: Colors.white54),

@@ -4,6 +4,7 @@ import '../../src/demo/demo_pages.dart';
 import '../../src/im/pages/im_contacts_page.dart';
 import '../../src/im/pages/im_home_page.dart';
 import '../../src/im/pages/im_settings_page.dart';
+import '../../src/im/pages/im_profile_page.dart';
 
 /// Centralized route path constants.
 abstract final class AppRoutes {
@@ -11,6 +12,7 @@ abstract final class AppRoutes {
   static const demo = '/demo';
   static const settings = '/settings';
   static const contacts = '/contacts';
+  static const profile = '/profile';
   static const chat = '/chat/:conversationId';
 }
 
@@ -44,6 +46,11 @@ final appRouter = GoRouter(
       path: AppRoutes.contacts,
       name: 'contacts',
       builder: (_, __) => const ImContactsPage(),
+    ),
+    GoRoute(
+      path: AppRoutes.profile,
+      name: 'profile',
+      builder: (_, __) => const ImProfilePage(),
     ),
   ],
 );

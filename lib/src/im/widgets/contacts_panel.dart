@@ -98,6 +98,53 @@ class _ContactsPanelState extends State<ContactsPanel> {
     widget.onConversationSelected(group);
   }
 
+  Future<void> _createGroup() async {
+    final nameController = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Create group'),
+            content: TextField(
+              controller: nameController,
+              autofocus: true,
+              maxLength: 80,
+              decoration: const InputDecoration(labelText: 'Group name'),
+              onSubmitted:
+                  (_) => Navigator.of(context).pop(nameController.text),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(nameController.text),
+                child: const Text('Create'),
+              ),
+            ],
+          ),
+    );
+    nameController.dispose();
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    try {
+      final group = await ImScope.repositoryOf(
+        context,
+      ).createGroup(name: name.trim());
+      if (!mounted) return;
+      setState(() => _groups = [..._groups, group]);
+      widget.onConversationSelected(group);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to create group: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -112,21 +159,33 @@ class _ContactsPanelState extends State<ContactsPanel> {
           onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
         ),
         const SizedBox(height: 12),
-        ZzzSegmentedControl<String>(
-          value: _showGroups ? 'group' : 'dm',
-          items: const [
-            ZzzSegmentItem<String>(
-              value: 'dm',
-              tooltip: '私聊',
-              iconAsset: AppAssets.iconDm,
+        Row(
+          children: [
+            Expanded(
+              child: ZzzSegmentedControl<String>(
+                value: _showGroups ? 'group' : 'dm',
+                items: const [
+                  ZzzSegmentItem<String>(
+                    value: 'dm',
+                    tooltip: '私聊',
+                    iconAsset: AppAssets.iconDm,
+                  ),
+                  ZzzSegmentItem<String>(
+                    value: 'group',
+                    tooltip: '群聊',
+                    iconAsset: AppAssets.iconGroupChat,
+                  ),
+                ],
+                onChanged: (v) => setState(() => _showGroups = v == 'group'),
+              ),
             ),
-            ZzzSegmentItem<String>(
-              value: 'group',
-              tooltip: '群聊',
-              iconAsset: AppAssets.iconGroupChat,
-            ),
+            if (_showGroups)
+              IconButton(
+                tooltip: 'Create group',
+                onPressed: _createGroup,
+                icon: const Icon(Icons.group_add_outlined),
+              ),
           ],
-          onChanged: (v) => setState(() => _showGroups = v == 'group'),
         ),
         const SizedBox(height: 8),
         Expanded(

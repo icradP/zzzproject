@@ -421,6 +421,58 @@ class MockImRepository implements ImRepository {
   }
 
   @override
+  Future<ImUser> updateProfile({
+    String? nickname,
+    ImMediaUpload? avatar,
+  }) async {
+    final current = _users[_currentUserId]!;
+    final updated = ImUser(
+      id: current.id,
+      displayName:
+          nickname?.trim().isNotEmpty == true
+              ? nickname!.trim()
+              : current.displayName,
+      avatarAssetPath: current.avatarAssetPath,
+      avatarBytes: avatar?.bytes ?? current.avatarBytes,
+      avatarLocalPath: avatar?.filePath ?? current.avatarLocalPath,
+      isOnline: true,
+    );
+    _users[_currentUserId] = updated;
+    return updated;
+  }
+
+  @override
+  Future<ImConversation> createGroup({
+    required String name,
+    List<String> memberIds = const [],
+    ImMediaUpload? avatar,
+  }) async {
+    final id = 'group_${DateTime.now().microsecondsSinceEpoch}';
+    final conversation = ImConversation(
+      id: id,
+      type: ImConversationType.group,
+      title: name.trim(),
+      participantIds: [
+        _currentUserId,
+        ...memberIds.where((id) => id != _currentUserId),
+      ],
+      avatarLocalPath: avatar?.filePath,
+    );
+    _conversations[id] = conversation;
+    _emitConversations();
+    return conversation;
+  }
+
+  @override
+  Future<void> joinGroup(String groupId) async {}
+
+  @override
+  Future<void> leaveGroup(String groupId) async {
+    _conversations.remove(groupId);
+    _emitConversations();
+  }
+
+  @override
   Future<void> ensureConversation(ImConversation conversation) async {
     if (_conversations.containsKey(conversation.id)) return;
     _conversations[conversation.id] = conversation;

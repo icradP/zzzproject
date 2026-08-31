@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/icradp/zzz-im-server/internal/protocol"
@@ -37,6 +38,7 @@ func (s *SQLiteStore) initSchema() error {
 		id TEXT PRIMARY KEY,
 		nickname TEXT NOT NULL,
 		avatar_url TEXT DEFAULT '',
+		password_hash TEXT DEFAULT '',
 		online BOOLEAN DEFAULT FALSE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -123,8 +125,15 @@ func (s *SQLiteStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 	`
 
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	// Upgrade databases created before account authentication was introduced.
+	if _, err := s.db.Exec("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT ''"); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 // Close closes the database connection.
@@ -137,9 +146,9 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) GetUser(id string) (*User, error) {
 	user := &User{}
 	err := s.db.QueryRow(
-		"SELECT id, nickname, avatar_url, online, created_at FROM users WHERE id = ?",
+		"SELECT id, nickname, avatar_url, online, password_hash, created_at FROM users WHERE id = ?",
 		id,
-	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.CreatedAt)
+	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -151,14 +160,14 @@ func (s *SQLiteStore) GetUser(id string) (*User, error) {
 
 func (s *SQLiteStore) SetUser(user *User) error {
 	_, err := s.db.Exec(
-		"INSERT OR REPLACE INTO users (id, nickname, avatar_url, online) VALUES (?, ?, ?, ?)",
-		user.ID, user.Nickname, user.Avatar, user.Online,
+		"INSERT INTO users (id, nickname, avatar_url, online, password_hash) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET nickname=excluded.nickname, avatar_url=excluded.avatar_url, online=excluded.online, password_hash=excluded.password_hash",
+		user.ID, user.Nickname, user.Avatar, user.Online, user.PasswordHash,
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetUsers() ([]*User, error) {
-	rows, err := s.db.Query("SELECT id, nickname, avatar_url, online, created_at FROM users")
+	rows, err := s.db.Query("SELECT id, nickname, avatar_url, online, password_hash, created_at FROM users")
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +176,7 @@ func (s *SQLiteStore) GetUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		user := &User{}
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -479,6 +488,11 @@ func (s *SQLiteStore) GetGroups() ([]*Group, error) {
 		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
 			return nil, err
 		}
+		members, err := s.GetGroupMembers(group.ID)
+		if err != nil {
+			return nil, err
+		}
+		group.Members = members
 		groups = append(groups, group)
 	}
 	return groups, nil
@@ -503,6 +517,11 @@ func (s *SQLiteStore) GetUserGroups(userID string) ([]*Group, error) {
 		if err := rows.Scan(&group.ID, &group.Name, &group.Avatar, &group.OwnerID, &group.CreatedAt); err != nil {
 			return nil, err
 		}
+		members, err := s.GetGroupMembers(group.ID)
+		if err != nil {
+			return nil, err
+		}
+		group.Members = members
 		groups = append(groups, group)
 	}
 	return groups, nil
