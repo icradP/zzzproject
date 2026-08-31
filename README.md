@@ -46,8 +46,19 @@ go run ./cmd/vapid
 export ZZZ_VAPID_PUBLIC_KEY='<generated public key>'
 export ZZZ_VAPID_PRIVATE_KEY='<generated private key>'
 export ZZZ_VAPID_SUBJECT='mailto:admin@example.com'
+export ZZZ_ACCESS_TOKEN='<shared test-environment token>'
 go run ./cmd/server -addr :8080
 ```
+
+For a small HTTPS test deployment, build and run the hardened container with
+`deploy/zzz-im/deploy.sh`, then install `deploy/zzz-im/nginx.conf`. The script
+stores SQLite data and uploaded media under `/var/lib/zzz-im`, and generates
+VAPID credentials plus a shared test token in `/etc/zzz-im/server.env`. The Go
+port binds only to `127.0.0.1:18080`; Nginx is the public HTTPS/WSS boundary.
+
+The shared token is an access gate for testing, not a multi-user production
+authentication system. Replace it with account-specific credentials before
+using the server for sensitive or untrusted traffic.
 
 Build the PWA for GitHub Pages:
 

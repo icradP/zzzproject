@@ -18,6 +18,7 @@ func main() {
 	dbDSN := flag.String("dsn", "", "Database DSN (for sqlite: file path, for postgres: connection string)")
 	redisAddr := flag.String("redis", "", "Redis address (e.g. localhost:6379)")
 	redisPassword := flag.String("redis-password", "", "Redis password")
+	accessToken := flag.String("access-token", os.Getenv("ZZZ_ACCESS_TOKEN"), "shared access token for test deployments")
 	vapidPublicKey := flag.String("vapid-public-key", os.Getenv("ZZZ_VAPID_PUBLIC_KEY"), "VAPID public key")
 	vapidPrivateKey := flag.String("vapid-private-key", os.Getenv("ZZZ_VAPID_PRIVATE_KEY"), "VAPID private key")
 	vapidSubject := flag.String("vapid-subject", envOrDefault("ZZZ_VAPID_SUBJECT", "mailto:admin@localhost"), "VAPID contact URI")
@@ -75,6 +76,7 @@ func main() {
 	// Initialize gateway.
 	pushSender := pushservice.NewService(*vapidPublicKey, *vapidPrivateKey, *vapidSubject)
 	gw := gateway.NewGateway(db, pushSender)
+	gw.SetAccessToken(*accessToken)
 	mediaStore, err := media.NewLocalStore(*mediaDir, db)
 	if err != nil {
 		log.Fatalf("[server] failed to initialize media storage: %v", err)
@@ -103,6 +105,11 @@ func main() {
 		log.Println("[server] Web Push: enabled")
 	} else {
 		log.Println("[server] Web Push: disabled (set ZZZ_VAPID_PUBLIC_KEY and ZZZ_VAPID_PRIVATE_KEY)")
+	}
+	if *accessToken != "" {
+		log.Println("[server] shared-token authentication: enabled")
+	} else {
+		log.Println("[server] shared-token authentication: disabled (development mode)")
 	}
 
 	if err := http.ListenAndServe(*addr, mux); err != nil {

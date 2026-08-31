@@ -133,6 +133,37 @@ func TestWebSocketChatHistoryAndPush(t *testing.T) {
 	}
 }
 
+func TestWebSocketSharedTokenAuthenticationUsesExplicitUserID(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	gateway.SetAccessToken("server-test-token")
+
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	connection := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = connection.Close() })
+
+	denied := request(t, connection, "auth", map[string]interface{}{
+		"token":   "wrong-token",
+		"user_id": "alice",
+	})
+	if denied["status"] == "ok" {
+		t.Fatalf("invalid shared token was accepted: %#v", denied)
+	}
+
+	authenticated := request(t, connection, "auth", map[string]interface{}{
+		"token":     "server-test-token",
+		"user_id":   "alice",
+		"device_id": "browser-a",
+	})
+	assertOK(t, authenticated)
+	if responseData(t, authenticated)["user_id"] != "alice" {
+		t.Fatalf("user identity did not come from user_id: %#v", authenticated)
+	}
+}
+
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.HandleWebSocket(w, r)
 }

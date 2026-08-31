@@ -40,7 +40,7 @@ jobs:
 
       - name: Build Web release
         env:
-          ZZZ_SERVER_URL: ${{ vars.ZZZ_SERVER_URL }}
+          ZZZ_SERVER_URL: ${{ vars.ZZZ_SERVER_URL || 'wss://icrad.ltd/im/ws' }}
         run: |
           build_args=(--release --base-href /zzzproject/)
           if [[ -n "$ZZZ_SERVER_URL" ]]; then
@@ -72,6 +72,9 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: go test -race ./internal/gateway ./internal/store ./internal/media
+
+      - name: Build server container
+        run: docker build -t zzz-im-server:test .
 
   deploy:
     name: Deploy GitHub Pages

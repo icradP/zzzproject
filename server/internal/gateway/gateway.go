@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gorilla/websocket"
 	"github.com/icradp/zzz-im-server/internal/protocol"
@@ -25,10 +27,11 @@ type Client struct {
 
 // Gateway manages WebSocket connections and message routing.
 type Gateway struct {
-	store      store.Store
-	pushSender PushSender
-	media      MediaUploader
-	upgrader   websocket.Upgrader
+	store       store.Store
+	pushSender  PushSender
+	media       MediaUploader
+	accessToken string
+	upgrader    websocket.Upgrader
 
 	mu      sync.RWMutex
 	clients map[string]*Client // userID -> Client
@@ -62,6 +65,12 @@ func NewGateway(database store.Store, pushSenders ...PushSender) *Gateway {
 
 func (g *Gateway) SetMediaUploader(media MediaUploader) {
 	g.media = media
+}
+
+// SetAccessToken enables shared-token authentication for test deployments.
+// User identity still comes from the explicit user_id request parameter.
+func (g *Gateway) SetAccessToken(token string) {
+	g.accessToken = token
 }
 
 // HandleWebSocket handles incoming WebSocket connections.
@@ -245,17 +254,29 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	}
 
 	token, _ := params["token"].(string)
+	userID, _ := params["user_id"].(string)
 	deviceID, _ := params["device_id"].(string)
 
 	if token == "" {
 		g.sendError(client, req.Echo, "token required")
 		return
 	}
+	if g.accessToken != "" && subtle.ConstantTimeCompare(
+		[]byte(token),
+		[]byte(g.accessToken),
+	) != 1 {
+		g.sendError(client, req.Echo, "invalid credentials")
+		return
+	}
 
-	// Generate a user ID from token (MVP: use token as user ID).
-	userID := token
-	if deviceID != "" {
-		userID = token + "_" + deviceID
+	// Preserve the original local-development behavior for older clients that
+	// do not send user_id. Public deployments should configure accessToken.
+	if userID == "" && g.accessToken == "" {
+		userID = token
+	}
+	if !validUserID(userID) {
+		g.sendError(client, req.Echo, "valid user_id required")
+		return
 	}
 
 	// Register client.
@@ -286,6 +307,13 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	})
 
 	log.Printf("[gateway] user %s authenticated (device=%s)", userID, deviceID)
+}
+
+func validUserID(value string) bool {
+	return value != "" &&
+		len(value) <= 128 &&
+		value == strings.TrimSpace(value) &&
+		strings.IndexFunc(value, unicode.IsControl) == -1
 }
 
 func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
