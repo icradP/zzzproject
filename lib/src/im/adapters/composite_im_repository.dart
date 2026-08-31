@@ -68,6 +68,11 @@ class CompositeImRepository implements ImRepository {
     return _statusController.stream;
   }
 
+  @override
+  bool get supportsFriendManagement => _registrations.values.any(
+    (registration) => registration.repository.supportsFriendManagement,
+  );
+
   Iterable<ImRepositoryRegistration> get registrations => _registrations.values;
 
   ImRepositoryRegistration _registrationForValue(
@@ -193,6 +198,96 @@ class CompositeImRepository implements ImRepository {
     return results.expand((result) => result).toList(growable: false);
   }
 
+  Iterable<ImRepositoryRegistration> get _friendRegistrations =>
+      _registrations.values.where(
+        (registration) => registration.repository.supportsFriendManagement,
+      );
+
+  @override
+  Future<List<ImUser>> searchUsers(String query) async {
+    final registrations = _friendRegistrations.toList(growable: false);
+    if (registrations.isEmpty) {
+      throw UnsupportedError(
+        'Friend management is not supported by this repository.',
+      );
+    }
+    final results = await Future.wait(
+      registrations.map((registration) async {
+        final users = await registration.repository.searchUsers(query);
+        return users
+            .map((user) => _scopeUser(registration, user))
+            .toList(growable: false);
+      }),
+    );
+    return results.expand((result) => result).toList(growable: false);
+  }
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() async {
+    final registrations = _friendRegistrations.toList(growable: false);
+    if (registrations.isEmpty) {
+      throw UnsupportedError(
+        'Friend management is not supported by this repository.',
+      );
+    }
+    final results = await Future.wait(
+      registrations.map((registration) async {
+        final requests = await registration.repository.getFriendRequests();
+        return requests
+            .map((request) => _scopeFriendRequest(registration, request))
+            .toList(growable: false);
+      }),
+    );
+    return results.expand((result) => result).toList(growable: false);
+  }
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) {
+    final registration = _registrationForValue(userId);
+    if (!registration.repository.supportsFriendManagement) {
+      throw UnsupportedError(
+        'Friend management is not supported by this source.',
+      );
+    }
+    return registration.repository.sendFriendRequest(
+      userId: ImSourceAddress.localIdOf(userId),
+      comment: comment,
+    );
+  }
+
+  @override
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) {
+    final registration = _registrationForValue(requestId);
+    if (!registration.repository.supportsFriendManagement) {
+      throw UnsupportedError(
+        'Friend management is not supported by this source.',
+      );
+    }
+    return registration.repository.handleFriendRequest(
+      requestId: ImSourceAddress.localIdOf(requestId),
+      accept: accept,
+    );
+  }
+
+  @override
+  Future<void> removeFriend(String userId) {
+    final registration = _registrationForValue(userId);
+    if (!registration.repository.supportsFriendManagement) {
+      throw UnsupportedError(
+        'Friend management is not supported by this source.',
+      );
+    }
+    return registration.repository.removeFriend(
+      ImSourceAddress.localIdOf(userId),
+    );
+  }
+
   @override
   Future<List<ImConversation>> getGroupList() async {
     final results = await Future.wait(
@@ -309,6 +404,23 @@ class CompositeImRepository implements ImRepository {
       avatarBytes: user.avatarBytes,
       avatarLocalPath: user.avatarLocalPath,
       isOnline: user.isOnline,
+      relationship: user.relationship,
+      sourceId: registration.id,
+      sourceLabel: registration.label,
+    );
+  }
+
+  ImFriendRequest _scopeFriendRequest(
+    ImRepositoryRegistration registration,
+    ImFriendRequest request,
+  ) {
+    return ImFriendRequest(
+      id: ImSourceAddress.scope(registration.id, request.id),
+      fromUser: _scopeUser(registration, request.fromUser),
+      toUser: _scopeUser(registration, request.toUser),
+      comment: request.comment,
+      status: request.status,
+      createdAt: request.createdAt,
       sourceId: registration.id,
       sourceLabel: registration.label,
     );

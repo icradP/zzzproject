@@ -18,6 +18,9 @@ class SourceBackedRepository implements ImRepository {
 
   final ImMessageSource _source;
 
+  @override
+  bool get supportsFriendManagement => _source.supportsFriendManagement;
+
   /// Live connection status for the UI.
   Stream<ConnectionStatus> get connectionStatus => _source.connectionStatus;
 
@@ -62,6 +65,28 @@ class SourceBackedRepository implements ImRepository {
 
   @override
   Future<List<ImUser>> getUsers() => _source.getUsers();
+
+  @override
+  Future<List<ImUser>> searchUsers(String query) => _source.searchUsers(query);
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() =>
+      _source.getFriendRequests();
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) => _source.sendFriendRequest(userId: userId, comment: comment);
+
+  @override
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) => _source.handleFriendRequest(requestId: requestId, accept: accept);
+
+  @override
+  Future<void> removeFriend(String userId) => _source.removeFriend(userId);
 
   @override
   Future<List<ImConversation>> getGroupList() => _source.getGroupList();

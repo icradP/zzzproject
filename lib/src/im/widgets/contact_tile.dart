@@ -13,7 +13,9 @@ class ContactTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarImage = user.avatarImage(AppAssets.characterWise);
+    final avatarImage = user.avatarImage(
+      AppAssets.fallbackAvatarForId(user.id),
+    );
 
     return Material(
       color: Colors.transparent,
@@ -76,7 +78,9 @@ class GroupTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarImage = conversation.avatarImage(AppAssets.characterWise);
+    final avatarImage = conversation.avatarImage(
+      AppAssets.fallbackAvatarForId(conversation.id),
+    );
 
     return Material(
       color: Colors.transparent,

@@ -437,7 +437,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
           builder: (context, snapshot) {
             final senderName = snapshot.data?.$1 ?? '...';
             final avatar =
-                snapshot.data?.$2 ?? AssetImage(AppAssets.characterWise);
+                snapshot.data?.$2 ??
+                AssetImage(AppAssets.fallbackAvatarForId(message.senderId));
             _messageKeys.putIfAbsent(message.id, () => GlobalKey());
             return Container(
               key: _messageKeys[message.id],

@@ -49,6 +49,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('create-group-panel')), findsOneWidget);
     expect(find.byType(ZzzModalPanel), findsOneWidget);
+    expect(find.byType(ZzzExpandablePanel), findsOneWidget);
     expect(find.byType(ZzzExpandableSection), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
 
@@ -169,6 +170,7 @@ void main() {
       find.byKey(const ValueKey('create-group-wide-layout')),
       findsOneWidget,
     );
+    expect(find.byType(ZzzExpandablePanel), findsOneWidget);
     expect(
       find.byKey(const ValueKey('create-group-compact-layout')),
       findsNothing,

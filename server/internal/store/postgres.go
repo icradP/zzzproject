@@ -46,6 +46,11 @@ func (s *PostgresStore) initSchema() error {
 		created_at TIMESTAMP DEFAULT NOW()
 	);
 
+	CREATE TABLE IF NOT EXISTS schema_migrations (
+		id TEXT PRIMARY KEY,
+		applied_at TIMESTAMP DEFAULT NOW()
+	);
+
 	CREATE TABLE IF NOT EXISTS conversations (
 		id VARCHAR(32) PRIMARY KEY,
 		type VARCHAR(20) NOT NULL,
@@ -108,6 +113,15 @@ func (s *PostgresStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests(to_id, status);
 
+	CREATE TABLE IF NOT EXISTS friendships (
+		user_id VARCHAR(32) NOT NULL,
+		friend_id VARCHAR(32) NOT NULL,
+		created_at TIMESTAMP DEFAULT NOW(),
+		PRIMARY KEY (user_id, friend_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_friendships_user ON friendships(user_id, created_at);
+
 	CREATE TABLE IF NOT EXISTS forwards (
 		id VARCHAR(32) PRIMARY KEY,
 		messages JSONB NOT NULL,
@@ -142,8 +156,47 @@ func (s *PostgresStore) initSchema() error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT ''")
-	return err
+	if _, err = s.db.Exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT ''"); err != nil {
+		return err
+	}
+	return s.migrateLegacyFriendships()
+}
+
+func (s *PostgresStore) migrateLegacyFriendships() error {
+	const migrationID = "001_private_conversations_to_friendships"
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var applied int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM schema_migrations WHERE id = $1", migrationID,
+	).Scan(&applied); err != nil {
+		return err
+	}
+	if applied > 0 {
+		return tx.Commit()
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO friendships (user_id, friend_id, created_at)
+		SELECT source.value, target.value, conversation.created_at
+		FROM conversations conversation
+		CROSS JOIN LATERAL jsonb_array_elements_text(conversation.participants) source(value)
+		CROSS JOIN LATERAL jsonb_array_elements_text(conversation.participants) target(value)
+		WHERE conversation.type = 'private'
+		  AND source.value <> target.value
+		  AND EXISTS (SELECT 1 FROM users WHERE id = source.value)
+		  AND EXISTS (SELECT 1 FROM users WHERE id = target.value)
+		ON CONFLICT DO NOTHING`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO schema_migrations (id) VALUES ($1)", migrationID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Close closes the database connection.
@@ -591,6 +644,98 @@ func (s *PostgresStore) GetGroupMembers(groupID string) ([]*GroupMember, error) 
 
 // ---- Friend request operations ----
 
+func (s *PostgresStore) GetFriends(userID string) ([]*User, error) {
+	rows, err := s.db.Query(`
+		SELECT u.id, u.nickname, u.avatar_url, u.online, u.password_hash, u.created_at
+		FROM friendships f
+		JOIN users u ON u.id = f.friend_id
+		WHERE f.user_id = $1
+		ORDER BY LOWER(u.nickname), u.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := make([]*User, 0)
+	for rows.Next() {
+		user := &User{}
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (s *PostgresStore) AreFriends(userID, friendID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM friendships WHERE user_id = $1 AND friend_id = $2",
+		userID, friendID,
+	).Scan(&count)
+	return count > 0, err
+}
+
+func (s *PostgresStore) AddFriend(userID, friendID string) (bool, error) {
+	if userID == "" || friendID == "" || userID == friendID {
+		return false, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(
+		"INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+		userID, friendID,
+	)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+		friendID, userID,
+	); err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func (s *PostgresStore) RemoveFriend(userID, friendID string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(
+		"DELETE FROM friendships WHERE user_id = $1 AND friend_id = $2",
+		userID, friendID,
+	)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		"DELETE FROM friendships WHERE user_id = $1 AND friend_id = $2",
+		friendID, userID,
+	); err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func (s *PostgresStore) CreateFriendRequest(fromID, toID, comment string) (*FriendRequest, error) {
 	req := &FriendRequest{
 		ID:        fmt.Sprintf("freq_%d", time.Now().UnixNano()),
@@ -629,7 +774,7 @@ func (s *PostgresStore) GetFriendRequest(id string) (*FriendRequest, error) {
 
 func (s *PostgresStore) GetPendingFriendRequests(userID string) ([]*FriendRequest, error) {
 	rows, err := s.db.Query(
-		"SELECT id, from_id, to_id, comment, status, created_at FROM friend_requests WHERE to_id = $1 AND status = 'pending'",
+		"SELECT id, from_id, to_id, comment, status, created_at FROM friend_requests WHERE (to_id = $1 OR from_id = $1) AND status = 'pending' ORDER BY created_at DESC",
 		userID,
 	)
 	if err != nil {

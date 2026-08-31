@@ -19,6 +19,9 @@ class MockImRepository implements ImRepository {
       <String, StreamController<List<ImConversation>>>{};
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
 
+  @override
+  bool get supportsFriendManagement => false;
+
   void _seed() {
     _users.addAll({
       _currentUserId: const ImUser(
@@ -398,6 +401,33 @@ class MockImRepository implements ImRepository {
   @override
   Future<List<ImUser>> getUsers() async {
     return _users.values.where((u) => u.id != _currentUserId).toList();
+  }
+
+  @override
+  Future<List<ImUser>> searchUsers(String query) async => getUsers();
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() async => const [];
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    throw UnsupportedError('Friend management is not supported by the mock.');
+  }
+
+  @override
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    throw UnsupportedError('Friend management is not supported by the mock.');
+  }
+
+  @override
+  Future<void> removeFriend(String userId) async {
+    throw UnsupportedError('Friend management is not supported by the mock.');
   }
 
   @override

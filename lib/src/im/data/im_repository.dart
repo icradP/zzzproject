@@ -4,6 +4,9 @@ import '../models/im_models.dart';
 ///
 /// Replace [MockImRepository] with a network / local DB implementation later.
 abstract class ImRepository {
+  /// Whether at least one active source supports account relationships.
+  bool get supportsFriendManagement => false;
+
   /// The signed-in user.
   Future<ImUser> getCurrentUser({String? sourceId});
 
@@ -39,6 +42,42 @@ abstract class ImRepository {
 
   /// All known users (excluding self).
   Future<List<ImUser>> getUsers();
+
+  Future<List<ImUser>> searchUsers(String query) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this repository.',
+    );
+  }
+
+  Future<List<ImFriendRequest>> getFriendRequests() async {
+    throw UnsupportedError(
+      'Friend management is not supported by this repository.',
+    );
+  }
+
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this repository.',
+    );
+  }
+
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this repository.',
+    );
+  }
+
+  Future<void> removeFriend(String userId) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this repository.',
+    );
+  }
 
   /// All known groups as lightweight conversation stubs.
   Future<List<ImConversation>> getGroupList();

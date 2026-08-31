@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../models/im_models.dart';
+import '../../models/im_source_address.dart';
 import '../im_message_source.dart';
 import 'im_upload_bytes.dart';
 
@@ -73,12 +74,16 @@ class ZzzServerSource implements ImMessageSource {
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
   final _users = <String, ImUser>{};
+  final _friendIds = <String>{};
   final _echoCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _echoCounter = 0;
   ConnectionStatus _status = ConnectionStatus.disconnected;
 
   @override
   String get platformName => 'ZZZ Server';
+
+  @override
+  bool get supportsFriendManagement => true;
 
   @override
   Stream<ConnectionStatus> get connectionStatus async* {
@@ -157,10 +162,34 @@ class ZzzServerSource implements ImMessageSource {
   @override
   Future<ImUser> getCurrentUser() async =>
       _users[_selfId] ??
-      ImUser(id: _selfId, displayName: _selfId, isOnline: true);
+      ImUser(
+        id: _selfId,
+        displayName: _selfId,
+        avatarAssetPath: _avatarResolver?.call(_selfId),
+        isOnline: true,
+      );
 
   @override
-  Future<ImUser?> getUser(String userId) async => _users[userId];
+  Future<ImUser?> getUser(String userId) async {
+    final localId = ImSourceAddress.localIdOf(userId);
+    final cached = _users[localId];
+    if (cached != null) return cached;
+    if (_status != ConnectionStatus.connected) return null;
+    try {
+      final response = await _request('get_user', {'user_id': localId});
+      _requireOk(response, 'Load user');
+      final data = response['data'];
+      if (data is! Map) return null;
+      final user = _userFromJson(
+        Map<String, dynamic>.from(data),
+        fallbackId: localId,
+      );
+      _users[user.id] = user;
+      return user;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Stream<List<ImConversation>> watchConversations() async* {
@@ -260,8 +289,118 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
-  Future<List<ImUser>> getUsers() async =>
-      _users.values.where((user) => user.id != _selfId).toList(growable: false);
+  Future<List<ImUser>> getUsers() async => _friendIds
+      .map((id) => _users[id])
+      .whereType<ImUser>()
+      .toList(growable: false);
+
+  @override
+  Future<List<ImUser>> searchUsers(String query) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty) return const [];
+    final response = await _request('search_users', {'query': normalized});
+    _requireOk(response, 'Search users');
+    final users = <ImUser>[];
+    for (final raw in response['data'] as List? ?? const []) {
+      if (raw is! Map) continue;
+      final user = _userFromJson(
+        Map<String, dynamic>.from(raw),
+        fallbackId: '${raw['user_id'] ?? ''}',
+      );
+      if (user.id.isEmpty) continue;
+      _users[user.id] = user;
+      users.add(user);
+    }
+    return users;
+  }
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() async {
+    final response = await _request('get_friend_requests', const {});
+    _requireOk(response, 'Load friend requests');
+    final requests = <ImFriendRequest>[];
+    for (final raw in response['data'] as List? ?? const []) {
+      if (raw is! Map) continue;
+      final json = Map<String, dynamic>.from(raw);
+      final fromData = Map<String, dynamic>.from(
+        json['from_user'] as Map? ?? const {},
+      );
+      final toData = Map<String, dynamic>.from(
+        json['to_user'] as Map? ?? const {},
+      );
+      final from = _userFromJson(
+        fromData,
+        fallbackId: '${fromData['user_id'] ?? ''}',
+      );
+      final to = _userFromJson(
+        toData,
+        fallbackId: '${toData['user_id'] ?? ''}',
+      );
+      if (from.id.isEmpty || to.id.isEmpty) continue;
+      _users[from.id] = from;
+      _users[to.id] = to;
+      final timestamp = (json['created_at'] as num?)?.toInt() ?? 0;
+      requests.add(
+        ImFriendRequest(
+          id: '${json['flag'] ?? ''}',
+          fromUser: from,
+          toUser: to,
+          comment: '${json['comment'] ?? ''}',
+          status: '${json['status'] ?? 'pending'}',
+          createdAt:
+              timestamp > 0
+                  ? DateTime.fromMillisecondsSinceEpoch(timestamp * 1000)
+                  : null,
+        ),
+      );
+    }
+    return requests
+        .where((request) => request.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    final response = await _request('friend_request', {
+      'user_id': ImSourceAddress.localIdOf(userId),
+      if (comment.trim().isNotEmpty) 'comment': comment.trim(),
+    });
+    _requireOk(response, 'Send friend request');
+  }
+
+  @override
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    final response = await _request('friend_request_handle', {
+      'flag': ImSourceAddress.localIdOf(requestId),
+      'action': accept ? 'accept' : 'reject',
+    });
+    _requireOk(
+      response,
+      accept ? 'Accept friend request' : 'Reject friend request',
+    );
+    if (accept) await _syncUsers();
+  }
+
+  @override
+  Future<void> removeFriend(String userId) async {
+    final localId = ImSourceAddress.localIdOf(userId);
+    final response = await _request('remove_friend', {'user_id': localId});
+    _requireOk(response, 'Remove friend');
+    _users.remove(localId);
+    _friendIds.remove(localId);
+    _conversations.removeWhere(
+      (id, conversation) =>
+          conversation.isDirect &&
+          conversation.participantIds.contains(localId),
+    );
+    _emitConversations();
+  }
 
   @override
   Future<List<ImConversation>> getGroupList() async {
@@ -471,20 +610,23 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   Future<void> _syncUsers() async {
-    final response = await _request('get_users', const {});
+    final response = await _request('get_friends', const {});
     _requireOk(response, 'Load users');
     final data = response['data'];
     if (data is! List) return;
+    _friendIds.clear();
     for (final raw in data) {
       if (raw is! Map) continue;
       final json = Map<String, dynamic>.from(raw);
       final id = '${json['user_id'] ?? ''}';
       if (id.isEmpty) continue;
+      _friendIds.add(id);
       _users[id] = ImUser(
         id: id,
         displayName: '${json['nickname'] ?? id}',
         isOnline: json['online'] as bool? ?? false,
         avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
+        relationship: imRelationshipFromString(json['relationship'] as String?),
       );
     }
   }
@@ -812,6 +954,7 @@ class ZzzServerSource implements ImMessageSource {
       displayName: '${json['nickname'] ?? id}',
       avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
       isOnline: json['online'] as bool? ?? true,
+      relationship: imRelationshipFromString(json['relationship'] as String?),
     );
   }
 

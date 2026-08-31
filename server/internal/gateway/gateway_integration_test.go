@@ -54,6 +54,9 @@ func TestWebSocketChatHistoryAndPush(t *testing.T) {
 
 	authenticate(t, alice, "alice")
 	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
 
 	pushConfig := request(t, bob, "get_push_config", map[string]interface{}{})
 	data := responseData(t, pushConfig)
@@ -161,6 +164,95 @@ func TestWebSocketSharedTokenAuthenticationUsesExplicitUserID(t *testing.T) {
 	assertOK(t, authenticated)
 	if responseData(t, authenticated)["user_id"] != "alice" {
 		t.Fatalf("user identity did not come from user_id: %#v", authenticated)
+	}
+}
+
+func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	alice := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = bob.Close() })
+	eve := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = eve.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	authenticate(t, eve, "eve")
+
+	search := responseDataList(t, request(t, alice, "search_users", map[string]interface{}{"query": "bob"}))
+	if len(search) != 1 || search[0].(map[string]interface{})["relationship"] != "none" {
+		t.Fatalf("unexpected search results: %#v", search)
+	}
+
+	created := request(t, alice, "friend_request", map[string]interface{}{
+		"user_id": "bob",
+		"comment": "Hi, I am Alice",
+	})
+	assertOK(t, created)
+	flag, _ := responseData(t, created)["flag"].(string)
+	if flag == "" {
+		t.Fatal("friend request returned no flag")
+	}
+	requestEvent := readJSON(t, bob)
+	if requestEvent["post_type"] != "request" || requestEvent["flag"] != flag {
+		t.Fatalf("unexpected friend request event: %#v", requestEvent)
+	}
+
+	duplicate := request(t, alice, "friend_request", map[string]interface{}{"user_id": "bob"})
+	if duplicate["status"] == "ok" {
+		t.Fatalf("duplicate friend request was accepted: %#v", duplicate)
+	}
+	denied := request(t, eve, "friend_request_handle", map[string]interface{}{
+		"flag": flag, "action": "accept",
+	})
+	if denied["status"] == "ok" {
+		t.Fatalf("third party handled friend request: %#v", denied)
+	}
+
+	pending := responseDataList(t, request(t, bob, "get_friend_requests", map[string]interface{}{}))
+	if len(pending) != 1 || pending[0].(map[string]interface{})["comment"] != "Hi, I am Alice" {
+		t.Fatalf("unexpected pending requests: %#v", pending)
+	}
+	assertOK(t, request(t, bob, "friend_request_handle", map[string]interface{}{
+		"flag": flag, "action": "accept",
+	}))
+	friendNotice := readJSON(t, alice)
+	if friendNotice["notice_type"] != "friend_add" || friendNotice["user_id"] != "bob" {
+		t.Fatalf("unexpected friend notice: %#v", friendNotice)
+	}
+
+	for name, connection := range map[string]*websocket.Conn{"alice": alice, "bob": bob} {
+		friends := responseDataList(t, request(t, connection, "get_friends", map[string]interface{}{}))
+		if len(friends) != 1 {
+			t.Fatalf("%s friends = %#v", name, friends)
+		}
+	}
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": "private_alice_bob",
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+
+	assertOK(t, request(t, alice, "remove_friend", map[string]interface{}{"user_id": "bob"}))
+	removeNotice := readJSON(t, bob)
+	if removeNotice["notice_type"] != "friend_remove" {
+		t.Fatalf("unexpected remove notice: %#v", removeNotice)
+	}
+	if friends := responseDataList(t, request(t, alice, "get_friends", map[string]interface{}{})); len(friends) != 0 {
+		t.Fatalf("friend remained after removal: %#v", friends)
+	}
+	blocked := request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": "private_alice_bob_new",
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	})
+	if blocked["status"] == "ok" {
+		t.Fatalf("new direct conversation was allowed after removal: %#v", blocked)
 	}
 }
 

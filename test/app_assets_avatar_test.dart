@@ -25,6 +25,10 @@ void main() {
       AppAssets.fallbackAvatarForId('SMOKE-ALICE'),
       AppAssets.smokeAccountAvatars['smoke-alice'],
     );
+    expect(
+      AppAssets.fallbackAvatarForId('zzz::smoke-alice'),
+      AppAssets.smokeAccountAvatars['smoke-alice'],
+    );
     expect(accountIds.every(AppAssets.smokeAccountAvatars.containsKey), isTrue);
     expect(avatars.every(AppAssets.fallbackAvatarPool.contains), isTrue);
   });

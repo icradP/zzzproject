@@ -326,6 +326,7 @@ class ZzzExpandableSection extends StatefulWidget {
     this.subtitle,
     this.initiallyExpanded = true,
     this.animated = true,
+    this.dense = false,
     this.onExpansionChanged,
     super.key,
   });
@@ -335,6 +336,7 @@ class ZzzExpandableSection extends StatefulWidget {
   final Widget child;
   final bool initiallyExpanded;
   final bool animated;
+  final bool dense;
   final ValueChanged<bool>? onExpansionChanged;
 
   @override
@@ -380,7 +382,9 @@ class _ZzzExpandableSectionState extends State<ZzzExpandableSection> {
                 borderRadius: BorderRadius.circular(12),
                 onTap: null,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  padding: EdgeInsets.symmetric(
+                    vertical: widget.dense ? 5 : 10,
+                  ),
                   child: Row(
                     children: [
                       Expanded(
@@ -389,9 +393,10 @@ class _ZzzExpandableSectionState extends State<ZzzExpandableSection> {
                           children: [
                             Text(
                               widget.title,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white70,
                                 fontWeight: FontWeight.w700,
+                                fontSize: widget.dense ? 13 : null,
                               ),
                             ),
                             if (widget.subtitle != null) ...[
@@ -411,9 +416,10 @@ class _ZzzExpandableSectionState extends State<ZzzExpandableSection> {
                         duration: duration,
                         curve: _kZzzCurve,
                         turns: _expanded ? 0.5 : 0,
-                        child: const Icon(
+                        child: Icon(
                           Icons.expand_more_rounded,
                           color: Colors.white54,
+                          size: widget.dense ? 20 : 24,
                         ),
                       ),
                     ],
@@ -447,6 +453,7 @@ class ZzzExpandablePanel extends StatelessWidget {
     this.radius = 18,
     this.initiallyExpanded = true,
     this.animated = true,
+    this.dense = false,
     super.key,
   });
 
@@ -458,6 +465,7 @@ class ZzzExpandablePanel extends StatelessWidget {
   final double radius;
   final bool initiallyExpanded;
   final bool animated;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -470,6 +478,7 @@ class ZzzExpandablePanel extends StatelessWidget {
         subtitle: subtitle,
         initiallyExpanded: initiallyExpanded,
         animated: animated,
+        dense: dense,
         child: child,
       ),
     );

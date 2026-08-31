@@ -18,6 +18,7 @@ type MemoryStore struct {
 	conversations     map[string]*Conversation
 	messages          map[string][]*Message // conversationID -> messages
 	friendRequests    map[string]*FriendRequest
+	friendships       map[string]map[string]time.Time
 	forwards          map[string]*ForwardMessage
 	mediaFiles        map[string]*MediaFile
 	pushSubscriptions map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
@@ -33,6 +34,7 @@ func NewMemoryStore() *MemoryStore {
 		conversations:     make(map[string]*Conversation),
 		messages:          make(map[string][]*Message),
 		friendRequests:    make(map[string]*FriendRequest),
+		friendships:       make(map[string]map[string]time.Time),
 		forwards:          make(map[string]*ForwardMessage),
 		mediaFiles:        make(map[string]*MediaFile),
 		pushSubscriptions: make(map[string]map[string]*PushSubscription),
@@ -331,6 +333,59 @@ func (s *MemoryStore) GetGroupMembers(groupID string) ([]*GroupMember, error) {
 
 // ---- Friend request operations ----
 
+func (s *MemoryStore) GetFriends(userID string) ([]*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	friendIDs := s.friendships[userID]
+	result := make([]*User, 0, len(friendIDs))
+	for friendID := range friendIDs {
+		if user := s.users[friendID]; user != nil {
+			copy := *user
+			result = append(result, &copy)
+		}
+	}
+	return result, nil
+}
+
+func (s *MemoryStore) AreFriends(userID, friendID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.friendships[userID][friendID]
+	return ok, nil
+}
+
+func (s *MemoryStore) AddFriend(userID, friendID string) (bool, error) {
+	if userID == "" || friendID == "" || userID == friendID {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.friendships[userID] == nil {
+		s.friendships[userID] = make(map[string]time.Time)
+	}
+	if s.friendships[friendID] == nil {
+		s.friendships[friendID] = make(map[string]time.Time)
+	}
+	if _, exists := s.friendships[userID][friendID]; exists {
+		return false, nil
+	}
+	now := time.Now()
+	s.friendships[userID][friendID] = now
+	s.friendships[friendID][userID] = now
+	return true, nil
+}
+
+func (s *MemoryStore) RemoveFriend(userID, friendID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.friendships[userID][friendID]; !exists {
+		return false, nil
+	}
+	delete(s.friendships[userID], friendID)
+	delete(s.friendships[friendID], userID)
+	return true, nil
+}
+
 func (s *MemoryStore) CreateFriendRequest(fromID, toID, comment string) (*FriendRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -358,7 +413,7 @@ func (s *MemoryStore) GetPendingFriendRequests(userID string) ([]*FriendRequest,
 	defer s.mu.RUnlock()
 	result := make([]*FriendRequest, 0)
 	for _, req := range s.friendRequests {
-		if req.ToID == userID && req.Status == "pending" {
+		if (req.ToID == userID || req.FromID == userID) && req.Status == "pending" {
 			result = append(result, req)
 		}
 	}

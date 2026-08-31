@@ -47,6 +47,9 @@ class NoneBotSource implements ImMessageSource {
   // ignore: unused_field
   final AvatarResolver _avatarResolver;
 
+  @override
+  bool get supportsFriendManagement => false;
+
   set storageConfig(dynamic v) {}
   set mediaCache(dynamic v) {}
 
@@ -152,6 +155,47 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<List<ImUser>> getUsers() async => [];
+
+  @override
+  Future<List<ImUser>> searchUsers(String query) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<void> removeFriend(String userId) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
 
   @override
   Future<List<ImConversation>> getGroupList() async => [];

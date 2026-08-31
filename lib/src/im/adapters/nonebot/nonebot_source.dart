@@ -61,6 +61,9 @@ class NoneBotSource implements ImMessageSource {
   final OneBotConfig config;
   final bool _mock;
   final AvatarResolver _avatarResolver;
+
+  @override
+  bool get supportsFriendManagement => false;
   ImStorageConfig? _storageConfig;
 
   /// Pass an [ImStorageConfig] to redirect media / avatar / database
@@ -532,6 +535,47 @@ class NoneBotSource implements ImMessageSource {
         .where((u) => u != null)
         .cast<ImUser>()
         .toList();
+  }
+
+  @override
+  Future<List<ImUser>> searchUsers(String query) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
+  }
+
+  @override
+  Future<void> removeFriend(String userId) async {
+    throw UnsupportedError(
+      'Friend management is owned by the connected platform.',
+    );
   }
 
   @override

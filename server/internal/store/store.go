@@ -45,6 +45,10 @@ type Store interface {
 	GetGroupMembers(groupID string) ([]*GroupMember, error)
 
 	// ---- Friend request operations ----
+	GetFriends(userID string) ([]*User, error)
+	AreFriends(userID, friendID string) (bool, error)
+	AddFriend(userID, friendID string) (bool, error)
+	RemoveFriend(userID, friendID string) (bool, error)
 	CreateFriendRequest(fromID, toID, comment string) (*FriendRequest, error)
 	GetFriendRequest(id string) (*FriendRequest, error)
 	GetPendingFriendRequests(userID string) ([]*FriendRequest, error)

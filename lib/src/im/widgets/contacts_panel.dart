@@ -7,6 +7,7 @@ import '../im_scope.dart';
 import '../models/im_models.dart';
 import '../models/im_source_address.dart';
 import 'contact_tile.dart';
+import 'friend_center_panel.dart';
 
 class ContactsPanel extends StatefulWidget {
   const ContactsPanel({required this.onConversationSelected, super.key});
@@ -23,6 +24,8 @@ class _ContactsPanelState extends State<ContactsPanel> {
 
   List<ImUser> _users = const [];
   List<ImConversation> _groups = const [];
+  List<ImFriendRequest> _friendRequests = const [];
+  String? _selfId;
   bool _loading = true;
   bool _showGroups = false;
 
@@ -43,16 +46,36 @@ class _ContactsPanelState extends State<ContactsPanel> {
     try {
       final users = await repo.getUsers();
       final groups = await repo.getGroupList();
+      final self = await repo.getCurrentUser();
+      final friendRequests =
+          repo.supportsFriendManagement
+              ? await repo.getFriendRequests()
+              : const <ImFriendRequest>[];
       if (mounted) {
         setState(() {
           _users = users;
           _groups = groups;
+          _friendRequests = friendRequests;
+          _selfId = self.id;
           _loading = false;
         });
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _openFriendCenter() async {
+    await showZzzModalPanel<void>(
+      context: context,
+      builder:
+          (_) => FriendCenterPanel(
+            onChanged: () async {
+              await _loadData();
+            },
+          ),
+    );
+    if (mounted) await _loadData();
   }
 
   List<ImUser> get _filteredUsers {
@@ -172,6 +195,16 @@ class _ContactsPanelState extends State<ContactsPanel> {
                 onTap: _createGroup,
                 icon: Icons.group_add_outlined,
               ),
+            if (!_showGroups &&
+                ImScope.repositoryOf(context).supportsFriendManagement)
+              PendingFriendButton(
+                count:
+                    _friendRequests
+                        .where((request) => request.isPending)
+                        .where((request) => request.toUser.id == _selfId)
+                        .length,
+                onTap: _openFriendCenter,
+              ),
           ],
         ),
         const SizedBox(height: 8),
@@ -265,6 +298,7 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   final _memberSearchController = TextEditingController();
   final _selectedMemberIds = <String>{};
   String _memberQuery = '';
+  bool _showSelectedOnly = false;
 
   bool get _hasValidName {
     final name = _nameController.text.trim();
@@ -272,12 +306,16 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   }
 
   List<ImUser> get _filteredUsers {
-    if (_memberQuery.isEmpty) return widget.users;
     return widget.users
         .where((user) {
           final id = ImSourceAddress.localIdOf(user.id).toLowerCase();
-          return user.displayName.toLowerCase().contains(_memberQuery) ||
+          final matchesQuery =
+              _memberQuery.isEmpty ||
+              user.displayName.toLowerCase().contains(_memberQuery) ||
               id.contains(_memberQuery);
+          final matchesSelection =
+              !_showSelectedOnly || _selectedMemberIds.contains(user.id);
+          return matchesQuery && matchesSelection;
         })
         .toList(growable: false);
   }
@@ -308,6 +346,20 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
     setState(() {
       if (!_selectedMemberIds.add(user.id)) {
         _selectedMemberIds.remove(user.id);
+      }
+    });
+  }
+
+  bool get _allMembersSelected =>
+      widget.users.isNotEmpty &&
+      widget.users.every((user) => _selectedMemberIds.contains(user.id));
+
+  void _toggleAllMembers() {
+    setState(() {
+      if (_allMembersSelected) {
+        _selectedMemberIds.clear();
+      } else {
+        _selectedMemberIds.addAll(widget.users.map((user) => user.id));
       }
     });
   }
@@ -350,6 +402,7 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
             final selectedMembers = _buildSelectedMembers(
               selectedUsers,
               initiallyExpanded: isWide,
+              compact: !isWide,
             );
 
             if (!isWide) {
@@ -422,12 +475,27 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       key: const ValueKey('create-group-profile'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text(
+          'Group identity',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 10),
         Align(
           alignment: Alignment.centerLeft,
           child: _GroupAvatarPreview(users: selectedUsers, size: 72),
         ),
         const SizedBox(height: 12),
         nameInput,
+        const SizedBox(height: 8),
+        const Text(
+          'Pick a name now. You can manage members after the group is created.',
+          style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.35),
+        ),
       ],
     );
   }
@@ -435,15 +503,20 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   Widget _buildSelectedMembers(
     List<ImUser> selectedUsers, {
     required bool initiallyExpanded,
+    required bool compact,
   }) {
-    return ZzzExpandableSection(
-      key: const ValueKey('create-group-selected-section'),
+    return ZzzExpandablePanel(
+      key: const ValueKey('create-group-selected-panel'),
       title: 'Selected members',
       subtitle:
           selectedUsers.isEmpty
               ? 'No members selected'
               : '${selectedUsers.length} selected',
+      padding:
+          compact ? EdgeInsets.zero : const EdgeInsets.fromLTRB(12, 2, 12, 2),
+      radius: 14,
       initiallyExpanded: initiallyExpanded,
+      dense: compact,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -492,6 +565,8 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   }
 
   Widget _buildMemberBrowser(List<ImUser> filteredUsers) {
+    final selectedCount = _selectedMemberIds.length;
+    final showSelection = _showSelectedOnly && selectedCount > 0;
     return Column(
       key: const ValueKey('create-group-member-browser'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -505,8 +580,50 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
               ),
             ),
             Text(
-              '${filteredUsers.length}',
+              showSelection
+                  ? '$selectedCount selected'
+                  : '${filteredUsers.length} available',
               style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
+            const SizedBox(width: 2),
+            IconButton(
+              key: const ValueKey('create-group-filter-selected'),
+              tooltip: showSelection ? 'Show all contacts' : 'Show selected',
+              onPressed:
+                  selectedCount == 0
+                      ? null
+                      : () => setState(
+                        () => _showSelectedOnly = !_showSelectedOnly,
+                      ),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(28, 28),
+                fixedSize: const Size(28, 28),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: Icon(
+                showSelection
+                    ? Icons.filter_alt_rounded
+                    : Icons.filter_alt_outlined,
+                size: 19,
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('create-group-select-all'),
+              tooltip: _allMembersSelected ? 'Clear all' : 'Select all',
+              onPressed: widget.users.isEmpty ? null : _toggleAllMembers,
+              style: IconButton.styleFrom(
+                minimumSize: const Size(28, 28),
+                fixedSize: const Size(28, 28),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: Icon(
+                _allMembersSelected
+                    ? Icons.deselect_rounded
+                    : Icons.done_all_rounded,
+                size: 19,
+              ),
             ),
           ],
         ),
@@ -527,10 +644,12 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
         Expanded(
           child:
               filteredUsers.isEmpty
-                  ? const Center(
+                  ? Center(
                     child: Text(
-                      'No matching contacts',
-                      style: TextStyle(color: Colors.white54),
+                      _showSelectedOnly
+                          ? 'No selected contacts'
+                          : 'No matching contacts',
+                      style: const TextStyle(color: Colors.white54),
                     ),
                   )
                   : ListView.separated(

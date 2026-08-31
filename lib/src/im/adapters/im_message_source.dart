@@ -10,6 +10,9 @@ enum ConnectionStatus { disconnected, connecting, connected, failed }
 abstract class ImMessageSource {
   String get platformName;
 
+  /// Whether this source owns first-class friend relationships.
+  bool get supportsFriendManagement => false;
+
   Stream<ConnectionStatus> get connectionStatus;
 
   Future<ImUser> getCurrentUser();
@@ -38,6 +41,44 @@ abstract class ImMessageSource {
 
   /// All known users from the platform (excluding self).
   Future<List<ImUser>> getUsers();
+
+  /// Search accounts owned by this source. Unsupported sources return an
+  /// [UnsupportedError] through the default implementation.
+  Future<List<ImUser>> searchUsers(String query) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this source.',
+    );
+  }
+
+  Future<List<ImFriendRequest>> getFriendRequests() async {
+    throw UnsupportedError(
+      'Friend management is not supported by this source.',
+    );
+  }
+
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this source.',
+    );
+  }
+
+  Future<void> handleFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this source.',
+    );
+  }
+
+  Future<void> removeFriend(String userId) async {
+    throw UnsupportedError(
+      'Friend management is not supported by this source.',
+    );
+  }
 
   /// All known groups from the platform, as lightweight conversation stubs.
   /// These may not have any messages yet.

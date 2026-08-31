@@ -37,7 +37,7 @@ class ImMemberGrid extends StatelessWidget {
                   final name = snapshot.data?.name ?? userId;
                   final avatar =
                       snapshot.data?.avatar ??
-                      AssetImage(AppAssets.characterWise);
+                      AssetImage(AppAssets.fallbackAvatarForId(userId));
                   return SizedBox(
                     width: 66,
                     child: Column(

@@ -20,9 +20,16 @@ void main() {
           final action = requestJson['action'];
           final data = switch (action) {
             'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
-            'get_users' => [
+            'get_friends' => [
               {'user_id': 'smoke-alice', 'nickname': 'Alice', 'avatar_url': ''},
               {'user_id': 'smoke-bob', 'nickname': 'Bob', 'avatar_url': ''},
+            ],
+            'search_users' => [
+              {
+                'user_id': 'smoke-stranger',
+                'nickname': 'Stranger',
+                'avatar_url': '',
+              },
             ],
             'get_conversations' => [
               {
@@ -75,6 +82,12 @@ void main() {
       expect(bob?.avatarAssetPath, AppAssets.fallbackAvatarForId('smoke-bob'));
       expect(alice?.avatarAssetPath, isNot(bob?.avatarAssetPath));
       expect(conversation?.avatarAssetPath, alice?.avatarAssetPath);
+
+      final searchResults = await source.searchUsers('stranger');
+      expect(searchResults.single.id, 'smoke-stranger');
+      final contactIds = (await source.getUsers()).map((user) => user.id);
+      expect(contactIds, containsAll(<String>['smoke-alice', 'smoke-bob']));
+      expect(contactIds, isNot(contains('smoke-stranger')));
     },
   );
 }

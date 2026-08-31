@@ -94,6 +94,7 @@ type NoticeType string
 
 const (
 	NoticeTypeFriendAdd     NoticeType = "friend_add"
+	NoticeTypeFriendRemove  NoticeType = "friend_remove"
 	NoticeTypeFriendRecall  NoticeType = "friend_recall"
 	NoticeTypeGroupRecall   NoticeType = "group_recall"
 	NoticeTypeGroupIncrease NoticeType = "group_increase"
@@ -164,6 +165,9 @@ const (
 	ActionUpdateProfile      = "update_profile"
 	ActionGetUsers           = "get_users"
 	ActionGetFriends         = "get_friends"
+	ActionSearchUsers        = "search_users"
+	ActionGetFriendRequests  = "get_friend_requests"
+	ActionRemoveFriend       = "remove_friend"
 	ActionGetGroupList       = "get_group_list"
 	ActionGetGroupInfo       = "get_group_info"
 	ActionCreateGroup        = "create_group"
@@ -261,6 +265,16 @@ type FriendHandleParams struct {
 	Action string `json:"action"` // "accept" or "reject"
 }
 
+// FriendRequestInfo is the client-facing representation of a friend request.
+type FriendRequestInfo struct {
+	Flag      string `json:"flag"`
+	FromUser  User   `json:"from_user"`
+	ToUser    User   `json:"to_user"`
+	Comment   string `json:"comment,omitempty"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 // UploadFileParams are the params for the "upload_file" action.
 type UploadFileParams struct {
 	File     string `json:"file"` // base64 or file path
@@ -281,10 +295,11 @@ type UpdateProfileParams struct {
 
 // User represents a user in API responses.
 type User struct {
-	UserID   string `json:"user_id"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar_url,omitempty"`
-	Online   bool   `json:"online"`
+	UserID       string `json:"user_id"`
+	Nickname     string `json:"nickname"`
+	Avatar       string `json:"avatar_url,omitempty"`
+	Online       bool   `json:"online"`
+	Relationship string `json:"relationship,omitempty"`
 }
 
 // Group represents a group in API responses.

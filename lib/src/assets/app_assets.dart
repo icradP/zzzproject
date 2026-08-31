@@ -95,21 +95,28 @@ class AppAssets {
   /// These accounts deliberately carry different visual identities instead of
   /// looking like a sequence produced by the generic fallback hash.
   static const Map<String, String> smokeAccountAvatars = {
-    'deployment-check': '${_characters}JaneDoe.png',
-    'smoke-alice': '${_characters}temp/HoshimiMiyabi.png',
-    'smoke-bob': '${_characters}temp/Lighter.png',
-    'codex-pwa-probe': '${_characters}npcs/Enzo.png',
-    'alice': '${_characters}ZhuYuan.png',
-    'test1': '${_characters}temp/SethLowell.png',
-    'xiaodeng': '${_characters}Qingyi.png',
+    'deployment-check': '${_characters}npcs/Monica.png',
+    'smoke-alice': '${_characters}npcs/Amy.png',
+    'smoke-bob': '${_characters}npcs/Enzo.png',
+    'codex-pwa-probe': '${_characters}npcs/Venus.png',
+    'alice': '${_characters}temp/GraceHoward.png',
+    'test1': '${_characters}temp/BurniceWhite.png',
+    'xiaodeng': '${_characters}npcs/Asha.png',
+    'smoke-cathy': '${_characters}temp/AlexandrinaSebastiane.png',
+    'smoke-diego': '${_characters}temp/CaesarKing.png',
+    'smoke-lina': '${_characters}temp/Soukaku.png',
+    'smoke-rin': '${_characters}temp/NekomiyaMana.png',
+    'probe-android': '${_characters}temp/Soldier11.png',
+    'probe-desktop': '${_characters}temp/KoledaBelobog.png',
   };
 
   /// Keeps generated avatars stable across sessions while distributing users.
   static String fallbackAvatarForId(String id) {
-    final smokeAvatar = smokeAccountAvatars[id.toLowerCase()];
+    final normalizedId = id.contains('::') ? id.split('::').last : id;
+    final smokeAvatar = smokeAccountAvatars[normalizedId.toLowerCase()];
     if (smokeAvatar != null) return smokeAvatar;
     var hash = 0;
-    for (final codeUnit in id.codeUnits) {
+    for (final codeUnit in normalizedId.codeUnits) {
       hash = (hash * 31 + codeUnit) & 0x7fffffff;
     }
     return fallbackAvatarPool[hash % fallbackAvatarPool.length];

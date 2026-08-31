@@ -137,8 +137,8 @@ class _ImHomePageState extends State<ImHomePage>
 
   Future<ImageProvider> _resolveUserAvatar(String userId) async {
     final user = await ImScope.repositoryOf(context).getUser(userId);
-    return user?.avatarImage(AppAssets.characterWise) ??
-        AssetImage(AppAssets.characterWise);
+    return user?.avatarImage(AppAssets.fallbackAvatarForId(userId)) ??
+        AssetImage(AppAssets.fallbackAvatarForId(userId));
   }
 
   @override

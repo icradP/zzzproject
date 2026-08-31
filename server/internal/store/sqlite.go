@@ -43,6 +43,11 @@ func (s *SQLiteStore) initSchema() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS schema_migrations (
+		id TEXT PRIMARY KEY,
+		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS conversations (
 		id TEXT PRIMARY KEY,
 		type TEXT NOT NULL, -- "private" or "group"
@@ -104,6 +109,17 @@ func (s *SQLiteStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests(to_id, status);
 
+	CREATE TABLE IF NOT EXISTS friendships (
+		user_id TEXT NOT NULL,
+		friend_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (user_id, friend_id),
+		FOREIGN KEY (user_id) REFERENCES users(id),
+		FOREIGN KEY (friend_id) REFERENCES users(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_friendships_user ON friendships(user_id, created_at);
+
 	CREATE TABLE IF NOT EXISTS forwards (
 		id TEXT PRIMARY KEY,
 		messages TEXT NOT NULL, -- JSON array of messages
@@ -142,7 +158,43 @@ func (s *SQLiteStore) initSchema() error {
 		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return err
 	}
-	return nil
+	return s.migrateLegacyFriendships()
+}
+
+func (s *SQLiteStore) migrateLegacyFriendships() error {
+	const migrationID = "001_private_conversations_to_friendships"
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var applied int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM schema_migrations WHERE id = ?", migrationID,
+	).Scan(&applied); err != nil {
+		return err
+	}
+	if applied > 0 {
+		return tx.Commit()
+	}
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO friendships (user_id, friend_id, created_at)
+		SELECT source.value, target.value, conversation.created_at
+		FROM conversations conversation
+		JOIN json_each(conversation.participants) source
+		JOIN json_each(conversation.participants) target
+		WHERE conversation.type = 'private'
+		  AND source.value <> target.value
+		  AND EXISTS (SELECT 1 FROM users WHERE id = source.value)
+		  AND EXISTS (SELECT 1 FROM users WHERE id = target.value)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO schema_migrations (id) VALUES (?)", migrationID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Close closes the database connection.
@@ -601,6 +653,98 @@ func (s *SQLiteStore) GetGroupMembers(groupID string) ([]*GroupMember, error) {
 
 // ---- Friend request operations ----
 
+func (s *SQLiteStore) GetFriends(userID string) ([]*User, error) {
+	rows, err := s.db.Query(`
+		SELECT u.id, u.nickname, u.avatar_url, u.online, u.password_hash, u.created_at
+		FROM friendships f
+		JOIN users u ON u.id = f.friend_id
+		WHERE f.user_id = ?
+		ORDER BY u.nickname COLLATE NOCASE, u.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := make([]*User, 0)
+	for rows.Next() {
+		user := &User{}
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (s *SQLiteStore) AreFriends(userID, friendID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM friendships WHERE user_id = ? AND friend_id = ?",
+		userID, friendID,
+	).Scan(&count)
+	return count > 0, err
+}
+
+func (s *SQLiteStore) AddFriend(userID, friendID string) (bool, error) {
+	if userID == "" || friendID == "" || userID == friendID {
+		return false, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(
+		"INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)",
+		userID, friendID,
+	)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		"INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)",
+		friendID, userID,
+	); err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func (s *SQLiteStore) RemoveFriend(userID, friendID string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(
+		"DELETE FROM friendships WHERE user_id = ? AND friend_id = ?",
+		userID, friendID,
+	)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		"DELETE FROM friendships WHERE user_id = ? AND friend_id = ?",
+		friendID, userID,
+	); err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func (s *SQLiteStore) CreateFriendRequest(fromID, toID, comment string) (*FriendRequest, error) {
 	req := &FriendRequest{
 		ID:        fmt.Sprintf("freq_%d", time.Now().UnixNano()),
@@ -639,7 +783,8 @@ func (s *SQLiteStore) GetFriendRequest(id string) (*FriendRequest, error) {
 
 func (s *SQLiteStore) GetPendingFriendRequests(userID string) ([]*FriendRequest, error) {
 	rows, err := s.db.Query(
-		"SELECT id, from_id, to_id, comment, status, created_at FROM friend_requests WHERE to_id = ? AND status = 'pending'",
+		"SELECT id, from_id, to_id, comment, status, created_at FROM friend_requests WHERE (to_id = ? OR from_id = ?) AND status = 'pending' ORDER BY created_at DESC",
+		userID,
 		userID,
 	)
 	if err != nil {

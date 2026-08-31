@@ -10,6 +10,16 @@ enum ImConversationType { direct, group }
 
 enum ImMessageStatus { sending, sent, delivered, read, failed }
 
+/// Relationship between the signed-in user and another account.
+enum ImRelationship { none, friend, incoming, outgoing }
+
+ImRelationship imRelationshipFromString(String? value) => switch (value) {
+  'friend' => ImRelationship.friend,
+  'incoming' => ImRelationship.incoming,
+  'outgoing' => ImRelationship.outgoing,
+  _ => ImRelationship.none,
+};
+
 /// Mirrors OneBot segment types for local storage / display decisions.
 enum ImMessageKind {
   text,
@@ -55,6 +65,7 @@ class ImUser {
     this.avatarBytes,
     this.avatarLocalPath,
     this.isOnline = false,
+    this.relationship = ImRelationship.none,
     this.sourceId,
     this.sourceLabel,
   });
@@ -67,6 +78,7 @@ class ImUser {
   /// Local file path to a downloaded avatar (e.g. QQ avatar cached to disk).
   final String? avatarLocalPath;
   final bool isOnline;
+  final ImRelationship relationship;
   final String? sourceId;
   final String? sourceLabel;
 
@@ -92,6 +104,7 @@ class ImUser {
     Uint8List? avatarBytes,
     String? avatarLocalPath,
     bool? isOnline,
+    ImRelationship? relationship,
     String? sourceId,
     String? sourceLabel,
   }) {
@@ -102,10 +115,36 @@ class ImUser {
       avatarBytes: avatarBytes ?? this.avatarBytes,
       avatarLocalPath: avatarLocalPath ?? this.avatarLocalPath,
       isOnline: isOnline ?? this.isOnline,
+      relationship: relationship ?? this.relationship,
       sourceId: sourceId ?? this.sourceId,
       sourceLabel: sourceLabel ?? this.sourceLabel,
     );
   }
+}
+
+/// A pending incoming or outgoing friend request.
+class ImFriendRequest {
+  const ImFriendRequest({
+    required this.id,
+    required this.fromUser,
+    required this.toUser,
+    this.comment = '',
+    this.status = 'pending',
+    this.createdAt,
+    this.sourceId,
+    this.sourceLabel,
+  });
+
+  final String id;
+  final ImUser fromUser;
+  final ImUser toUser;
+  final String comment;
+  final String status;
+  final DateTime? createdAt;
+  final String? sourceId;
+  final String? sourceLabel;
+
+  bool get isPending => status == 'pending';
 }
 
 /// A chat thread shown in the conversation list.
@@ -141,6 +180,7 @@ class ImConversation {
   final String? sourceLabel;
 
   bool get isGroup => type == ImConversationType.group;
+  bool get isDirect => type == ImConversationType.direct;
 
   /// Builds an [ImageProvider] for this conversation's avatar, checking
   /// local file cache first, then asset path.

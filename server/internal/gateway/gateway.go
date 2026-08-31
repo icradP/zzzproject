@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -173,6 +174,12 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleGetUsers(client, req)
 	case protocol.ActionGetFriends:
 		g.handleGetFriends(client, req)
+	case protocol.ActionSearchUsers:
+		g.handleSearchUsers(client, req)
+	case protocol.ActionGetFriendRequests:
+		g.handleGetFriendRequests(client, req)
+	case protocol.ActionRemoveFriend:
+		g.handleRemoveFriend(client, req)
 	case protocol.ActionGetGroupList:
 		g.handleGetGroupList(client, req)
 	case protocol.ActionGetGroupInfo:
@@ -252,6 +259,23 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 		}
 		if !seen[client.userID] {
 			participants = append(participants, client.userID)
+		}
+	}
+	if convType == "private" {
+		existing, _ := g.store.GetConversation(id)
+		if existing == nil {
+			otherUserID := ""
+			for _, participant := range participants {
+				if participant != client.userID {
+					otherUserID = participant
+					break
+				}
+			}
+			friends, _ := g.store.AreFriends(client.userID, otherUserID)
+			if otherUserID == "" || !friends {
+				g.sendError(client, req.Echo, "direct messages require a friend relationship")
+				return
+			}
 		}
 	}
 	conversation := &store.Conversation{
@@ -535,9 +559,7 @@ func (g *Gateway) canAccessConversation(userID, conversationID string) bool {
 	}
 	conversation, err := g.store.GetConversation(conversationID)
 	if err != nil || conversation == nil {
-		// A new direct conversation is allowed; ensure_conversation will record
-		// its participants before the first message is sent.
-		return true
+		return false
 	}
 	for _, participant := range conversation.Participants {
 		if participant == userID {
@@ -833,7 +855,7 @@ func (g *Gateway) handleGetUsers(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "not authenticated")
 		return
 	}
-	users, _ := g.store.GetUsers()
+	users, _ := g.store.GetFriends(client.userID)
 	result := make([]protocol.User, len(users))
 	for i, u := range users {
 		result[i] = protocol.User{
@@ -858,8 +880,7 @@ func (g *Gateway) handleGetFriends(client *Client, req *protocol.Request) {
 		return
 	}
 
-	// For MVP, return all users except self
-	users, _ := g.store.GetUsers()
+	users, _ := g.store.GetFriends(client.userID)
 	result := make([]protocol.User, 0)
 	for _, u := range users {
 		if u.ID != client.userID {
@@ -877,6 +898,120 @@ func (g *Gateway) handleGetFriends(client *Client, req *protocol.Request) {
 		RetCode: 0,
 		Data:    result,
 		Echo:    req.Echo,
+	})
+}
+
+func (g *Gateway) handleSearchUsers(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid search_users params")
+		return
+	}
+	query, _ := params["query"].(string)
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || len(query) > 64 {
+		g.sendError(client, req.Echo, "query must be 1-64 characters")
+		return
+	}
+	requests, _ := g.store.GetPendingFriendRequests(client.userID)
+	users, err := g.store.GetUsers()
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to search users")
+		return
+	}
+	result := make([]protocol.User, 0, 20)
+	for _, user := range users {
+		if user.ID == client.userID ||
+			(!strings.Contains(strings.ToLower(user.ID), query) &&
+				!strings.Contains(strings.ToLower(user.Nickname), query)) {
+			continue
+		}
+		relationship := "none"
+		if friends, _ := g.store.AreFriends(client.userID, user.ID); friends {
+			relationship = "friend"
+		} else {
+			for _, pending := range requests {
+				if pending.FromID == client.userID && pending.ToID == user.ID {
+					relationship = "outgoing"
+					break
+				}
+				if pending.ToID == client.userID && pending.FromID == user.ID {
+					relationship = "incoming"
+					break
+				}
+			}
+		}
+		result = append(result, protocol.User{
+			UserID: user.ID, Nickname: user.Nickname, Avatar: user.Avatar,
+			Online: user.Online, Relationship: relationship,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		iExact := strings.ToLower(result[i].UserID) == query
+		jExact := strings.ToLower(result[j].UserID) == query
+		if iExact != jExact {
+			return iExact
+		}
+		return strings.ToLower(result[i].Nickname) < strings.ToLower(result[j].Nickname)
+	})
+	if len(result) > 20 {
+		result = result[:20]
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Data: result, Echo: req.Echo})
+}
+
+func (g *Gateway) handleGetFriendRequests(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	requests, err := g.store.GetPendingFriendRequests(client.userID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load friend requests")
+		return
+	}
+	result := make([]protocol.FriendRequestInfo, 0, len(requests))
+	for _, friendRequest := range requests {
+		from, _ := g.store.GetUser(friendRequest.FromID)
+		to, _ := g.store.GetUser(friendRequest.ToID)
+		if from == nil || to == nil {
+			continue
+		}
+		result = append(result, protocol.FriendRequestInfo{
+			Flag:     friendRequest.ID,
+			FromUser: protocol.User{UserID: from.ID, Nickname: from.Nickname, Avatar: from.Avatar, Online: from.Online},
+			ToUser:   protocol.User{UserID: to.ID, Nickname: to.Nickname, Avatar: to.Avatar, Online: to.Online},
+			Comment:  friendRequest.Comment, Status: friendRequest.Status,
+			CreatedAt: friendRequest.CreatedAt.Unix(),
+		})
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Data: result, Echo: req.Echo})
+}
+
+func (g *Gateway) handleRemoveFriend(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid remove_friend params")
+		return
+	}
+	friendID, _ := params["user_id"].(string)
+	removed, err := g.store.RemoveFriend(client.userID, friendID)
+	if err != nil || !removed {
+		g.sendError(client, req.Echo, "friend relationship not found")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo})
+	g.sendToUser(friendID, protocol.NoticeEvent{
+		PostType: "notice", NoticeType: protocol.NoticeTypeFriendRemove,
+		UserID: client.userID,
 	})
 }
 
@@ -1168,8 +1303,38 @@ func (g *Gateway) handleFriendRequest(client *Client, req *protocol.Request) {
 
 	targetID, _ := params["user_id"].(string)
 	comment, _ := params["comment"].(string)
+	targetID = strings.TrimSpace(targetID)
+	comment = strings.TrimSpace(comment)
+	if targetID == "" || targetID == client.userID {
+		g.sendError(client, req.Echo, "valid target user required")
+		return
+	}
+	if len(comment) > 200 {
+		g.sendError(client, req.Echo, "comment is too long")
+		return
+	}
+	if target, _ := g.store.GetUser(targetID); target == nil {
+		g.sendError(client, req.Echo, "user not found")
+		return
+	}
+	if friends, _ := g.store.AreFriends(client.userID, targetID); friends {
+		g.sendError(client, req.Echo, "already friends")
+		return
+	}
+	pending, _ := g.store.GetPendingFriendRequests(client.userID)
+	for _, existing := range pending {
+		if (existing.FromID == client.userID && existing.ToID == targetID) ||
+			(existing.FromID == targetID && existing.ToID == client.userID) {
+			g.sendError(client, req.Echo, "friend request already pending")
+			return
+		}
+	}
 
-	friendReq, _ := g.store.CreateFriendRequest(client.userID, targetID, comment)
+	friendReq, err := g.store.CreateFriendRequest(client.userID, targetID, comment)
+	if err != nil || friendReq == nil {
+		g.sendError(client, req.Echo, "failed to create friend request")
+		return
+	}
 
 	// Notify target user
 	g.sendToUser(targetID, protocol.RequestEvent{
@@ -1204,8 +1369,34 @@ func (g *Gateway) handleFriendHandle(client *Client, req *protocol.Request) {
 
 	flag, _ := params["flag"].(string)
 	action, _ := params["action"].(string)
-
-	handleOk, _ := g.store.HandleFriendRequest(flag, action)
+	friendReq, _ := g.store.GetFriendRequest(flag)
+	if friendReq == nil || friendReq.ToID != client.userID || friendReq.Status != "pending" {
+		g.sendError(client, req.Echo, "friend request not found")
+		return
+	}
+	normalizedAction := ""
+	switch action {
+	case "accept", "accepted":
+		normalizedAction = "accepted"
+	case "reject", "rejected":
+		normalizedAction = "rejected"
+	default:
+		g.sendError(client, req.Echo, "action must be accept or reject")
+		return
+	}
+	friendAdded := false
+	if normalizedAction == "accepted" {
+		var err error
+		friendAdded, err = g.store.AddFriend(friendReq.FromID, friendReq.ToID)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to add friend")
+			return
+		}
+	}
+	handleOk, err := g.store.HandleFriendRequest(flag, normalizedAction)
+	if (err != nil || !handleOk) && friendAdded {
+		_, _ = g.store.RemoveFriend(friendReq.FromID, friendReq.ToID)
+	}
 	if handleOk {
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
@@ -1214,8 +1405,7 @@ func (g *Gateway) handleFriendHandle(client *Client, req *protocol.Request) {
 		})
 
 		// Notify requester
-		friendReq, _ := g.store.GetFriendRequest(flag)
-		if friendReq != nil && action == "accepted" {
+		if normalizedAction == "accepted" {
 			g.sendToUser(friendReq.FromID, protocol.NoticeEvent{
 				PostType:   "notice",
 				NoticeType: protocol.NoticeTypeFriendAdd,

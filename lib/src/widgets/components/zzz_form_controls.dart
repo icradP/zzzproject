@@ -8,6 +8,7 @@ class ZzzTextInput extends StatefulWidget {
     this.prefixIcon,
     this.minLines = 1,
     this.maxLines = 1,
+    this.maxLength,
     this.autofocus = false,
     this.textInputAction,
     this.onChanged,
@@ -25,6 +26,7 @@ class ZzzTextInput extends StatefulWidget {
   final Widget? prefixIcon;
   final int minLines;
   final int maxLines;
+  final int? maxLength;
   final bool autofocus;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onChanged;
@@ -83,6 +85,7 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
         focusNode: _focusNode,
         minLines: widget.minLines,
         maxLines: widget.maxLines,
+        maxLength: widget.maxLength,
         autofocus: widget.autofocus,
         textInputAction: widget.textInputAction,
         obscureText: widget.obscureText,
