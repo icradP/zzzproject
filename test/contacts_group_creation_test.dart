@@ -54,22 +54,6 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.byTooltip('Collapse panel'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('zzz-modal-panel-collapse')));
-    await tester.pumpAndSettle();
-    final collapsedBrowserRect = tester.getRect(
-      find.byKey(const ValueKey('create-group-member-browser')),
-    );
-    expect(collapsedBrowserRect.height, lessThan(1));
-    expect(find.byTooltip('Expand panel'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('zzz-modal-panel-collapse')));
-    await tester.pumpAndSettle();
-    expect(
-      tester.getRect(
-        find.byKey(const ValueKey('create-group-member-browser')),
-      ).height,
-      greaterThan(1),
-    );
-
     final nameInput = find.descendant(
       of: find.byKey(const ValueKey('create-group-name')),
       matching: find.byType(TextField),

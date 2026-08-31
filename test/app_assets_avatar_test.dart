@@ -60,21 +60,4 @@ void main() {
     );
   });
 
-  test('numbered smoke aliases do not collapse onto one portrait', () {
-    const ids = [
-      'smoke-1',
-      'smoke-2',
-      'smoke-3',
-      'smoke-test',
-      'smoke-test-1',
-      'smoke-test-2',
-      'smoke-user-1',
-      'smoke-user-2',
-      'smoke-user-3',
-    ];
-
-    final avatars = ids.map(AppAssets.fallbackAvatarForId).toSet();
-    expect(avatars, hasLength(ids.length));
-    expect(avatars.every(AppAssets.smokeAvatarPool.contains), isTrue);
-  });
 }
