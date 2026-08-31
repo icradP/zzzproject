@@ -191,9 +191,10 @@ type AuthParams struct {
 
 // RegisterParams are the params for the "register" action.
 type RegisterParams struct {
-	UserID   string `json:"user_id"`
-	Password string `json:"password"`
-	Nickname string `json:"nickname,omitempty"`
+	UserID     string `json:"user_id"`
+	Password   string `json:"password"`
+	Nickname   string `json:"nickname,omitempty"`
+	InviteCode string `json:"invite_code"`
 }
 
 // SendMessageParams are the params for the "send_message" action.

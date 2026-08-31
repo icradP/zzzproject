@@ -35,6 +35,7 @@ type Gateway struct {
 	pushSender  PushSender
 	media       MediaUploader
 	accessToken string
+	inviteCode  string
 	upgrader    websocket.Upgrader
 
 	mu      sync.RWMutex
@@ -75,6 +76,12 @@ func (g *Gateway) SetMediaUploader(media MediaUploader) {
 // User identity still comes from the explicit user_id request parameter.
 func (g *Gateway) SetAccessToken(token string) {
 	g.accessToken = token
+}
+
+// SetInviteCode enables account registration with a deployment-specific code.
+// Registration remains disabled when no code is configured.
+func (g *Gateway) SetInviteCode(code string) {
+	g.inviteCode = strings.TrimSpace(code)
 }
 
 // HandleWebSocket handles incoming WebSocket connections.
@@ -364,8 +371,20 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 	userID, _ := params["user_id"].(string)
 	password, _ := params["password"].(string)
 	nickname, _ := params["nickname"].(string)
+	inviteCode, _ := params["invite_code"].(string)
 	userID = strings.TrimSpace(userID)
 	nickname = strings.TrimSpace(nickname)
+	inviteCode = strings.TrimSpace(inviteCode)
+	if g.inviteCode == "" {
+		g.sendError(client, req.Echo, "registration is disabled")
+		return
+	}
+	configuredInvite := sha256.Sum256([]byte(g.inviteCode))
+	providedInvite := sha256.Sum256([]byte(inviteCode))
+	if subtle.ConstantTimeCompare(configuredInvite[:], providedInvite[:]) != 1 {
+		g.sendError(client, req.Echo, "invalid invite code")
+		return
+	}
 	if !validUserID(userID) || len(userID) < 3 || len(userID) > 32 {
 		g.sendError(client, req.Echo, "user_id must be 3-32 characters")
 		return

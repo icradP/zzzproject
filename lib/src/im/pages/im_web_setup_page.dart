@@ -28,6 +28,7 @@ class ImWebSetupPage extends StatefulWidget {
 class _ImWebSetupPageState extends State<ImWebSetupPage> {
   final _userController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _inviteController = TextEditingController();
   bool _connecting = false;
   bool _registering = false;
   String? _error;
@@ -36,6 +37,7 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
   void dispose() {
     _userController.dispose();
     _passwordController.dispose();
+    _inviteController.dispose();
     super.dispose();
   }
 
@@ -43,8 +45,13 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
     final serverUrl = widget.serverUrl.trim();
     final userId = _userController.text.trim();
     final password = _passwordController.text;
+    final inviteCode = _inviteController.text.trim();
     if (userId.isEmpty || password.isEmpty) {
       setState(() => _error = 'Username and password are required.');
+      return;
+    }
+    if (_registering && inviteCode.isEmpty) {
+      setState(() => _error = 'Invitation code is required.');
       return;
     }
     if (!_isValidServerUrl(serverUrl)) {
@@ -63,6 +70,7 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                 serverUrl: serverUrl,
                 userId: userId,
                 password: password,
+                inviteCode: inviteCode,
               )
               : await ZzzServerSource.loginAccount(
                 serverUrl: serverUrl,
@@ -80,7 +88,11 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
     } catch (_) {
       if (mounted) {
         setState(
-          () => _error = 'Unable to sign in. Check your credentials and retry.',
+          () =>
+              _error =
+                  _registering
+                      ? 'Unable to create account. Check the invitation code and account details.'
+                      : 'Unable to sign in. Check your credentials and retry.',
         );
       }
     } finally {
@@ -165,8 +177,24 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                             prefixIcon: const Icon(Icons.key_outlined),
                             fillColor: Colors.white.withValues(alpha: 0.06),
                             foregroundColor: Colors.white,
-                            onSubmitted: (_) => _connect(),
+                            onSubmitted:
+                                _registering ? null : (_) => _connect(),
                           ),
+                          if (_registering) ...[
+                            const SizedBox(height: 12),
+                            ZzzTextInput(
+                              key: const ValueKey('invite-code-field'),
+                              controller: _inviteController,
+                              hintText: 'Invitation code',
+                              obscureText: true,
+                              prefixIcon: const Icon(
+                                Icons.confirmation_number_outlined,
+                              ),
+                              fillColor: Colors.white.withValues(alpha: 0.06),
+                              foregroundColor: Colors.white,
+                              onSubmitted: (_) => _connect(),
+                            ),
+                          ],
                           if (_error != null) ...[
                             const SizedBox(height: 12),
                             Text(

@@ -21,6 +21,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
   Uint8List? _avatarBytes;
   String? _avatarName;
   String? _avatarMime;
+  String? _selectedAvatarAsset;
   late final TextEditingController _nicknameController;
   bool _loading = true;
   bool _saving = false;
@@ -47,6 +48,10 @@ class _ImProfilePageState extends State<ImProfilePage> {
       setState(() {
         _user = user;
         _nicknameController.text = user.displayName;
+        _selectedAvatarAsset =
+            AppAssets.avatarPool.contains(user.avatarAssetPath)
+                ? user.avatarAssetPath
+                : null;
         _loading = false;
       });
     } catch (error) {
@@ -75,6 +80,17 @@ class _ImProfilePageState extends State<ImProfilePage> {
       _avatarBytes = file.bytes;
       _avatarName = file.name;
       _avatarMime = file.extension == null ? null : 'image/${file.extension}';
+      _selectedAvatarAsset = null;
+      _error = null;
+    });
+  }
+
+  void _selectAvatar(String assetPath) {
+    setState(() {
+      _selectedAvatarAsset = assetPath;
+      _avatarBytes = null;
+      _avatarName = null;
+      _avatarMime = null;
       _error = null;
     });
   }
@@ -101,11 +117,18 @@ class _ImProfilePageState extends State<ImProfilePage> {
                   bytes: _avatarBytes,
                   mimeType: _avatarMime,
                 ),
+        avatarAssetPath: _selectedAvatarAsset,
       );
       if (!mounted) return;
       setState(() {
         _user = user;
         _avatarBytes = null;
+        _avatarName = null;
+        _avatarMime = null;
+        _selectedAvatarAsset =
+            AppAssets.avatarPool.contains(user.avatarAssetPath)
+                ? user.avatarAssetPath
+                : null;
       });
       ScaffoldMessenger.of(
         context,
@@ -162,36 +185,113 @@ class _ImProfilePageState extends State<ImProfilePage> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Center(
-                            child: Stack(
-                              children: [
-                                _avatarBytes != null
-                                    ? ZzzAvatar(
-                                      image: MemoryImage(_avatarBytes!),
-                                      size: 96,
-                                    )
-                                    : ZzzAvatar(
-                                      image:
-                                          user?.avatarImage(
+                            child: ZzzAvatar(
+                              image:
+                                  _avatarBytes != null
+                                      ? MemoryImage(_avatarBytes!)
+                                      : _selectedAvatarAsset != null
+                                      ? AssetImage(_selectedAvatarAsset!)
+                                      : user?.avatarImage(
                                             AppAssets.characterWise,
                                           ) ??
                                           const AssetImage(
                                             AppAssets.characterWise,
                                           ),
-                                      size: 96,
-                                    ),
-                                Positioned(
-                                  right: 0,
-                                  bottom: 0,
-                                  child: IconButton.filled(
-                                    tooltip: 'Choose avatar',
-                                    onPressed: _saving ? null : _pickAvatar,
-                                    icon: const Icon(Icons.camera_alt_outlined),
-                                  ),
-                                ),
-                              ],
+                              size: 96,
                             ),
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 20),
+                          const Text(
+                            'Avatar',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 10),
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final columnCount = (constraints.maxWidth / 72)
+                                  .floor()
+                                  .clamp(3, 7);
+                              return GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: AppAssets.avatarPool.length,
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: columnCount,
+                                      crossAxisSpacing: 10,
+                                      mainAxisSpacing: 10,
+                                    ),
+                                itemBuilder: (context, index) {
+                                  final asset = AppAssets.avatarPool[index];
+                                  final selected =
+                                      _selectedAvatarAsset == asset;
+                                  return Semantics(
+                                    label: 'Built-in avatar ${index + 1}',
+                                    selected: selected,
+                                    button: true,
+                                    child: InkWell(
+                                      key: ValueKey('avatar-option-$index'),
+                                      customBorder: const CircleBorder(),
+                                      onTap:
+                                          _saving
+                                              ? null
+                                              : () => _selectAvatar(asset),
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color:
+                                                    selected
+                                                        ? Theme.of(
+                                                          context,
+                                                        ).colorScheme.primary
+                                                        : Colors.white24,
+                                                width: selected ? 3 : 1,
+                                              ),
+                                            ),
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(3),
+                                              child: ClipOval(
+                                                child: Image.asset(
+                                                  asset,
+                                                  fit: BoxFit.cover,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          if (selected)
+                                            const Align(
+                                              alignment: Alignment.topRight,
+                                              child: CircleAvatar(
+                                                radius: 10,
+                                                child: Icon(
+                                                  Icons.check_rounded,
+                                                  size: 14,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _saving ? null : _pickAvatar,
+                            icon: const Icon(Icons.upload_rounded),
+                            label: Text(
+                              _avatarBytes == null
+                                  ? 'Upload image'
+                                  : _avatarName ?? 'Image selected',
+                            ),
+                          ),
+                          const SizedBox(height: 20),
                           ZzzTextInput(
                             controller: _nicknameController,
                             hintText: 'Nickname',

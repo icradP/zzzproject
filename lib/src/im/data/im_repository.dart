@@ -48,6 +48,7 @@ abstract class ImRepository {
   Future<ImUser> updateProfile({
     String? nickname,
     ImMediaUpload? avatar,
+    String? avatarAssetPath,
   }) async {
     throw UnsupportedError('Profile editing is not supported by this source.');
   }

@@ -67,8 +67,15 @@ class SourceBackedRepository implements ImRepository {
   Future<List<ImConversation>> getGroupList() => _source.getGroupList();
 
   @override
-  Future<ImUser> updateProfile({String? nickname, ImMediaUpload? avatar}) =>
-      _source.updateProfile(nickname: nickname, avatar: avatar);
+  Future<ImUser> updateProfile({
+    String? nickname,
+    ImMediaUpload? avatar,
+    String? avatarAssetPath,
+  }) => _source.updateProfile(
+    nickname: nickname,
+    avatar: avatar,
+    avatarAssetPath: avatarAssetPath,
+  );
 
   @override
   Future<ImConversation> createGroup({

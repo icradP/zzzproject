@@ -212,11 +212,13 @@ class CompositeImRepository implements ImRepository {
   Future<ImUser> updateProfile({
     String? nickname,
     ImMediaUpload? avatar,
+    String? avatarAssetPath,
   }) async {
     final registration = _registrationForValue('', sourceId: _primarySourceId);
     final user = await registration.repository.updateProfile(
       nickname: nickname,
       avatar: avatar,
+      avatarAssetPath: avatarAssetPath,
     );
     return _scopeUser(registration, user);
   }

@@ -302,9 +302,10 @@ class ZzzServerSource implements ImMessageSource {
   Future<ImUser> updateProfile({
     String? nickname,
     ImMediaUpload? avatar,
+    String? avatarAssetPath,
   }) async {
     String? avatarUrl;
-    if (avatar != null) {
+    if (avatar != null && avatarAssetPath == null) {
       final bytes = await readUploadBytes(avatar);
       if (bytes.length > 5 * 1024 * 1024) {
         throw StateError('Avatars must be 5 MB or smaller.');
@@ -320,7 +321,9 @@ class ZzzServerSource implements ImMessageSource {
     }
     final params = <String, dynamic>{};
     if (nickname != null) params['nickname'] = nickname.trim();
-    if (avatarUrl != null && avatarUrl.isNotEmpty) {
+    if (avatarAssetPath != null && avatarAssetPath.isNotEmpty) {
+      params['avatar_url'] = avatarAssetPath;
+    } else if (avatarUrl != null && avatarUrl.isNotEmpty) {
       params['avatar_url'] = avatarUrl;
     }
     if (params.isEmpty) return getCurrentUser();
@@ -800,11 +803,13 @@ class ZzzServerSource implements ImMessageSource {
     required String serverUrl,
     required String userId,
     required String password,
+    required String inviteCode,
     String? nickname,
   }) async {
     final response = await _accountRequest(serverUrl, 'register', {
       'user_id': userId,
       'password': password,
+      'invite_code': inviteCode.trim(),
       if (nickname != null && nickname.trim().isNotEmpty)
         'nickname': nickname.trim(),
     });
@@ -891,6 +896,7 @@ class ZzzServerSource implements ImMessageSource {
 
   String? _resolveMediaUrl(String? value) {
     if (value == null || value.isEmpty) return null;
+    if (value.startsWith('assets/')) return value;
     final parsed = Uri.tryParse(value);
     if (parsed != null && parsed.hasScheme) return parsed.toString();
     final server = Uri.parse(config.serverUrl);

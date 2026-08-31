@@ -48,19 +48,23 @@ export ZZZ_VAPID_PUBLIC_KEY='<generated public key>'
 export ZZZ_VAPID_PRIVATE_KEY='<generated private key>'
 export ZZZ_VAPID_SUBJECT='mailto:admin@example.com'
 export ZZZ_ACCESS_TOKEN='<shared test-environment token>'
+export ZZZ_INVITE_CODE='<account-registration invite code>'
 go run ./cmd/server -addr :8080
 ```
 
 For a small HTTPS test deployment, build and run the hardened container with
 `deploy/zzz-im/deploy.sh`, then install `deploy/zzz-im/nginx.conf`. The script
 stores SQLite data and uploaded media under `/var/lib/zzz-im`, and generates
-VAPID credentials plus a shared test token in `/etc/zzz-im/server.env`. The Go
-port binds only to `127.0.0.1:18080`; Nginx is the public HTTPS/WSS boundary.
+VAPID credentials, an invite code, and a shared test token in
+`/etc/zzz-im/server.env`. The Go port binds only to `127.0.0.1:18080`; Nginx is
+the public HTTPS/WSS boundary.
 
-Users register and sign in with account-specific passwords. Passwords are
-bcrypt-hashed; opaque 90-day sessions are stored by SHA-256 digest so a server
-restart does not sign out every device. The shared token remains only for
-legacy test clients and should be disabled for untrusted deployments.
+Users register with the deployment's invite code and then sign in with
+account-specific passwords. Registration is disabled when `ZZZ_INVITE_CODE`
+is empty. Passwords are bcrypt-hashed; opaque 90-day sessions are stored by
+SHA-256 digest so a server restart does not sign out every device. The shared
+token remains only for legacy test clients and should be disabled for
+untrusted deployments.
 
 To serve the PWA from the same `icrad.ltd` origin, build with a root base path,
 package `build/web`, and activate it with the versioned deployment script:

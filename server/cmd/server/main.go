@@ -20,6 +20,7 @@ func main() {
 	redisAddr := flag.String("redis", "", "Redis address (e.g. localhost:6379)")
 	redisPassword := flag.String("redis-password", "", "Redis password")
 	accessToken := flag.String("access-token", os.Getenv("ZZZ_ACCESS_TOKEN"), "shared access token for test deployments")
+	inviteCode := flag.String("invite-code", os.Getenv("ZZZ_INVITE_CODE"), "invite code required for account registration")
 	vapidPublicKey := flag.String("vapid-public-key", os.Getenv("ZZZ_VAPID_PUBLIC_KEY"), "VAPID public key")
 	vapidPrivateKey := flag.String("vapid-private-key", os.Getenv("ZZZ_VAPID_PRIVATE_KEY"), "VAPID private key")
 	vapidSubject := flag.String("vapid-subject", envOrDefault("ZZZ_VAPID_SUBJECT", "mailto:admin@localhost"), "VAPID contact URI")
@@ -78,6 +79,7 @@ func main() {
 	pushSender := pushservice.NewService(*vapidPublicKey, *vapidPrivateKey, *vapidSubject)
 	gw := gateway.NewGateway(db, pushSender)
 	gw.SetAccessToken(*accessToken)
+	gw.SetInviteCode(*inviteCode)
 	mediaStore, err := media.NewLocalStore(*mediaDir, db)
 	if err != nil {
 		log.Fatalf("[server] failed to initialize media storage: %v", err)
@@ -115,6 +117,11 @@ func main() {
 		log.Println("[server] shared-token authentication: enabled")
 	} else {
 		log.Println("[server] shared-token authentication: disabled (development mode)")
+	}
+	if *inviteCode != "" {
+		log.Println("[server] invite-only registration: enabled")
+	} else {
+		log.Println("[server] registration: disabled (set ZZZ_INVITE_CODE)")
 	}
 
 	if err := http.ListenAndServe(*addr, mux); err != nil {

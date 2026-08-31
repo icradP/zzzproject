@@ -43,4 +43,31 @@ void main() {
     expect(find.text('Service is temporarily unavailable.'), findsOneWidget);
     expect(configured, isFalse);
   });
+
+  testWidgets('registration asks for an invitation code', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImWebSetupPage(
+          serverUrl: 'wss://example.com/ws',
+          onConfigured: (_) async {},
+        ),
+      ),
+    );
+
+    expect(find.byType(TextField), findsNWidgets(2));
+    expect(find.text('Invitation code'), findsNothing);
+
+    await tester.tap(find.text('New here? Create an account'));
+    await tester.pump();
+
+    expect(find.byType(TextField), findsNWidgets(3));
+    expect(find.text('Invitation code'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(0), 'belle');
+    await tester.enterText(find.byType(TextField).at(1), 'password123');
+    await tester.tap(find.text('Create account'));
+    await tester.pump();
+
+    expect(find.text('Invitation code is required.'), findsOneWidget);
+  });
 }

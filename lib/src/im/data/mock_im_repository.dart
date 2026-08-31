@@ -424,6 +424,7 @@ class MockImRepository implements ImRepository {
   Future<ImUser> updateProfile({
     String? nickname,
     ImMediaUpload? avatar,
+    String? avatarAssetPath,
   }) async {
     final current = _users[_currentUserId]!;
     final updated = ImUser(
@@ -432,9 +433,14 @@ class MockImRepository implements ImRepository {
           nickname?.trim().isNotEmpty == true
               ? nickname!.trim()
               : current.displayName,
-      avatarAssetPath: current.avatarAssetPath,
-      avatarBytes: avatar?.bytes ?? current.avatarBytes,
-      avatarLocalPath: avatar?.filePath ?? current.avatarLocalPath,
+      avatarAssetPath:
+          avatarAssetPath ?? (avatar == null ? current.avatarAssetPath : null),
+      avatarBytes:
+          avatarAssetPath == null ? avatar?.bytes ?? current.avatarBytes : null,
+      avatarLocalPath:
+          avatarAssetPath == null
+              ? avatar?.filePath ?? current.avatarLocalPath
+              : null,
       isOnline: true,
     );
     _users[_currentUserId] = updated;

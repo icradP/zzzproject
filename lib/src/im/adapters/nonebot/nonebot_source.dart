@@ -222,6 +222,7 @@ class NoneBotSource implements ImMessageSource {
   Future<ImUser> updateProfile({
     String? nickname,
     ImMediaUpload? avatar,
+    String? avatarAssetPath,
   }) async {
     throw UnsupportedError('NoneBot does not own the user profile.');
   }

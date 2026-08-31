@@ -32,6 +32,7 @@ if [[ ! -s ${env_file} ]]; then
     /usr/local/bin/zzz-im-vapid
     echo "ZZZ_VAPID_SUBJECT=mailto:admin@icrad.ltd"
     echo "ZZZ_ACCESS_TOKEN=$(openssl rand -hex 32)"
+    echo "ZZZ_INVITE_CODE=diaogan"
   } >"${env_file}"
   echo "Generated ${env_file}; keep it private and backed up."
 fi

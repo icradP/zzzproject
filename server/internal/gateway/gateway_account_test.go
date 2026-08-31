@@ -11,6 +11,7 @@ import (
 func TestAccountProfileAndGroupFlow(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)
+	gateway.SetInviteCode("diaogan")
 	server := httptest.NewServer(gateway)
 	t.Cleanup(server.Close)
 	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
@@ -18,9 +19,10 @@ func TestAccountProfileAndGroupFlow(t *testing.T) {
 	alice := dialWebSocket(t, websocketURL)
 	t.Cleanup(func() { _ = alice.Close() })
 	registered := request(t, alice, "register", map[string]interface{}{
-		"user_id":  "alice-account",
-		"password": "correct horse battery staple",
-		"nickname": "Alice",
+		"user_id":     "alice-account",
+		"password":    "correct horse battery staple",
+		"nickname":    "Alice",
+		"invite_code": "diaogan",
 	})
 	aliceSession := responseData(t, registered)["session_token"].(string)
 	if aliceSession == "" {
@@ -30,8 +32,9 @@ func TestAccountProfileAndGroupFlow(t *testing.T) {
 	bob := dialWebSocket(t, websocketURL)
 	t.Cleanup(func() { _ = bob.Close() })
 	bobRegistered := request(t, bob, "register", map[string]interface{}{
-		"user_id":  "bob-account",
-		"password": "correct horse battery staple",
+		"user_id":     "bob-account",
+		"password":    "correct horse battery staple",
+		"invite_code": "diaogan",
 	})
 	bobSession := responseData(t, bobRegistered)["session_token"].(string)
 
@@ -93,4 +96,41 @@ func TestAccountProfileAndGroupFlow(t *testing.T) {
 	if denied["status"] == "ok" {
 		t.Fatalf("revoked session was accepted: %#v", denied)
 	}
+}
+
+func TestRegistrationRequiresConfiguredInviteCode(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	gateway.SetInviteCode("diaogan")
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	client := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = client.Close() })
+	denied := request(t, client, "register", map[string]interface{}{
+		"user_id":     "invite-test",
+		"password":    "correct horse battery staple",
+		"invite_code": "wrong-code",
+	})
+	if denied["status"] == "ok" {
+		t.Fatalf("registration accepted an invalid invite: %#v", denied)
+	}
+	if user, _ := database.GetUser("invite-test"); user != nil {
+		t.Fatal("invalid invitation created an account")
+	}
+
+	registered := request(t, client, "register", map[string]interface{}{
+		"user_id":     "invite-test",
+		"password":    "correct horse battery staple",
+		"invite_code": "diaogan",
+	})
+	assertOK(t, registered)
+
+	loginClient := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = loginClient.Close() })
+	assertOK(t, request(t, loginClient, "auth", map[string]interface{}{
+		"user_id":  "invite-test",
+		"password": "correct horse battery staple",
+	}))
 }
