@@ -527,6 +527,81 @@ class MockImRepository implements ImRepository {
   }
 
   @override
+  Future<ImGroupDetails> getGroupDetails(String groupId) async {
+    final conversation = _conversations[groupId];
+    if (conversation == null || !conversation.isGroup) {
+      throw StateError('Group not found.');
+    }
+    final members = conversation.participantIds
+        .map((userId) {
+          final user =
+              _users[userId] ??
+              ImUser(
+                id: userId,
+                displayName: userId,
+                avatarAssetPath: AppAssets.fallbackAvatarForId(userId),
+              );
+          return ImGroupMember(
+            user: user,
+            role:
+                userId == conversation.participantIds.first
+                    ? ImGroupRole.owner
+                    : ImGroupRole.member,
+          );
+        })
+        .toList(growable: false);
+    final ownerID =
+        conversation.participantIds.isEmpty
+            ? null
+            : conversation.participantIds.first;
+    return ImGroupDetails(
+      conversation: conversation,
+      members: members,
+      currentUserId: _currentUserId,
+      supportsInvites: true,
+      supportsMemberRemoval: true,
+      canLeave: ownerID != _currentUserId,
+    );
+  }
+
+  @override
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) async {
+    final details = await getGroupDetails(groupId);
+    if (!details.canInviteMembers) {
+      throw StateError('Group permission denied.');
+    }
+    final participants = details.conversation.participantIds.toSet();
+    for (final userId in userIds) {
+      if (_users.containsKey(userId)) participants.add(userId);
+    }
+    _conversations[groupId] = details.conversation.copyWith(
+      participantIds: participants.toList(growable: false),
+    );
+    _emitConversations();
+  }
+
+  @override
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) async {
+    final details = await getGroupDetails(groupId);
+    final target = details.members.where((member) => member.user.id == userId);
+    if (target.isEmpty || !details.canRemoveMember(target.first)) {
+      throw StateError('Group permission denied.');
+    }
+    _conversations[groupId] = details.conversation.copyWith(
+      participantIds: details.conversation.participantIds
+          .where((participantID) => participantID != userId)
+          .toList(growable: false),
+    );
+    _emitConversations();
+  }
+
+  @override
   Future<void> ensureConversation(ImConversation conversation) async {
     if (_conversations.containsKey(conversation.id)) return;
     _conversations[conversation.id] = conversation;

@@ -144,6 +144,7 @@ func TestWebSocketReplyAndRecallLifecycle(t *testing.T) {
 	})
 	assertOK(t, groupResponse)
 	groupID := responseData(t, groupResponse)["group_id"].(string)
+	_ = readJSON(t, bob)
 	groupMessageResponse := request(t, bob, "send_message", map[string]interface{}{
 		"conversation_id": groupID,
 		"message": []map[string]interface{}{

@@ -246,7 +246,16 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<void> leaveGroup(String groupId) async {
-    throw UnsupportedError('Leave groups through the connected platform.');
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError('Leave groups through the connected platform.');
+    }
+    await _client!.setGroupLeave(groupId: parsed.targetId);
+    _groupNames.remove(parsed.targetId);
+    _groupMemberIds.remove(parsed.targetId);
+    _groupAvatarPaths.remove(parsed.targetId);
+    _conversations.remove(groupId);
+    _emitConversations();
   }
 
   @override
@@ -615,6 +624,140 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<ImGroupDetails> getGroupDetails(String groupId) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup) throw StateError('Group not found.');
+    final existing = _conversations[groupId];
+    final members = <ImGroupMember>[];
+    if (_client != null) {
+      final remoteMembers = await _client!.getGroupMemberList(
+        groupId: parsed.targetId,
+      );
+      for (final remote in remoteMembers) {
+        final displayName =
+            remote.card?.isNotEmpty == true ? remote.card! : remote.nickname;
+        final known = _users[remote.userId];
+        final user = ImUser(
+          id: remote.userId,
+          displayName: displayName.isEmpty ? remote.userId : displayName,
+          avatarAssetPath:
+              known?.avatarAssetPath ?? _avatarResolver(remote.userId),
+          avatarLocalPath: known?.avatarLocalPath,
+          isOnline: known?.isOnline ?? true,
+        );
+        _users[remote.userId] = user;
+        members.add(
+          ImGroupMember(
+            user: user,
+            role: imGroupRoleFromString(remote.role),
+            joinedAt:
+                remote.joinTime == null || remote.joinTime! <= 0
+                    ? null
+                    : DateTime.fromMillisecondsSinceEpoch(
+                      remote.joinTime! * 1000,
+                    ),
+          ),
+        );
+      }
+    } else {
+      final participantIDs =
+          existing?.participantIds ??
+          _groupMemberIds[parsed.targetId] ??
+          [_selfId];
+      for (var index = 0; index < participantIDs.length; index++) {
+        final userID = participantIDs[index];
+        final user =
+            _users[userID] ??
+            ImUser(
+              id: userID,
+              displayName: userID,
+              avatarAssetPath: _avatarResolver(userID),
+            );
+        members.add(
+          ImGroupMember(
+            user: user,
+            role: index == 0 ? ImGroupRole.owner : ImGroupRole.member,
+          ),
+        );
+      }
+    }
+    final participantIDs = members
+        .map((member) => member.user.id)
+        .toList(growable: false);
+    _groupMemberIds[parsed.targetId] = participantIDs;
+    final conversation = ImConversation(
+      id: groupId,
+      type: ImConversationType.group,
+      title:
+          existing?.title ??
+          _groupNames[parsed.targetId] ??
+          'Group ${parsed.targetId}',
+      participantIds: participantIDs,
+      subtitle: existing?.subtitle,
+      avatarAssetPath: existing?.avatarAssetPath,
+      avatarLocalPath:
+          existing?.avatarLocalPath ?? _groupAvatarPaths[parsed.targetId],
+      updatedAt: existing?.updatedAt,
+      unreadCount: existing?.unreadCount ?? 0,
+      isPinned: existing?.isPinned ?? false,
+    );
+    _conversations[groupId] = conversation;
+    _emitConversations();
+    ImGroupRole? currentRole;
+    for (final member in members) {
+      if (member.user.id == _selfId) {
+        currentRole = member.role;
+        break;
+      }
+    }
+    return ImGroupDetails(
+      conversation: conversation,
+      members: members,
+      currentUserId: _selfId,
+      supportsInvites: false,
+      supportsMemberRemoval: _client != null,
+      canLeave:
+          _client != null &&
+          currentRole != null &&
+          currentRole != ImGroupRole.owner,
+    );
+  }
+
+  @override
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) async {
+    throw UnsupportedError(
+      'Inviting members is not available through OneBot v11.',
+    );
+  }
+
+  @override
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) async {
+    final parsed = parseConversationId(groupId, _selfId);
+    if (!parsed.isGroup || _client == null) {
+      throw UnsupportedError('Remove members through the connected platform.');
+    }
+    final details = await getGroupDetails(groupId);
+    ImGroupMember? target;
+    for (final member in details.members) {
+      if (member.user.id == userId) {
+        target = member;
+        break;
+      }
+    }
+    if (target == null || !details.canRemoveMember(target)) {
+      throw StateError('Group permission denied.');
+    }
+    await _client!.setGroupKick(groupId: parsed.targetId, userId: userId);
+    await _populateGroupMembers(parsed.targetId);
+  }
+
+  @override
   Future<void> deleteConversation(String conversationId) async {
     // Only hide from the conversation list.  Keep messages and the
     // message stream alive so history is preserved if the conversation
@@ -880,6 +1023,19 @@ class NoneBotSource implements ImMessageSource {
         );
         final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
         _markRecalled(convId, messageId, operatorId);
+      case OneBotGroupIncreaseNotice(:final groupId):
+        unawaited(_populateGroupMembers(groupId));
+      case OneBotGroupDecreaseNotice(:final groupId, :final userId):
+        final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
+        if (userId == _selfId) {
+          _groupNames.remove(groupId);
+          _groupMemberIds.remove(groupId);
+          _groupAvatarPaths.remove(groupId);
+          _conversations.remove(convId);
+          _emitConversations();
+        } else {
+          unawaited(_populateGroupMembers(groupId));
+        }
       case OneBotFriendRecallNotice(:final userId, :final messageId):
         ImLogger.logRaw(
           ImLogger.event,
@@ -1184,9 +1340,10 @@ class NoneBotSource implements ImMessageSource {
       // Update existing conversation participantIds.
       final convId = oneBotConversationId(selfId: _selfId, groupId: groupId);
       final conv = _conversations[convId];
-      if (conv != null && conv.participantIds.length <= 1) {
+      if (conv != null) {
         _conversations[convId] = conv.copyWith(participantIds: ids);
         _emitConversations();
+        _saveConv(_conversations[convId]!);
       }
     } catch (_) {}
   }

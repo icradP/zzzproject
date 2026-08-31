@@ -130,6 +130,22 @@ class SourceBackedRepository implements ImRepository {
   Future<void> leaveGroup(String groupId) => _source.leaveGroup(groupId);
 
   @override
+  Future<ImGroupDetails> getGroupDetails(String groupId) =>
+      _source.getGroupDetails(groupId);
+
+  @override
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) => _source.inviteGroupMembers(groupId: groupId, userIds: userIds);
+
+  @override
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) => _source.removeGroupMember(groupId: groupId, userId: userId);
+
+  @override
   Future<void> ensureConversation(ImConversation conversation) =>
       _source.ensureConversation(conversation);
 

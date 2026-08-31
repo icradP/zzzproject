@@ -59,6 +59,9 @@ func TestAccountProfileAndGroupFlow(t *testing.T) {
 	if responseData(t, profile)["nickname"] != "Alice Updated" {
 		t.Fatalf("profile was not updated: %#v", profile)
 	}
+	if _, err := database.AddFriend("alice-account", "bob-account"); err != nil {
+		t.Fatal(err)
+	}
 
 	group := request(t, alice, "create_group", map[string]interface{}{
 		"name":    "Test Group",
@@ -68,6 +71,7 @@ func TestAccountProfileAndGroupFlow(t *testing.T) {
 	if groupID == "" {
 		t.Fatal("group creation returned no id")
 	}
+	_ = readJSON(t, bob)
 	info := request(t, bob, "get_group_info", map[string]interface{}{"group_id": groupID})
 	if len(responseData(t, info)["members"].([]interface{})) != 2 {
 		t.Fatalf("unexpected group members: %#v", info)

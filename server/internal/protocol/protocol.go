@@ -175,6 +175,7 @@ const (
 	ActionGetGroupList       = "get_group_list"
 	ActionGetGroupInfo       = "get_group_info"
 	ActionCreateGroup        = "create_group"
+	ActionGroupInvite        = "group_invite"
 	ActionJoinGroup          = "join_group"
 	ActionLeaveGroup         = "leave_group"
 	ActionGroupKick          = "group_kick"
@@ -237,6 +238,12 @@ type CreateGroupParams struct {
 	Name    string   `json:"name"`
 	Avatar  string   `json:"avatar,omitempty"`
 	Members []string `json:"members,omitempty"`
+}
+
+// GroupInviteParams are the params for the "group_invite" action.
+type GroupInviteParams struct {
+	GroupID string   `json:"group_id"`
+	Members []string `json:"members"`
 }
 
 // JoinGroupParams are the params for the "join_group" action.
@@ -321,6 +328,7 @@ type GroupMember struct {
 	Nickname string `json:"nickname"`
 	Avatar   string `json:"avatar_url,omitempty"`
 	Role     string `json:"role"` // "owner", "admin", "member"
+	JoinedAt int64  `json:"joined_at,omitempty"`
 }
 
 // Conversation represents a conversation in API responses.

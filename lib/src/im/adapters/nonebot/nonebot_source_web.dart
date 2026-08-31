@@ -119,6 +119,31 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<ImGroupDetails> getGroupDetails(String groupId) async {
+    throw UnsupportedError('Group details are unavailable on the web stub.');
+  }
+
+  @override
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) async {
+    throw UnsupportedError(
+      'Group invitations are unavailable on the web stub.',
+    );
+  }
+
+  @override
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) async {
+    throw UnsupportedError(
+      'Group member removal is unavailable on the web stub.',
+    );
+  }
+
+  @override
   Stream<List<ImConversation>> watchConversations() {
     return Stream.value(const []);
   }

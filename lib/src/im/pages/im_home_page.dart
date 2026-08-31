@@ -16,6 +16,7 @@ import '../models/im_models.dart';
 import '../widgets/conversation_list_view.dart';
 import '../widgets/contacts_panel.dart';
 import '../widgets/im_chat_room_view.dart';
+import '../widgets/im_group_details_panel.dart';
 
 class ImHomePage extends StatefulWidget {
   const ImHomePage({this.initialConversationId, super.key});
@@ -152,6 +153,21 @@ class _ImHomePageState extends State<ImHomePage>
     final user = await ImScope.repositoryOf(context).getUser(userId);
     return user?.avatarImage(AppAssets.fallbackAvatarForId(userId)) ??
         AssetImage(AppAssets.fallbackAvatarForId(userId));
+  }
+
+  Future<void> _openGroupManagement(
+    ImRepository repository,
+    ImConversation conversation,
+  ) async {
+    await showZzzModalPanel<void>(
+      context: context,
+      builder:
+          (_) => ImGroupDetailsPanel(
+            conversation: conversation,
+            repository: repository,
+            onLeft: _clearSelection,
+          ),
+    );
   }
 
   @override
@@ -562,6 +578,10 @@ class _ImHomePageState extends State<ImHomePage>
                   resolveUserName: _resolveUserName,
                   resolveUserAvatar: _resolveUserAvatar,
                   resolveMessage: (id) => _findMessage(id, messages),
+                  onManageGroup:
+                      conv.isGroup
+                          ? () => _openGroupManagement(repository, conv)
+                          : null,
                   onSend: (text) async {
                     await ImScope.interactionsOf(
                       context,

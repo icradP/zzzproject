@@ -186,6 +186,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleGetGroupInfo(client, req)
 	case protocol.ActionCreateGroup:
 		g.handleCreateGroup(client, req)
+	case protocol.ActionGroupInvite:
+		g.handleGroupInvite(client, req)
 	case protocol.ActionJoinGroup:
 		g.handleJoinGroup(client, req)
 	case protocol.ActionLeaveGroup:
@@ -570,16 +572,117 @@ func (g *Gateway) canAccessConversation(userID, conversationID string) bool {
 }
 
 func (g *Gateway) isGroupAdmin(groupID, userID string) bool {
+	role := g.groupMemberRole(groupID, userID)
+	return role == "owner" || role == "admin"
+}
+
+func (g *Gateway) groupMemberRole(groupID, userID string) string {
 	members, err := g.store.GetGroupMembers(groupID)
 	if err != nil {
-		return false
+		return ""
 	}
 	for _, member := range members {
 		if member.UserID == userID {
-			return member.Role == "owner" || member.Role == "admin"
+			return member.Role
 		}
 	}
-	return false
+	return ""
+}
+
+const (
+	maxGroupMembers     = 500
+	maxGroupInviteBatch = 100
+)
+
+func groupRoleOrder(role string) int {
+	switch role {
+	case "owner":
+		return 0
+	case "admin":
+		return 1
+	default:
+		return 2
+	}
+}
+
+// syncGroupConversationParticipants keeps the conversation projection aligned
+// with the canonical group_members table after every membership change.
+func (g *Gateway) syncGroupConversationParticipants(groupID string) ([]string, error) {
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		return nil, fmt.Errorf("group not found")
+	}
+	members, err := g.store.GetGroupMembers(groupID)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(members, func(i, j int) bool {
+		left, right := groupRoleOrder(members[i].Role), groupRoleOrder(members[j].Role)
+		if left != right {
+			return left < right
+		}
+		if !members[i].JoinedAt.Equal(members[j].JoinedAt) {
+			return members[i].JoinedAt.Before(members[j].JoinedAt)
+		}
+		return members[i].UserID < members[j].UserID
+	})
+	participants := make([]string, 0, len(members))
+	for _, member := range members {
+		participants = append(participants, member.UserID)
+	}
+	conversation, err := g.store.GetConversation(groupID)
+	if err != nil {
+		return nil, err
+	}
+	if conversation == nil {
+		conversation = &store.Conversation{ID: groupID, CreatedAt: group.CreatedAt}
+	}
+	if conversation.CreatedAt.IsZero() {
+		conversation.CreatedAt = group.CreatedAt
+	}
+	conversation.Type = "group"
+	conversation.Title = group.Name
+	conversation.Avatar = group.Avatar
+	conversation.OwnerID = group.OwnerID
+	conversation.Participants = participants
+	if err := g.store.SaveConversation(conversation); err != nil {
+		return nil, err
+	}
+	return participants, nil
+}
+
+func (g *Gateway) validateGroupInviteTargets(inviterID string, raw interface{}) ([]string, string) {
+	if raw == nil {
+		return nil, ""
+	}
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil, "members must be a list"
+	}
+	if len(values) > maxGroupInviteBatch {
+		return nil, fmt.Sprintf("invite at most %d members at once", maxGroupInviteBatch)
+	}
+	seen := map[string]bool{inviterID: true}
+	targets := make([]string, 0, len(values))
+	for _, value := range values {
+		targetID, ok := value.(string)
+		if !ok || !validUserID(targetID) {
+			return nil, "invalid member id"
+		}
+		if seen[targetID] {
+			continue
+		}
+		seen[targetID] = true
+		if user, err := g.store.GetUser(targetID); err != nil || user == nil {
+			return nil, "member account not found: " + targetID
+		}
+		friends, err := g.store.AreFriends(inviterID, targetID)
+		if err != nil || !friends {
+			return nil, "only friends can be invited: " + targetID
+		}
+		targets = append(targets, targetID)
+	}
+	return targets, ""
 }
 
 func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
@@ -1217,13 +1320,17 @@ func (g *Gateway) handleGetGroupInfo(client *Client, req *protocol.Request) {
 	for i, m := range members {
 		user, _ := g.store.GetUser(m.UserID)
 		nickname := m.UserID
+		avatar := ""
 		if user != nil {
 			nickname = user.Nickname
+			avatar = user.Avatar
 		}
 		memberList[i] = protocol.GroupMember{
 			UserID:   m.UserID,
 			Nickname: nickname,
+			Avatar:   avatar,
 			Role:     m.Role,
+			JoinedAt: m.JoinedAt.Unix(),
 		}
 	}
 
@@ -1235,7 +1342,7 @@ func (g *Gateway) handleGetGroupInfo(client *Client, req *protocol.Request) {
 			"name":         group.Name,
 			"avatar_url":   group.Avatar,
 			"owner_id":     group.OwnerID,
-			"member_count": len(group.Members),
+			"member_count": len(members),
 			"members":      memberList,
 		},
 		Echo: req.Echo,
@@ -1265,6 +1372,11 @@ func (g *Gateway) handleCreateGroup(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "group avatar is invalid")
 		return
 	}
+	memberIDs, validationError := g.validateGroupInviteTargets(client.userID, params["members"])
+	if validationError != "" {
+		g.sendError(client, req.Echo, validationError)
+		return
+	}
 	groupID := fmt.Sprintf("group_%d", time.Now().UnixNano())
 	group, err := g.store.CreateGroup(groupID, name, avatar, client.userID)
 	if err != nil || group == nil {
@@ -1272,21 +1384,20 @@ func (g *Gateway) handleCreateGroup(client *Client, req *protocol.Request) {
 		return
 	}
 	participants := []string{client.userID}
-	seen := map[string]bool{client.userID: true}
-	// Add members if provided, but never create references to unknown users.
-	if members, ok := params["members"].([]interface{}); ok {
-		for _, m := range members {
-			if memberID, ok := m.(string); ok && validUserID(memberID) && !seen[memberID] {
-				if user, _ := g.store.GetUser(memberID); user != nil {
-					if added, addErr := g.store.AddGroupMember(groupID, memberID); addErr == nil && added {
-						participants = append(participants, memberID)
-						seen[memberID] = true
-					}
-				}
+	addedMembers := make([]string, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		added, addErr := g.store.AddGroupMember(groupID, memberID)
+		if addErr != nil || !added {
+			for _, rollbackID := range addedMembers {
+				_, _ = g.store.RemoveGroupMember(groupID, rollbackID)
 			}
+			g.sendError(client, req.Echo, "failed to add group members")
+			return
 		}
+		participants = append(participants, memberID)
+		addedMembers = append(addedMembers, memberID)
 	}
-	if err := g.store.SaveConversation(&store.Conversation{ID: groupID, Type: "group", Title: name, Avatar: avatar, OwnerID: client.userID, Participants: participants, CreatedAt: time.Now()}); err != nil {
+	if _, err := g.syncGroupConversationParticipants(groupID); err != nil {
 		g.sendError(client, req.Echo, "failed to create group conversation")
 		return
 	}
@@ -1304,6 +1415,97 @@ func (g *Gateway) handleCreateGroup(client *Client, req *protocol.Request) {
 		},
 		Echo: req.Echo,
 	})
+	for _, memberID := range addedMembers {
+		g.sendToUser(memberID, protocol.NoticeEvent{
+			PostType:   "notice",
+			NoticeType: protocol.NoticeTypeGroupIncrease,
+			GroupID:    groupID,
+			UserID:     memberID,
+			OperatorID: client.userID,
+		})
+	}
+}
+
+func (g *Gateway) handleGroupInvite(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid group_invite params")
+		return
+	}
+	groupID, _ := params["group_id"].(string)
+	group, err := g.store.GetGroup(groupID)
+	if err != nil || group == nil {
+		g.sendError(client, req.Echo, "group not found")
+		return
+	}
+	if !g.isGroupAdmin(groupID, client.userID) {
+		g.sendError(client, req.Echo, "group permission denied")
+		return
+	}
+	targets, validationError := g.validateGroupInviteTargets(client.userID, params["members"])
+	if validationError != "" {
+		g.sendError(client, req.Echo, validationError)
+		return
+	}
+	members, err := g.store.GetGroupMembers(groupID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load group members")
+		return
+	}
+	existing := make(map[string]bool, len(members))
+	for _, member := range members {
+		existing[member.UserID] = true
+	}
+	filtered := targets[:0]
+	for _, targetID := range targets {
+		if !existing[targetID] {
+			filtered = append(filtered, targetID)
+		}
+	}
+	targets = filtered
+	if len(members)+len(targets) > maxGroupMembers {
+		g.sendError(client, req.Echo, fmt.Sprintf("group member limit is %d", maxGroupMembers))
+		return
+	}
+	addedMembers := make([]string, 0, len(targets))
+	for _, targetID := range targets {
+		added, addErr := g.store.AddGroupMember(groupID, targetID)
+		if addErr != nil || !added {
+			for _, rollbackID := range addedMembers {
+				_, _ = g.store.RemoveGroupMember(groupID, rollbackID)
+			}
+			g.sendError(client, req.Echo, "failed to invite group members")
+			return
+		}
+		addedMembers = append(addedMembers, targetID)
+	}
+	participants, err := g.syncGroupConversationParticipants(groupID)
+	if err != nil {
+		for _, rollbackID := range addedMembers {
+			_, _ = g.store.RemoveGroupMember(groupID, rollbackID)
+		}
+		_, _ = g.syncGroupConversationParticipants(groupID)
+		g.sendError(client, req.Echo, "failed to update group conversation")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
+		"added_members": addedMembers,
+		"participants":  participants,
+		"member_count":  len(participants),
+	}})
+	for _, targetID := range addedMembers {
+		g.broadcastToConversation(groupID, protocol.NoticeEvent{
+			PostType:   "notice",
+			NoticeType: protocol.NoticeTypeGroupIncrease,
+			GroupID:    groupID,
+			UserID:     targetID,
+			OperatorID: client.userID,
+		}, "")
+	}
 }
 
 func (g *Gateway) handleJoinGroup(client *Client, req *protocol.Request) {
@@ -1325,9 +1527,16 @@ func (g *Gateway) handleJoinGroup(client *Client, req *protocol.Request) {
 	}
 	addOk, err := g.store.AddGroupMember(groupID, client.userID)
 	if err == nil && addOk {
+		participants, syncErr := g.syncGroupConversationParticipants(groupID)
+		if syncErr != nil {
+			_, _ = g.store.RemoveGroupMember(groupID, client.userID)
+			g.sendError(client, req.Echo, "failed to update group conversation")
+			return
+		}
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,
+			Data:    map[string]interface{}{"participants": participants},
 			Echo:    req.Echo,
 		})
 
@@ -1367,19 +1576,33 @@ func (g *Gateway) handleLeaveGroup(client *Client, req *protocol.Request) {
 	}
 	removeOk, err := g.store.RemoveGroupMember(groupID, client.userID)
 	if err == nil && removeOk {
+		if _, syncErr := g.syncGroupConversationParticipants(groupID); syncErr != nil {
+			_, _ = g.store.AddGroupMember(groupID, client.userID)
+			_, _ = g.syncGroupConversationParticipants(groupID)
+			g.sendError(client, req.Echo, "failed to update group conversation")
+			return
+		}
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,
 			Echo:    req.Echo,
 		})
 
-		// Broadcast leave notice
+		notice := protocol.NoticeEvent{
+			PostType:   "notice",
+			NoticeType: protocol.NoticeTypeGroupDecrease,
+			GroupID:    groupID,
+			UserID:     client.userID,
+			OperatorID: client.userID,
+		}
+		g.sendToUser(client.userID, notice)
 		g.broadcastToConversation(groupID, protocol.NoticeEvent{
 			PostType:   "notice",
 			NoticeType: protocol.NoticeTypeGroupDecrease,
 			GroupID:    groupID,
 			UserID:     client.userID,
-		}, "")
+			OperatorID: client.userID,
+		}, client.userID)
 	} else {
 		g.sendError(client, req.Echo, "failed to leave group")
 	}
@@ -1404,25 +1627,37 @@ func (g *Gateway) handleGroupKick(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "group not found")
 		return
 	}
-	if !g.isGroupAdmin(groupID, client.userID) || userID == group.OwnerID {
+	actorRole := g.groupMemberRole(groupID, client.userID)
+	targetRole := g.groupMemberRole(groupID, userID)
+	canKick := actorRole == "owner" && (targetRole == "admin" || targetRole == "member") ||
+		actorRole == "admin" && targetRole == "member"
+	if !canKick || userID == client.userID || userID == group.OwnerID {
 		g.sendError(client, req.Echo, "group permission denied")
 		return
 	}
 	kickOk, err := g.store.RemoveGroupMember(groupID, userID)
 	if err == nil && kickOk {
+		if _, syncErr := g.syncGroupConversationParticipants(groupID); syncErr != nil {
+			_, _ = g.store.AddGroupMember(groupID, userID)
+			_, _ = g.syncGroupConversationParticipants(groupID)
+			g.sendError(client, req.Echo, "failed to update group conversation")
+			return
+		}
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,
 			Echo:    req.Echo,
 		})
 
-		g.broadcastToConversation(groupID, protocol.NoticeEvent{
+		notice := protocol.NoticeEvent{
 			PostType:   "notice",
 			NoticeType: protocol.NoticeTypeGroupDecrease,
 			GroupID:    groupID,
 			UserID:     userID,
 			OperatorID: client.userID,
-		}, "")
+		}
+		g.sendToUser(userID, notice)
+		g.broadcastToConversation(groupID, notice, userID)
 	} else {
 		g.sendError(client, req.Echo, "failed to kick user")
 	}

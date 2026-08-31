@@ -114,6 +114,28 @@ abstract class ImMessageSource {
     throw UnsupportedError('Group management is not supported by this source.');
   }
 
+  Future<ImGroupDetails> getGroupDetails(String groupId) async {
+    throw UnsupportedError('Group details are not supported by this source.');
+  }
+
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) async {
+    throw UnsupportedError(
+      'Group invitations are not supported by this source.',
+    );
+  }
+
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) async {
+    throw UnsupportedError(
+      'Removing group members is not supported by this source.',
+    );
+  }
+
   /// Ensure a conversation appears in [watchConversations], adding it if absent.
   Future<void> ensureConversation(ImConversation conversation);
 

@@ -27,6 +27,7 @@ class ImChatRoomView extends StatefulWidget {
     this.resolveMessage,
     this.onReply,
     this.onRecall,
+    this.onManageGroup,
     this.onBack,
     super.key,
   });
@@ -41,6 +42,7 @@ class ImChatRoomView extends StatefulWidget {
   final ImMessage? Function(String messageId)? resolveMessage;
   final Future<void> Function(String text, ImMessage replyTo)? onReply;
   final Future<void> Function(ImMessage message)? onRecall;
+  final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
 
   @override
@@ -508,8 +510,19 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
               ],
             ),
           ),
+          if (widget.conversation.isGroup && widget.onManageGroup != null)
+            IconButton(
+              tooltip: 'Manage group',
+              onPressed: widget.onManageGroup,
+              icon: const Icon(
+                Icons.manage_accounts_outlined,
+                color: Colors.white70,
+              ),
+            ),
           if (widget.conversation.isGroup)
             IconButton(
+              tooltip:
+                  _showMembers ? 'Hide group members' : 'Show group members',
               onPressed: () => setState(() => _showMembers = !_showMembers),
               icon: AnimatedRotation(
                 duration: const Duration(milliseconds: 220),

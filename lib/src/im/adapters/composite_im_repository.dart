@@ -361,6 +361,9 @@ class CompositeImRepository implements ImRepository {
     ImMediaUpload? avatar,
   }) async {
     final registration = _registrationForValue('', sourceId: _primarySourceId);
+    for (final memberId in memberIds) {
+      _requireMatchingSource(registration, memberId, 'Group member');
+    }
     final group = await registration.repository.createGroup(
       name: name,
       memberIds: memberIds
@@ -384,6 +387,61 @@ class CompositeImRepository implements ImRepository {
     final registration = _registrationForValue(groupId);
     return registration.repository.leaveGroup(
       ImSourceAddress.localIdOf(groupId),
+    );
+  }
+
+  @override
+  Future<ImGroupDetails> getGroupDetails(String groupId) async {
+    final registration = _registrationForValue(groupId);
+    final details = await registration.repository.getGroupDetails(
+      ImSourceAddress.localIdOf(groupId),
+    );
+    return ImGroupDetails(
+      conversation: _scopeConversation(registration, details.conversation),
+      members: details.members
+          .map(
+            (member) => ImGroupMember(
+              user: _scopeUser(registration, member.user),
+              role: member.role,
+              joinedAt: member.joinedAt,
+            ),
+          )
+          .toList(growable: false),
+      currentUserId: ImSourceAddress.scope(
+        registration.id,
+        details.currentUserId,
+      ),
+      supportsInvites: details.supportsInvites,
+      supportsMemberRemoval: details.supportsMemberRemoval,
+      canLeave: details.canLeave,
+    );
+  }
+
+  @override
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) {
+    final registration = _registrationForValue(groupId);
+    for (final userId in userIds) {
+      _requireMatchingSource(registration, userId, 'Group member');
+    }
+    return registration.repository.inviteGroupMembers(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userIds: userIds.map(ImSourceAddress.localIdOf).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) {
+    final registration = _registrationForValue(groupId);
+    _requireMatchingSource(registration, userId, 'Group member');
+    return registration.repository.removeGroupMember(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userId: ImSourceAddress.localIdOf(userId),
     );
   }
 

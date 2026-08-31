@@ -178,4 +178,65 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test(
+    'scopes group details and rejects cross-source member operations',
+    () async {
+      final repository = CompositeImRepository(
+        registrations: [
+          ImRepositoryRegistration(
+            id: 'zzz',
+            label: 'ZZZ Server',
+            repository: MockImRepository(),
+          ),
+          ImRepositoryRegistration(
+            id: 'qq',
+            label: 'QQ',
+            repository: MockImRepository(),
+          ),
+        ],
+        primarySourceId: 'zzz',
+      );
+      addTearDown(repository.dispose);
+
+      final details = await repository.getGroupDetails(
+        'qq::group_cunning_hares',
+      );
+      expect(details.conversation.id, 'qq::group_cunning_hares');
+      expect(details.currentUserId, 'qq::me');
+      expect(
+        details.members.every((member) => member.user.id.startsWith('qq::')),
+        isTrue,
+      );
+
+      await repository.inviteGroupMembers(
+        groupId: details.conversation.id,
+        userIds: const ['qq::wise'],
+      );
+      final invited = await repository.getGroupDetails(details.conversation.id);
+      expect(
+        invited.members.map((member) => member.user.id),
+        contains('qq::wise'),
+      );
+      await repository.removeGroupMember(
+        groupId: details.conversation.id,
+        userId: 'qq::wise',
+      );
+
+      expect(
+        () => repository.inviteGroupMembers(
+          groupId: details.conversation.id,
+          userIds: const ['zzz::wise'],
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => repository.removeGroupMember(
+          groupId: details.conversation.id,
+          userId: 'zzz::wise',
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
 }

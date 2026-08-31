@@ -8,6 +8,14 @@ import 'im_platform_image_provider.dart';
 
 enum ImConversationType { direct, group }
 
+enum ImGroupRole { owner, admin, member }
+
+ImGroupRole imGroupRoleFromString(String? value) => switch (value) {
+  'owner' => ImGroupRole.owner,
+  'admin' => ImGroupRole.admin,
+  _ => ImGroupRole.member,
+};
+
 enum ImMessageStatus { sending, sent, delivered, read, failed }
 
 /// Relationship between the signed-in user and another account.
@@ -223,6 +231,54 @@ class ImConversation {
       sourceId: sourceId ?? this.sourceId,
       sourceLabel: sourceLabel ?? this.sourceLabel,
     );
+  }
+}
+
+class ImGroupMember {
+  const ImGroupMember({required this.user, required this.role, this.joinedAt});
+
+  final ImUser user;
+  final ImGroupRole role;
+  final DateTime? joinedAt;
+}
+
+class ImGroupDetails {
+  const ImGroupDetails({
+    required this.conversation,
+    required this.members,
+    required this.currentUserId,
+    required this.supportsInvites,
+    required this.supportsMemberRemoval,
+    required this.canLeave,
+  });
+
+  final ImConversation conversation;
+  final List<ImGroupMember> members;
+  final String currentUserId;
+  final bool supportsInvites;
+  final bool supportsMemberRemoval;
+  final bool canLeave;
+
+  ImGroupMember? get currentMember {
+    for (final member in members) {
+      if (member.user.id == currentUserId) return member;
+    }
+    return null;
+  }
+
+  bool get canInviteMembers {
+    final role = currentMember?.role;
+    return supportsInvites &&
+        (role == ImGroupRole.owner || role == ImGroupRole.admin);
+  }
+
+  bool canRemoveMember(ImGroupMember target) {
+    if (!supportsMemberRemoval || target.user.id == currentUserId) return false;
+    final actorRole = currentMember?.role;
+    if (actorRole == ImGroupRole.owner) {
+      return target.role != ImGroupRole.owner;
+    }
+    return actorRole == ImGroupRole.admin && target.role == ImGroupRole.member;
   }
 }
 

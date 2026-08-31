@@ -585,6 +585,99 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
+  Future<ImGroupDetails> getGroupDetails(String groupId) async {
+    final response = await _request('get_group_info', {'group_id': groupId});
+    _requireOk(response, 'Load group details');
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final members = <ImGroupMember>[];
+    for (final raw in data['members'] as List? ?? const []) {
+      if (raw is! Map) continue;
+      final json = Map<String, dynamic>.from(raw);
+      final userID = '${json['user_id'] ?? ''}';
+      if (userID.isEmpty) continue;
+      final user = ImUser(
+        id: userID,
+        displayName: '${json['nickname'] ?? userID}',
+        avatarAssetPath: _resolveAvatar(userID, json['avatar_url'] as String?),
+        isOnline: json['online'] as bool? ?? false,
+      );
+      _users[userID] = user;
+      final joinedAt = (json['joined_at'] as num?)?.toInt();
+      members.add(
+        ImGroupMember(
+          user: user,
+          role: imGroupRoleFromString(json['role'] as String?),
+          joinedAt:
+              joinedAt == null || joinedAt <= 0
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(joinedAt * 1000),
+        ),
+      );
+    }
+    final participants = members
+        .map((member) => member.user.id)
+        .toList(growable: false);
+    final existing = _conversations[groupId];
+    final conversation = ImConversation(
+      id: groupId,
+      type: ImConversationType.group,
+      title: '${data['name'] ?? existing?.title ?? groupId}',
+      participantIds: participants,
+      subtitle: existing?.subtitle,
+      avatarAssetPath: _resolveAvatar(groupId, data['avatar_url'] as String?),
+      avatarLocalPath: existing?.avatarLocalPath,
+      updatedAt: existing?.updatedAt,
+      unreadCount: existing?.unreadCount ?? 0,
+      isPinned: existing?.isPinned ?? false,
+    );
+    _conversations[groupId] = conversation;
+    _emitConversations();
+    ImGroupRole? currentRole;
+    for (final member in members) {
+      if (member.user.id == _selfId) {
+        currentRole = member.role;
+        break;
+      }
+    }
+    return ImGroupDetails(
+      conversation: conversation,
+      members: members,
+      currentUserId: _selfId,
+      supportsInvites: true,
+      supportsMemberRemoval: true,
+      canLeave: currentRole != null && currentRole != ImGroupRole.owner,
+    );
+  }
+
+  @override
+  Future<void> inviteGroupMembers({
+    required String groupId,
+    required List<String> userIds,
+  }) async {
+    final response = await _request('group_invite', {
+      'group_id': groupId,
+      'members': userIds,
+    });
+    _requireOk(response, 'Invite group members');
+    await _syncFromServer();
+  }
+
+  @override
+  Future<void> removeGroupMember({
+    required String groupId,
+    required String userId,
+  }) async {
+    final response = await _request('group_kick', {
+      'group_id': groupId,
+      'user_id': userId,
+    });
+    _requireOk(response, 'Remove group member');
+    await _syncFromServer();
+  }
+
+  @override
   Future<void> ensureConversation(ImConversation conversation) async {
     _conversations[conversation.id] = conversation;
     _emitConversations();
@@ -757,6 +850,11 @@ class ZzzServerSource implements ImMessageSource {
   void _handleNoticeEvent(Map<String, dynamic> json) {
     if (json['notice_type'] == 'message_read') {
       _handleMessageRead(json);
+      return;
+    }
+    final noticeType = json['notice_type'];
+    if (noticeType == 'group_increase' || noticeType == 'group_decrease') {
+      unawaited(_syncFromServer().catchError((_) {}));
       return;
     }
     if (json['notice_type'] != 'friend_recall' &&
