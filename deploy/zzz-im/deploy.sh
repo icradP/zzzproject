@@ -7,7 +7,11 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-revision=$(git -C "${repo_root}" rev-parse --short HEAD)
+revision=${ZZZ_REVISION:-}
+if [[ -z ${revision} ]]; then
+  revision=$(git -C "${repo_root}" rev-parse --short HEAD 2>/dev/null || true)
+fi
+revision=${revision:-manual}
 image="zzz-im-server:${revision}"
 container="zzz-im-server"
 env_file="/etc/zzz-im/server.env"
