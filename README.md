@@ -64,7 +64,7 @@ To serve the PWA from the same `icrad.ltd` origin, build with a root base path,
 package `build/web`, and activate it with the versioned deployment script:
 
 ```bash
-flutter build web --release --base-href / \
+flutter build web --release --base-href / --no-web-resources-cdn \
   --dart-define=ZZZ_SERVER_URL=wss://icrad.ltd/im/ws
 tar -czf /tmp/zzz-pwa.tar.gz -C build/web .
 sudo ./deploy/zzz-im/deploy-pwa.sh /tmp/zzz-pwa.tar.gz <release-id>
@@ -73,6 +73,10 @@ sudo ./deploy/zzz-im/deploy-pwa.sh /tmp/zzz-pwa.tar.gz <release-id>
 Each release is stored below `/srv/www/zzz-im/releases`; `current` is switched
 atomically, so rollback only requires repointing that symlink and reloading is
 not needed for ordinary PWA updates.
+
+The custom Web bootstrap keeps CanvasKit on the application origin and starts
+the versioned `app-sw.js` cache after the first Flutter frame. Web Push remains
+isolated in `push-sw.js` under the narrower `/push/` service-worker scope.
 
 If the target host cannot reach Docker Hub, cross-compile static Linux amd64
 binaries into `dist/` and run `deploy/zzz-im/deploy-native.sh`. The included
@@ -98,6 +102,7 @@ Build the PWA for GitHub Pages:
 ```bash
 flutter build web --release \
   --base-href /zzzproject/ \
+  --no-web-resources-cdn \
   --dart-define=ZZZ_SERVER_URL=wss://im.example.com/ws
 ```
 

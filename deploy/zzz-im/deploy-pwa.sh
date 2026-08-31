@@ -28,10 +28,23 @@ install -d -m 0755 "${site_root}/releases"
 install -d -m 0755 "${release_dir}"
 tar -xzf "${archive}" -C "${release_dir}" --no-same-owner
 
-if [[ ! -f ${release_dir}/index.html || ! -f ${release_dir}/manifest.json ]]; then
+if [[ ! -f ${release_dir}/index.html ||
+      ! -f ${release_dir}/manifest.json ||
+      ! -f ${release_dir}/app-sw.js ||
+      ! -f ${release_dir}/canvaskit/canvaskit.wasm ]]; then
   echo "Archive does not contain a Flutter PWA build." >&2
   exit 1
 fi
+if ! grep -Fq 'canvasKitBaseUrl: "canvaskit/"' "${release_dir}/flutter_bootstrap.js"; then
+  echo "Flutter PWA is not configured to use local CanvasKit assets." >&2
+  exit 1
+fi
+
+find "${release_dir}" -type f \
+  \( -name '*.js' -o -name '*.css' -o -name '*.json' -o \
+     -name '*.wasm' -o -name '*.ttf' -o -name '*.otf' -o \
+     -name '*.svg' \) \
+  -size +1024c -exec gzip -9 -k -f {} +
 
 chmod -R a=rX,u+w "${release_dir}"
 ln -s "releases/${release}" "${site_root}/.current-${release}"

@@ -34,6 +34,7 @@ jobs:
 
       - name: Validate PWA assets
         run: |
+          node --check web/app-sw.js
           node --check web/push_client.js
           node --check web/push-sw.js
           node -e "JSON.parse(require('fs').readFileSync('web/manifest.json', 'utf8'))"
@@ -42,11 +43,18 @@ jobs:
         env:
           ZZZ_SERVER_URL: ${{ vars.ZZZ_SERVER_URL || 'wss://icrad.ltd/im/ws' }}
         run: |
-          build_args=(--release --base-href /zzzproject/)
+          build_args=(--release --base-href /zzzproject/ --no-web-resources-cdn)
           if [[ -n "$ZZZ_SERVER_URL" ]]; then
             build_args+=(--dart-define="ZZZ_SERVER_URL=$ZZZ_SERVER_URL")
           fi
           flutter build web "${build_args[@]}"
+
+      - name: Validate optimized Web release
+        run: |
+          node --check build/web/app-sw.js
+          node --check build/web/flutter_bootstrap.js
+          grep -Fq 'canvasKitBaseUrl: "canvaskit/"' build/web/flutter_bootstrap.js
+          test -f build/web/canvaskit/canvaskit.wasm
 
       - uses: actions/upload-artifact@v4
         with:

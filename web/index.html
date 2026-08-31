@@ -32,8 +32,62 @@
 
   <title>ZZZ IM</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="preload" href="main.dart.js" as="script">
+  <style>
+    html,
+    body {
+      background: #050505;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #app-loading {
+      align-items: center;
+      background: #050505;
+      display: flex;
+      inset: 0;
+      justify-content: center;
+      opacity: 1;
+      position: fixed;
+      transition: opacity 180ms ease-out;
+      z-index: 1000;
+    }
+
+    .flutter-ready #app-loading {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #app-loading img {
+      height: 72px;
+      width: 72px;
+    }
+
+    #app-loading::after {
+      animation: loading-spin 800ms linear infinite;
+      border: 2px solid rgba(245, 197, 66, 0.22);
+      border-radius: 50%;
+      border-top-color: #f5c542;
+      content: "";
+      height: 92px;
+      position: absolute;
+      width: 92px;
+    }
+
+    @keyframes loading-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #app-loading::after { animation: none; }
+    }
+  </style>
 </head>
 <body>
+  <div id="app-loading" role="status" aria-label="Loading ZZZ IM">
+    <img src="icons/Icon-192.png" alt="">
+  </div>
   <script src="push_client.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
