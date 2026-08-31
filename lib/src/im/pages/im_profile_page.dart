@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../assets/app_assets.dart';
@@ -23,6 +24,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
   late final TextEditingController _nicknameController;
   bool _loading = true;
   bool _saving = false;
+  bool _signingOut = false;
   String? _error;
 
   @override
@@ -115,6 +117,32 @@ class _ImProfilePageState extends State<ImProfilePage> {
     }
   }
 
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Sign out?'),
+            content: const Text(
+              'This device will return to the account login page.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Sign out'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _signingOut = true);
+    await ImScope.signOut(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _user;
@@ -198,6 +226,23 @@ class _ImProfilePageState extends State<ImProfilePage> {
                                     : const Icon(Icons.save_outlined),
                             label: const Text('Save profile'),
                           ),
+                          if (kIsWeb) ...[
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed:
+                                  _saving || _signingOut ? null : _signOut,
+                              icon:
+                                  _signingOut
+                                      ? const SizedBox.square(
+                                        dimension: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                      : const Icon(Icons.logout_rounded),
+                              label: const Text('Sign out'),
+                            ),
+                          ],
                         ],
                       ),
                     ),

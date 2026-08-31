@@ -56,6 +56,15 @@ func (s *PostgresStore) initSchema() error {
 		created_at TIMESTAMP DEFAULT NOW()
 	);
 
+	CREATE TABLE IF NOT EXISTS sessions (
+		token_hash TEXT PRIMARY KEY,
+		user_id VARCHAR(32) NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		created_at TIMESTAMP DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
 	CREATE TABLE IF NOT EXISTS messages (
 		id VARCHAR(32) PRIMARY KEY,
 		conversation_id VARCHAR(32) NOT NULL,

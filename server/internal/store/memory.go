@@ -13,6 +13,7 @@ type MemoryStore struct {
 	mu sync.RWMutex
 
 	users             map[string]*User
+	sessions          map[string]*Session // SHA-256 token hash -> session
 	groups            map[string]*Group
 	conversations     map[string]*Conversation
 	messages          map[string][]*Message // conversationID -> messages
@@ -27,6 +28,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users:             make(map[string]*User),
+		sessions:          make(map[string]*Session),
 		groups:            make(map[string]*Group),
 		conversations:     make(map[string]*Conversation),
 		messages:          make(map[string][]*Message),

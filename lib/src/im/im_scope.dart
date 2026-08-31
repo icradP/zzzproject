@@ -16,6 +16,7 @@ class ImScope extends InheritedWidget {
     required this.nsfwStateCache,
     required this.pushManager,
     required this.onConnectionsChanged,
+    this.onSignOut,
     this.connectionStatus,
     required super.child,
     super.key,
@@ -27,6 +28,7 @@ class ImScope extends InheritedWidget {
   final NsfwStateCache nsfwStateCache;
   final ImPushManager pushManager;
   final Future<void> Function() onConnectionsChanged;
+  final Future<void> Function()? onSignOut;
   final Stream<ConnectionStatus>? connectionStatus;
 
   static ImScope of(BuildContext context) {
@@ -53,6 +55,10 @@ class ImScope extends InheritedWidget {
   static Future<void> reloadConnections(BuildContext context) =>
       of(context).onConnectionsChanged();
 
+  static Future<void> signOut(BuildContext context) async {
+    await of(context).onSignOut?.call();
+  }
+
   static Stream<ConnectionStatus>? connectionStatusOf(BuildContext context) =>
       of(context).connectionStatus;
 
@@ -64,6 +70,7 @@ class ImScope extends InheritedWidget {
         nsfwStateCache != oldWidget.nsfwStateCache ||
         pushManager != oldWidget.pushManager ||
         onConnectionsChanged != oldWidget.onConnectionsChanged ||
+        onSignOut != oldWidget.onSignOut ||
         connectionStatus != oldWidget.connectionStatus;
   }
 }

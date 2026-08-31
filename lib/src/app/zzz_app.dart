@@ -10,6 +10,7 @@ import '../assets/app_assets.dart';
 import '../im/adapters/im_message_source.dart';
 import '../im/adapters/composite_im_repository.dart';
 import '../im/adapters/im_source_registry.dart';
+import '../im/adapters/zzz_server/zzz_server_source.dart';
 import '../im/adapters/nonebot/napcat_api.dart';
 import '../im/adapters/nonebot/nonebot_source_web.dart'
     if (dart.library.io) '../im/adapters/nonebot/nonebot_source.dart';
@@ -50,6 +51,7 @@ class _ZzzAppState extends State<ZzzApp> {
   ImPushManager _pushManager = NoOpImPushManager();
   ImClientRuntime? _runtime;
   var _repositoryGeneration = 0;
+  var _handlingInvalidWebSession = false;
 
   @override
   void initState() {
@@ -98,7 +100,18 @@ class _ZzzAppState extends State<ZzzApp> {
       return !kIsWeb || config.extra['authMode'] == 'session';
     });
     if (kIsWeb && !hasWebServer) {
-      if (mounted) setState(() => _needsWebSetup = true);
+      if (mounted && generation == _repositoryGeneration) {
+        _pushManager.dispose();
+        _pushManager = NoOpImPushManager();
+        final oldRepository = _repository;
+        setState(() {
+          _repository = null;
+          _runtime = null;
+          _connectionStatus = null;
+          _needsWebSetup = true;
+        });
+        oldRepository?.dispose();
+      }
       return;
     }
     if (ImNsfwConfig.instance.persistReveal) {
@@ -107,6 +120,7 @@ class _ZzzAppState extends State<ZzzApp> {
     final runtime = ImSourceRegistry(
       storageConfig: storageConfig,
       avatarResolver: _zzzAvatarResolver,
+      onZzzAuthenticationFailed: kIsWeb ? _handleInvalidWebSession : null,
     ).build(profiles);
     final repo = runtime.repository;
     final status = runtime.compositeRepository?.connectionStatus;
@@ -163,6 +177,50 @@ class _ZzzAppState extends State<ZzzApp> {
       _needsWebSetup = false;
     });
     await _initRepository();
+  }
+
+  Future<void> _signOutWeb() async {
+    final profiles = await ImConnectionProfiles.load();
+    ImConnectionProfile? accountProfile;
+    for (final profile in profiles.profiles) {
+      if (profile.id == profiles.primaryProfileId &&
+          profile.config.isZzzServer) {
+        accountProfile = profile;
+        break;
+      }
+    }
+    if (accountProfile == null) {
+      for (final profile in profiles.profiles) {
+        if (profile.config.isZzzServer) {
+          accountProfile = profile;
+          break;
+        }
+      }
+    }
+    final config = accountProfile?.config;
+    if (config?.serverUrl != null && config?.accessToken != null) {
+      try {
+        await ZzzServerSource.logoutAccount(
+          serverUrl: config!.serverUrl!,
+          sessionToken: config.accessToken!,
+        );
+      } catch (_) {
+        // Local sign-out must remain available while the server is offline.
+      }
+    }
+    await ImConnectionProfiles.clearPrimaryZzzSession();
+    await _initRepository();
+  }
+
+  Future<void> _handleInvalidWebSession() async {
+    if (!kIsWeb || _handlingInvalidWebSession) return;
+    _handlingInvalidWebSession = true;
+    try {
+      await ImConnectionProfiles.clearPrimaryZzzSession();
+      await _initRepository();
+    } finally {
+      _handlingInvalidWebSession = false;
+    }
   }
 
   /// Interaction handler wired to the active source.
@@ -233,6 +291,7 @@ class _ZzzAppState extends State<ZzzApp> {
       nsfwStateCache: _nsfwStateCache,
       pushManager: _pushManager,
       onConnectionsChanged: _initRepository,
+      onSignOut: kIsWeb ? _signOutWeb : null,
       connectionStatus: _connectionStatus,
       child: MaterialApp.router(
         routerConfig: appRouter,

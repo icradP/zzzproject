@@ -15,6 +15,11 @@ type Store interface {
 	GetUsers() ([]*User, error)
 	SetUserOnline(id string, online bool) error
 
+	// ---- Account session operations ----
+	UpsertSession(session *Session) error
+	GetSession(tokenHash string) (*Session, error)
+	DeleteSession(tokenHash string) error
+
 	// ---- Conversation operations ----
 	GetOrCreateConversation(id, convType, title string) (*Conversation, error)
 	SaveConversation(conversation *Conversation) error
@@ -93,6 +98,15 @@ type User struct {
 	Online       bool      `json:"online"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Session is a persisted account login. TokenHash is a SHA-256 digest; the
+// opaque token sent to clients is never stored by the server.
+type Session struct {
+	TokenHash string    `json:"-"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Group represents a group.

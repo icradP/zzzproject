@@ -99,38 +99,24 @@ class _ContactsPanelState extends State<ContactsPanel> {
   }
 
   Future<void> _createGroup() async {
-    final nameController = TextEditingController();
-    final name = await showDialog<String>(
+    final repository = ImScope.repositoryOf(context);
+    final self = await repository.getCurrentUser();
+    if (!mounted) return;
+    final availableUsers = _users
+        .where(
+          (user) => self.sourceId == null || user.sourceId == self.sourceId,
+        )
+        .toList(growable: false);
+    final request = await showDialog<_CreateGroupRequest>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Create group'),
-            content: TextField(
-              controller: nameController,
-              autofocus: true,
-              maxLength: 80,
-              decoration: const InputDecoration(labelText: 'Group name'),
-              onSubmitted:
-                  (_) => Navigator.of(context).pop(nameController.text),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(nameController.text),
-                child: const Text('Create'),
-              ),
-            ],
-          ),
+      builder: (_) => _CreateGroupDialog(users: availableUsers),
     );
-    nameController.dispose();
-    if (name == null || name.trim().isEmpty || !mounted) return;
+    if (request == null || !mounted) return;
     try {
-      final group = await ImScope.repositoryOf(
-        context,
-      ).createGroup(name: name.trim());
+      final group = await repository.createGroup(
+        name: request.name,
+        memberIds: request.memberIds,
+      );
       if (!mounted) return;
       setState(() => _groups = [..._groups, group]);
       widget.onConversationSelected(group);
@@ -253,6 +239,126 @@ class _ContactsPanelState extends State<ContactsPanel> {
           Text(message, style: const TextStyle(color: Colors.white38)),
         ],
       ),
+    );
+  }
+}
+
+class _CreateGroupRequest {
+  const _CreateGroupRequest({required this.name, required this.memberIds});
+
+  final String name;
+  final List<String> memberIds;
+}
+
+class _CreateGroupDialog extends StatefulWidget {
+  const _CreateGroupDialog({required this.users});
+
+  final List<ImUser> users;
+
+  @override
+  State<_CreateGroupDialog> createState() => _CreateGroupDialogState();
+}
+
+class _CreateGroupDialogState extends State<_CreateGroupDialog> {
+  final _nameController = TextEditingController();
+  final _selectedMemberIds = <String>{};
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) return;
+    Navigator.of(context).pop(
+      _CreateGroupRequest(
+        name: name,
+        memberIds: _selectedMemberIds.toList(growable: false),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Create group'),
+      content: SizedBox(
+        width: 420,
+        height: 320,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _nameController,
+              autofocus: true,
+              maxLength: 80,
+              decoration: const InputDecoration(labelText: 'Group name'),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _submit(),
+            ),
+            const Text(
+              'Members',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child:
+                  widget.users.isEmpty
+                      ? const Center(
+                        child: Text(
+                          'No contacts available',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      )
+                      : ListView.builder(
+                        itemCount: widget.users.length,
+                        itemBuilder: (context, index) {
+                          final user = widget.users[index];
+                          return CheckboxListTile(
+                            value: _selectedMemberIds.contains(user.id),
+                            secondary: ZzzAvatar(
+                              image: user.avatarImage(AppAssets.characterWise),
+                              size: 36,
+                            ),
+                            title: Text(
+                              user.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              ImSourceAddress.localIdOf(user.id),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onChanged: (selected) {
+                              setState(() {
+                                if (selected == true) {
+                                  _selectedMemberIds.add(user.id);
+                                } else {
+                                  _selectedMemberIds.remove(user.id);
+                                }
+                              });
+                            },
+                          );
+                        },
+                      ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _nameController.text.trim().isEmpty ? null : _submit,
+          icon: const Icon(Icons.group_add_outlined),
+          label: const Text('Create'),
+        ),
+      ],
     );
   }
 }

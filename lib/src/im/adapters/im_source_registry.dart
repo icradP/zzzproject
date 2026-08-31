@@ -38,10 +38,12 @@ class ImSourceRegistry {
   const ImSourceRegistry({
     required this.storageConfig,
     required this.avatarResolver,
+    this.onZzzAuthenticationFailed,
   });
 
   final ImStorageConfig storageConfig;
   final ImAvatarResolver avatarResolver;
+  final Future<void> Function()? onZzzAuthenticationFailed;
 
   ImClientRuntime build(ImConnectionProfiles settings) {
     final registrations = <ImRepositoryRegistration>[];
@@ -93,6 +95,7 @@ class ImSourceRegistry {
               authToken: config.accessToken ?? '',
               selfId: config.selfId,
             ),
+            onAuthenticationFailed: onZzzAuthenticationFailed,
           );
           zzzServerSources[profile.id] = source;
           final repository = SourceBackedRepository(source);

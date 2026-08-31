@@ -10,6 +10,7 @@ A Flutter-based instant messaging client styled after Zenless Zone Zero. It supp
 - **iOS PWA client** — Installable from Safari without an Apple Developer account
 - **Web Push** — VAPID notifications without an APNs or FCM dependency
 - **ZZZ Server** — Go WebSocket server with memory, SQLite, or PostgreSQL storage
+- **Account profiles** — Password accounts, persistent expiring sessions, editable nicknames and avatars
 - **Multi-source inbox** — Client-managed connection profiles with source-aware message routing
 - **Contact & group management** — Friend list, group member list, avatar caching
 - **Customizable UI** — ZZZ-style animated backgrounds, configurable backdrop text, animation toggles
@@ -56,9 +57,10 @@ stores SQLite data and uploaded media under `/var/lib/zzz-im`, and generates
 VAPID credentials plus a shared test token in `/etc/zzz-im/server.env`. The Go
 port binds only to `127.0.0.1:18080`; Nginx is the public HTTPS/WSS boundary.
 
-The shared token is an access gate for testing, not a multi-user production
-authentication system. Replace it with account-specific credentials before
-using the server for sensitive or untrusted traffic.
+Users register and sign in with account-specific passwords. Passwords are
+bcrypt-hashed; opaque 90-day sessions are stored by SHA-256 digest so a server
+restart does not sign out every device. The shared token remains only for
+legacy test clients and should be disabled for untrusted deployments.
 
 To serve the PWA from the same `icrad.ltd` origin, build with a root base path,
 package `build/web`, and activate it with the versioned deployment script:

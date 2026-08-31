@@ -93,4 +93,43 @@ void main() {
     expect(updated.profiles.any((profile) => profile.id == 'qq'), isTrue);
     expect(updated.primaryProfile?.config.platform, ImPlatform.zzzServer);
   });
+
+  test('web sign-out clears only the primary ZZZ account session', () async {
+    const existing = ImConnectionProfiles(
+      profiles: [
+        ImConnectionProfile(
+          id: 'zzz',
+          name: 'Private IM',
+          config: ImConnectionConfig(
+            platform: ImPlatform.zzzServer,
+            serverUrl: 'wss://im.example.test/ws',
+            selfId: 'alice',
+            accessToken: 'session-token',
+            extra: {'authMode': 'session', 'theme': 'dark'},
+          ),
+        ),
+        ImConnectionProfile(
+          id: 'qq',
+          name: 'Work QQ',
+          config: ImConnectionConfig(
+            platform: ImPlatform.nonebot,
+            accessToken: 'qq-token',
+          ),
+        ),
+      ],
+      primaryProfileId: 'zzz',
+    );
+    await existing.save();
+
+    await ImConnectionProfiles.clearPrimaryZzzSession();
+    final updated = await ImConnectionProfiles.load();
+    final zzz = updated.profiles.firstWhere((profile) => profile.id == 'zzz');
+    final qq = updated.profiles.firstWhere((profile) => profile.id == 'qq');
+
+    expect(zzz.config.serverUrl, 'wss://im.example.test/ws');
+    expect(zzz.config.selfId, isEmpty);
+    expect(zzz.config.accessToken, isNull);
+    expect(zzz.config.extra, {'theme': 'dark'});
+    expect(qq.config.accessToken, 'qq-token');
+  });
 }

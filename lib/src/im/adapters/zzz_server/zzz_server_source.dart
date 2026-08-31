@@ -35,12 +35,17 @@ class ZzzAccountResult {
 
 /// WebSocket-backed source shared by PWA and native clients.
 class ZzzServerSource implements ImMessageSource {
-  ZzzServerSource({required this.config, bool allowReconnect = true})
-    : _allowReconnect = allowReconnect,
-      _selfId = config.selfId;
+  ZzzServerSource({
+    required this.config,
+    bool allowReconnect = true,
+    Future<void> Function()? onAuthenticationFailed,
+  }) : _onAuthenticationFailed = onAuthenticationFailed,
+       _allowReconnect = allowReconnect,
+       _selfId = config.selfId;
 
   final ZzzServerConfig config;
   final bool _allowReconnect;
+  final Future<void> Function()? _onAuthenticationFailed;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _channelSubscription;
@@ -761,6 +766,9 @@ class ZzzServerSource implements ImMessageSource {
       'session_token': config.authToken,
       'user_id': config.selfId,
     });
+    if (response['status'] != 'ok' && _onAuthenticationFailed != null) {
+      unawaited(_onAuthenticationFailed());
+    }
     _requireOk(response, 'Authentication');
     final data = response['data'];
     if (data is! Map) return;
@@ -816,6 +824,16 @@ class ZzzServerSource implements ImMessageSource {
       'device_id': 'pwa-${DateTime.now().millisecondsSinceEpoch}',
     });
     return _accountResult(response);
+  }
+
+  /// Revokes a persisted account session. Local sign-out still proceeds when
+  /// the server is temporarily unreachable.
+  static Future<void> logoutAccount({
+    required String serverUrl,
+    required String sessionToken,
+  }) async {
+    if (sessionToken.isEmpty) return;
+    await _accountRequest(serverUrl, 'logout', {'session_token': sessionToken});
   }
 
   static Future<Map<String, dynamic>> _accountRequest(

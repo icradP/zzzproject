@@ -152,6 +152,7 @@ type Response struct {
 const (
 	ActionAuth               = "auth"
 	ActionRegister           = "register"
+	ActionLogout             = "logout"
 	ActionPing               = "ping"
 	ActionSendMessage        = "send_message"
 	ActionEnsureConversation = "ensure_conversation"

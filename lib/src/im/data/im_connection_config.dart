@@ -303,4 +303,36 @@ class ImConnectionProfiles {
     await updated.save();
     return updated;
   }
+
+  /// Removes the account session from the active ZZZ profile while retaining
+  /// its hidden server endpoint and display name for the next sign-in.
+  static Future<void> clearPrimaryZzzSession() async {
+    final current = await load();
+    var targetIndex = current.profiles.indexWhere(
+      (profile) =>
+          profile.id == current.primaryProfileId && profile.config.isZzzServer,
+    );
+    if (targetIndex < 0) {
+      targetIndex = current.profiles.indexWhere(
+        (profile) => profile.config.isZzzServer,
+      );
+    }
+    if (targetIndex < 0) return;
+
+    final profiles = [...current.profiles];
+    final target = profiles[targetIndex];
+    final extra = Map<String, dynamic>.from(target.config.extra)
+      ..remove('authMode');
+    profiles[targetIndex] = target.copyWith(
+      config: target.config.copyWith(
+        selfId: '',
+        clearAccessToken: true,
+        extra: extra,
+      ),
+    );
+    await ImConnectionProfiles(
+      profiles: profiles,
+      primaryProfileId: current.primaryProfileId,
+    ).save();
+  }
 }

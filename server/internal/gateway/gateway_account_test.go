@@ -69,4 +69,28 @@ func TestAccountProfileAndGroupFlow(t *testing.T) {
 	if len(responseData(t, info)["members"].([]interface{})) != 2 {
 		t.Fatalf("unexpected group members: %#v", info)
 	}
+
+	// A new gateway instance simulates a server restart while sharing the
+	// persistent store. The original account session must remain valid.
+	restartedGateway := NewGateway(database)
+	restartedServer := httptest.NewServer(restartedGateway)
+	t.Cleanup(restartedServer.Close)
+	restartedURL := "ws" + strings.TrimPrefix(restartedServer.URL, "http")
+	restartedClient := dialWebSocket(t, restartedURL)
+	t.Cleanup(func() { _ = restartedClient.Close() })
+	assertOK(t, request(t, restartedClient, "auth", map[string]interface{}{
+		"session_token": aliceSession,
+	}))
+
+	logoutClient := dialWebSocket(t, restartedURL)
+	t.Cleanup(func() { _ = logoutClient.Close() })
+	assertOK(t, request(t, logoutClient, "logout", map[string]interface{}{
+		"session_token": aliceSession,
+	}))
+	denied := request(t, logoutClient, "auth", map[string]interface{}{
+		"session_token": aliceSession,
+	})
+	if denied["status"] == "ok" {
+		t.Fatalf("revoked session was accepted: %#v", denied)
+	}
 }

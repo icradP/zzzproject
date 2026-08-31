@@ -3,8 +3,10 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -35,10 +37,8 @@ type Gateway struct {
 	accessToken string
 	upgrader    websocket.Upgrader
 
-	mu        sync.RWMutex
-	clients   map[string]*Client // userID -> Client
-	sessionMu sync.RWMutex
-	sessions  map[string]string // opaque session token -> userID
+	mu      sync.RWMutex
+	clients map[string]*Client // userID -> Client
 }
 
 // PushSender abstracts VAPID delivery so the gateway remains testable.
@@ -63,8 +63,7 @@ func NewGateway(database store.Store, pushSenders ...PushSender) *Gateway {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients:  make(map[string]*Client),
-		sessions: make(map[string]string),
+		clients: make(map[string]*Client),
 	}
 }
 
@@ -138,6 +137,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleAuth(client, req)
 	case protocol.ActionRegister:
 		g.handleRegister(client, req)
+	case protocol.ActionLogout:
+		g.handleLogout(client, req)
 	case protocol.ActionPing:
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
@@ -445,23 +446,57 @@ func (g *Gateway) handleUpdateProfile(client *Client, req *protocol.Request) {
 	}})
 }
 
+const sessionTTL = 90 * 24 * time.Hour
+
 func (g *Gateway) issueSession(userID string) (string, error) {
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw[:])
-	g.sessionMu.Lock()
-	g.sessions[token] = userID
-	g.sessionMu.Unlock()
+	if err := g.store.UpsertSession(&store.Session{
+		TokenHash: hashSessionToken(token),
+		UserID:    userID,
+		ExpiresAt: time.Now().Add(sessionTTL),
+	}); err != nil {
+		return "", err
+	}
 	return token, nil
 }
 
 func (g *Gateway) userForSession(token string) (string, bool) {
-	g.sessionMu.RLock()
-	userID, ok := g.sessions[token]
-	g.sessionMu.RUnlock()
-	return userID, ok
+	session, err := g.store.GetSession(hashSessionToken(token))
+	if err != nil || session == nil {
+		return "", false
+	}
+	if !session.ExpiresAt.After(time.Now()) {
+		_ = g.store.DeleteSession(session.TokenHash)
+		return "", false
+	}
+	return session.UserID, true
+}
+
+func (g *Gateway) handleLogout(client *Client, req *protocol.Request) {
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid logout params")
+		return
+	}
+	token, _ := params["session_token"].(string)
+	if token == "" {
+		g.sendError(client, req.Echo, "session_token required")
+		return
+	}
+	if err := g.store.DeleteSession(hashSessionToken(token)); err != nil {
+		g.sendError(client, req.Echo, "failed to revoke session")
+		return
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo})
+}
+
+func hashSessionToken(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:])
 }
 
 func validUserID(value string) bool {
