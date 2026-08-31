@@ -74,6 +74,7 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
         serverUrl: serverUrl,
         selfId: account.userId,
         accessToken: account.sessionToken,
+        extra: const {'authMode': 'session'},
       );
       await widget.onConfigured(config);
     } catch (_) {

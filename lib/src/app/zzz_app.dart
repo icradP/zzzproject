@@ -86,12 +86,17 @@ class _ZzzAppState extends State<ZzzApp> {
     await ImAnimationConfig.load();
     await ImBackdropConfig.load();
     await ImNsfwConfig.load();
-    final hasWebServer = profiles.enabledProfiles.any(
-      (profile) =>
-          profile.config.isZzzServer &&
-          profile.config.serverUrl != null &&
-          profile.config.serverUrl!.isNotEmpty,
-    );
+    final hasWebServer = profiles.enabledProfiles.any((profile) {
+      final config = profile.config;
+      if (!config.isZzzServer ||
+          config.serverUrl == null ||
+          config.serverUrl!.isEmpty) {
+        return false;
+      }
+      // Web clients must use account sessions. This sends installations that
+      // still contain the legacy shared-token profile back to the login page.
+      return !kIsWeb || config.extra['authMode'] == 'session';
+    });
     if (kIsWeb && !hasWebServer) {
       if (mounted) setState(() => _needsWebSetup = true);
       return;
