@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/icradp/zzz-im-server/internal/store"
@@ -22,7 +23,7 @@ func NewService(publicKey, privateKey, subject string) *Service {
 	return &Service{
 		publicKey:  publicKey,
 		privateKey: privateKey,
-		subject:    subject,
+		subject:    normalizeVAPIDSubscriber(subject),
 	}
 }
 
@@ -72,15 +73,31 @@ func (s *Service) Send(
 		return false, err
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, response.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 
 	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
 		return true, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return false, fmt.Errorf("web push provider returned status %d", response.StatusCode)
+		detail := strings.TrimSpace(string(responseBody))
+		if detail != "" {
+			return false, fmt.Errorf(
+				"web push provider returned status %d: %s",
+				response.StatusCode,
+				detail,
+			)
+		}
+		return false, fmt.Errorf(
+			"web push provider returned status %d",
+			response.StatusCode,
+		)
 	}
 	return false, nil
+}
+
+// webpush-go adds mailto: to every subscriber that is not an HTTPS URL.
+func normalizeVAPIDSubscriber(subject string) string {
+	return strings.TrimPrefix(strings.TrimSpace(subject), "mailto:")
 }
 
 func validateEndpoint(endpoint string) error {
