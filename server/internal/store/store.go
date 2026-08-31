@@ -32,6 +32,8 @@ type Store interface {
 	StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error)
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
+	ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error)
+	GetMessageReactionIDs(msgID, userID string) ([]string, error)
 	RecallMessage(msgID string) (bool, error)
 	MarkConversationRead(conversationID, userID string) (*ReadState, error)
 	GetConversationRead(conversationID, userID string) (*ReadState, error)
@@ -90,6 +92,7 @@ type Message struct {
 	Segments       []protocol.MessageSegment `json:"segments"`
 	Timestamp      time.Time                 `json:"timestamp"`
 	Recalled       bool                      `json:"recalled"`
+	Reactions      []protocol.Reaction       `json:"reactions,omitempty"`
 }
 
 // ReadState stores a user's durable read cursor within a conversation.

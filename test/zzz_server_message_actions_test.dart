@@ -13,6 +13,7 @@ void main() {
       final sockets = <WebSocket>[];
       Map<String, dynamic>? sentMessageRequest;
       Map<String, dynamic>? recallRequest;
+      Map<String, dynamic>? reactionRequest;
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
         sockets.add(socket);
@@ -21,6 +22,7 @@ void main() {
           final action = requestJson['action'];
           if (action == 'send_message') sentMessageRequest = requestJson;
           if (action == 'recall_message') recallRequest = requestJson;
+          if (action == 'react_message') reactionRequest = requestJson;
           final data = switch (action) {
             'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
             'get_friends' => [
@@ -46,6 +48,14 @@ void main() {
               ),
             ],
             'send_message' => {'message_id': 'message-3'},
+            'react_message' => {
+              'message_id': 'message-1',
+              'emoji_id': '76',
+              'reactions': [
+                {'emoji_id': '76', 'count': 1},
+              ],
+              'my_reactions': ['76'],
+            },
             _ => <String, Object?>{},
           };
           socket.add(
@@ -125,6 +135,19 @@ void main() {
       expect(
         (recallRequest!['params'] as Map<String, dynamic>)['message_id'],
         'message-3',
+      );
+
+      final reactions = await source.reactToMessage(
+        conversationId: 'private_me_bob',
+        messageId: 'message-1',
+        emojiId: '76',
+      );
+      expect(reactions.single.emojiId, '76');
+      expect(reactions.single.count, 1);
+      expect(reactions.single.reactedByMe, isTrue);
+      expect(
+        (reactionRequest!['params'] as Map<String, dynamic>)['emoji_id'],
+        '76',
       );
     },
   );

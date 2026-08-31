@@ -457,9 +457,20 @@ class ImMessage {
 
 /// An emoji reaction on a message.
 class ImReaction {
-  const ImReaction({required this.emojiId, required this.count});
+  const ImReaction({
+    required this.emojiId,
+    required this.count,
+    this.reactedByMe = false,
+  });
   final String emojiId;
   final int count;
+  final bool reactedByMe;
+
+  ImReaction copyWith({int? count, bool? reactedByMe}) => ImReaction(
+    emojiId: emojiId,
+    count: count ?? this.count,
+    reactedByMe: reactedByMe ?? this.reactedByMe,
+  );
 }
 
 /// A tree of forwarded messages.

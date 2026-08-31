@@ -86,27 +86,35 @@ type MessageEvent struct {
 	ConversationID string           `json:"conversation_id"`
 	Sender         Sender           `json:"sender"`
 	Message        []MessageSegment `json:"message"`
+	Reactions      []Reaction       `json:"reactions,omitempty"`
 	Timestamp      int64            `json:"timestamp"`
+}
+
+// Reaction is an aggregate reaction count attached to a message.
+type Reaction struct {
+	EmojiID string `json:"emoji_id"`
+	Count   int    `json:"count"`
 }
 
 // NoticeType represents different notice event types.
 type NoticeType string
 
 const (
-	NoticeTypeFriendAdd     NoticeType = "friend_add"
-	NoticeTypeFriendRemove  NoticeType = "friend_remove"
-	NoticeTypeFriendRecall  NoticeType = "friend_recall"
-	NoticeTypeGroupRecall   NoticeType = "group_recall"
-	NoticeTypeGroupIncrease NoticeType = "group_increase"
-	NoticeTypeGroupDecrease NoticeType = "group_decrease"
-	NoticeTypeGroupAdmin    NoticeType = "group_admin"
-	NoticeTypeGroupBan      NoticeType = "group_ban"
-	NoticeTypeGroupUpdate   NoticeType = "group_update"
-	NoticeTypeGroupTransfer NoticeType = "group_transfer"
-	NoticeTypeGroupDismiss  NoticeType = "group_dismiss"
-	NoticeTypeGroupMuteAll  NoticeType = "group_mute_all"
-	NoticeTypePoke          NoticeType = "poke"
-	NoticeTypeMessageRead   NoticeType = "message_read"
+	NoticeTypeFriendAdd       NoticeType = "friend_add"
+	NoticeTypeFriendRemove    NoticeType = "friend_remove"
+	NoticeTypeFriendRecall    NoticeType = "friend_recall"
+	NoticeTypeGroupRecall     NoticeType = "group_recall"
+	NoticeTypeGroupIncrease   NoticeType = "group_increase"
+	NoticeTypeGroupDecrease   NoticeType = "group_decrease"
+	NoticeTypeGroupAdmin      NoticeType = "group_admin"
+	NoticeTypeGroupBan        NoticeType = "group_ban"
+	NoticeTypeGroupUpdate     NoticeType = "group_update"
+	NoticeTypeGroupTransfer   NoticeType = "group_transfer"
+	NoticeTypeGroupDismiss    NoticeType = "group_dismiss"
+	NoticeTypeGroupMuteAll    NoticeType = "group_mute_all"
+	NoticeTypePoke            NoticeType = "poke"
+	NoticeTypeMessageRead     NoticeType = "message_read"
+	NoticeTypeMessageReaction NoticeType = "message_reaction"
 )
 
 // NoticeEvent is pushed for non-message events (recall, group changes, etc.).
@@ -124,6 +132,9 @@ type NoticeEvent struct {
 	SubType           string     `json:"sub_type,omitempty"`
 	Duration          int64      `json:"duration,omitempty"`
 	Enabled           bool       `json:"enabled,omitempty"`
+	EmojiID           string     `json:"emoji_id,omitempty"`
+	Removed           bool       `json:"removed,omitempty"`
+	Reactions         []Reaction `json:"reactions,omitempty"`
 }
 
 // RequestType represents different request event types.
@@ -169,6 +180,7 @@ const (
 	ActionSendMessage        = "send_message"
 	ActionEnsureConversation = "ensure_conversation"
 	ActionRecallMessage      = "recall_message"
+	ActionReactMessage       = "react_message"
 	ActionGetConversations   = "get_conversations"
 	ActionGetMessages        = "get_messages"
 	ActionMarkRead           = "mark_read"
@@ -227,6 +239,13 @@ type SendMessageParams struct {
 // RecallMessageParams are the params for the "recall_message" action.
 type RecallMessageParams struct {
 	MessageID string `json:"message_id"`
+}
+
+// ReactMessageParams are the params for the "react_message" action.
+type ReactMessageParams struct {
+	MessageID string `json:"message_id"`
+	EmojiID   string `json:"emoji_id"`
+	Remove    bool   `json:"remove,omitempty"`
 }
 
 // GetMessagesParams are the params for the "get_messages" action.

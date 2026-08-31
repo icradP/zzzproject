@@ -227,6 +227,16 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) async {
+    throw UnsupportedError('reactToMessage is not available on web');
+  }
+
+  @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
     required ImMediaUpload upload,

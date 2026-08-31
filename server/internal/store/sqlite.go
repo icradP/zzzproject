@@ -81,6 +81,18 @@ func (s *SQLiteStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp);
 	CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 
+	CREATE TABLE IF NOT EXISTS message_reactions (
+		message_id TEXT NOT NULL,
+		emoji_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (message_id, emoji_id, user_id),
+		FOREIGN KEY (message_id) REFERENCES messages(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_message_reactions_message
+		ON message_reactions(message_id, emoji_id);
+
 	CREATE TABLE IF NOT EXISTS conversation_reads (
 		conversation_id TEXT NOT NULL,
 		user_id TEXT NOT NULL,
@@ -424,6 +436,9 @@ func (s *SQLiteStore) DeleteConversation(id string) error {
 	if _, err := s.db.Exec("DELETE FROM conversation_reads WHERE conversation_id = ?", id); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec("DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)", id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec("DELETE FROM messages WHERE conversation_id = ?", id)
 	if err != nil {
 		return err
@@ -474,6 +489,10 @@ func (s *SQLiteStore) GetMessage(msgID string) (*Message, error) {
 		return nil, err
 	}
 	json.Unmarshal([]byte(segmentsJSON), &msg.Segments)
+	msg.Reactions, err = s.loadReactionCounts(msg.ID)
+	if err != nil {
+		return nil, err
+	}
 	return msg, nil
 }
 
@@ -495,6 +514,10 @@ func (s *SQLiteStore) GetMessages(convID string, limit int) ([]*Message, error) 
 			return nil, err
 		}
 		json.Unmarshal([]byte(segmentsJSON), &msg.Segments)
+		msg.Reactions, err = s.loadReactionCounts(msg.ID)
+		if err != nil {
+			return nil, err
+		}
 		msgs = append(msgs, msg)
 	}
 
@@ -504,6 +527,73 @@ func (s *SQLiteStore) GetMessages(convID string, limit int) ([]*Message, error) 
 	}
 
 	return msgs, nil
+}
+
+func (s *SQLiteStore) ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND recalled = FALSE)", msgID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	if remove {
+		_, err = tx.Exec("DELETE FROM message_reactions WHERE message_id = ? AND emoji_id = ? AND user_id = ?", msgID, emojiID, userID)
+	} else {
+		_, err = tx.Exec("INSERT OR IGNORE INTO message_reactions (message_id, emoji_id, user_id) VALUES (?, ?, ?)", msgID, emojiID, userID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetMessage(msgID)
+}
+
+func (s *SQLiteStore) GetMessageReactionIDs(msgID, userID string) ([]string, error) {
+	rows, err := s.db.Query(
+		"SELECT emoji_id FROM message_reactions WHERE message_id = ? AND user_id = ? ORDER BY emoji_id",
+		msgID, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var emojiID string
+		if err := rows.Scan(&emojiID); err != nil {
+			return nil, err
+		}
+		result = append(result, emojiID)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) loadReactionCounts(msgID string) ([]protocol.Reaction, error) {
+	rows, err := s.db.Query(
+		"SELECT emoji_id, COUNT(*) FROM message_reactions WHERE message_id = ? GROUP BY emoji_id ORDER BY emoji_id",
+		msgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []protocol.Reaction
+	for rows.Next() {
+		var reaction protocol.Reaction
+		if err := rows.Scan(&reaction.EmojiID, &reaction.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, reaction)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteStore) RecallMessage(msgID string) (bool, error) {

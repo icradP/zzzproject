@@ -169,3 +169,83 @@ func TestWebSocketReplyAndRecallLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestWebSocketMessageReactionLifecycle(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	alice := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+	send := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message": []map[string]interface{}{
+			{"type": "text", "data": map[string]interface{}{"text": "react me"}},
+		},
+	})
+	assertOK(t, send)
+	messageID := responseData(t, send)["message_id"].(string)
+	_ = readJSON(t, bob)
+
+	assertOK(t, request(t, alice, "react_message", map[string]interface{}{
+		"message_id": messageID,
+		"emoji_id":   "76",
+	}))
+	aliceEvent := readJSON(t, alice)
+	bobEvent := readJSON(t, bob)
+	for _, event := range []map[string]interface{}{aliceEvent, bobEvent} {
+		if event["notice_type"] != "message_reaction" || event["message_id"] != messageID {
+			t.Fatalf("unexpected reaction event: %#v", event)
+		}
+		reactions := event["reactions"].([]interface{})
+		if len(reactions) != 1 || reactions[0].(map[string]interface{})["count"] != float64(1) {
+			t.Fatalf("unexpected reaction aggregate: %#v", event)
+		}
+	}
+
+	assertOK(t, request(t, bob, "react_message", map[string]interface{}{
+		"message_id": messageID,
+		"emoji_id":   "76",
+	}))
+	_ = readJSON(t, alice)
+	_ = readJSON(t, bob)
+	history := responseDataList(t, request(t, bob, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           10,
+	}))
+	item := history[0].(map[string]interface{})
+	if len(item["my_reactions"].([]interface{})) != 1 {
+		t.Fatalf("bob reaction state missing: %#v", item)
+	}
+
+	assertOK(t, request(t, alice, "react_message", map[string]interface{}{
+		"message_id": messageID,
+		"emoji_id":   "76",
+		"remove":     true,
+	}))
+	_ = readJSON(t, alice)
+	_ = readJSON(t, bob)
+	updated := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           10,
+	}))
+	updatedItem := updated[0].(map[string]interface{})
+	if len(updatedItem["my_reactions"].([]interface{})) != 0 {
+		t.Fatalf("alice reaction was not removed: %#v", updatedItem)
+	}
+}

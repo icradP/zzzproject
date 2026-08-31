@@ -35,6 +35,17 @@ abstract class ImRepository {
     required String messageId,
   });
 
+  /// Add or remove the current user's emoji reaction on a message.
+  /// Returns the server/source aggregate after the change.
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) async {
+    throw UnsupportedError('Message reactions are not supported by this source.');
+  }
+
   /// Send a media message (image, voice, video, file).
   Future<ImMessage> sendMediaMessage({
     required String conversationId,

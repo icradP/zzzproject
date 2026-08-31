@@ -607,6 +607,14 @@ class _ImHomePageState extends State<ImHomePage>
                       messageId: message.id,
                     );
                   },
+                  onReact: (message, emojiId, remove) async {
+                    await repository.reactToMessage(
+                      conversationId: conv.id,
+                      messageId: message.id,
+                      emojiId: emojiId,
+                      remove: remove,
+                    );
+                  },
                 ),
               );
             },

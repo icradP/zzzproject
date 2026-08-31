@@ -1044,6 +1044,7 @@ class NoneBotSource implements ImMessageSource {
                 .map((e) => ImReaction(emojiId: e.key, count: e.value))
                 .toList();
         list[idx] = msg.copyWith(reactions: updated);
+        _saveMsg(list[idx]);
         _emitMessages(convId);
         ImLogger.ingestMessage(
           convId,
@@ -1163,6 +1164,18 @@ class NoneBotSource implements ImMessageSource {
         );
         break;
     }
+  }
+
+  @override
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) async {
+    throw UnsupportedError(
+      'Message reactions are provided by the OneBot platform.',
+    );
   }
 
   void _markRecalled(String convId, int messageId, String operatorId) {

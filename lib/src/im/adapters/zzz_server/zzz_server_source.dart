@@ -254,6 +254,37 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) async {
+    final response = await _request('react_message', {
+      'message_id': messageId,
+      'emoji_id': emojiId,
+      if (remove) 'remove': true,
+    });
+    _requireOk(response, 'Update reaction');
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final myReactionIds = _stringList(data['my_reactions']);
+    final reactions = _parseReactions(
+      data['reactions'],
+      myReactionIds: myReactionIds,
+    );
+    final messages = _messages[conversationId];
+    final index =
+        messages?.indexWhere((message) => message.id == messageId) ?? -1;
+    if (messages != null && index >= 0) {
+      messages[index] = messages[index].copyWith(reactions: reactions);
+      _emitMessages(conversationId);
+    }
+    return reactions;
+  }
+
+  @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
     required ImMediaUpload upload,
@@ -963,6 +994,10 @@ class ZzzServerSource implements ImMessageSource {
       _handleMessageRead(json);
       return;
     }
+    if (json['notice_type'] == 'message_reaction') {
+      _handleMessageReaction(json);
+      return;
+    }
     final noticeType = json['notice_type'];
     if (noticeType == 'group_dismiss') {
       final groupId = '${json['group_id'] ?? ''}';
@@ -1000,6 +1035,47 @@ class ZzzServerSource implements ImMessageSource {
       _emitMessages(entry.key);
       break;
     }
+  }
+
+  void _handleMessageReaction(Map<String, dynamic> json) {
+    final conversationId = '${json['conversation_id'] ?? ''}';
+    final messageId = '${json['message_id'] ?? ''}';
+    if (conversationId.isEmpty || messageId.isEmpty) return;
+    final messages = _messages[conversationId];
+    if (messages == null) {
+      unawaited(_syncMessages(conversationId).catchError((_) {}));
+      return;
+    }
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) {
+      unawaited(_syncMessages(conversationId).catchError((_) {}));
+      return;
+    }
+    final previous = messages[index].reactions ?? const <ImReaction>[];
+    final aggregate = _parseReactions(json['reactions']);
+    final actorID = '${json['user_id'] ?? ''}';
+    final emojiID = '${json['emoji_id'] ?? ''}';
+    final removed = json['removed'] as bool? ?? false;
+    final byEmoji = <String, ImReaction>{
+      for (final reaction in aggregate) reaction.emojiId: reaction,
+    };
+    for (final reaction in previous) {
+      final current = byEmoji[reaction.emojiId];
+      if (current != null) {
+        byEmoji[reaction.emojiId] = current.copyWith(
+          reactedByMe: reaction.reactedByMe,
+        );
+      }
+    }
+    if (actorID == _selfId && emojiID.isNotEmpty) {
+      final current = byEmoji[emojiID];
+      if (current != null) {
+        byEmoji[emojiID] = current.copyWith(reactedByMe: !removed);
+      }
+    }
+    final updated = byEmoji.values.toList(growable: false);
+    messages[index] = messages[index].copyWith(reactions: updated);
+    _emitMessages(conversationId);
   }
 
   void _handleMessageRead(Map<String, dynamic> json) {
@@ -1071,6 +1147,7 @@ class ZzzServerSource implements ImMessageSource {
           first?['data'] is Map
               ? Map<String, dynamic>.from(first!['data'] as Map)
               : const <String, dynamic>{};
+      final myReactionIds = _stringList(json['my_reactions']);
 
       _users[senderId] = ImUser(
         id: senderId,
@@ -1100,12 +1177,38 @@ class ZzzServerSource implements ImMessageSource {
         mediaUrl: mediaUrl,
         mediaSize: (data['size'] as num?)?.toInt(),
         mediaMime: data['mime_type'] as String?,
+        reactions: _parseReactions(
+          json['reactions'],
+          myReactionIds: myReactionIds,
+        ),
         recalled: json['recalled'] as bool? ?? false,
         replyToMessageId: _replyMessageId(reply),
       );
     } catch (_) {
       return null;
     }
+  }
+
+  List<String> _stringList(Object? value) {
+    if (value is! List) return const <String>[];
+    return value.map((item) => '$item').where((item) => item.isNotEmpty).toList();
+  }
+
+  List<ImReaction> _parseReactions(
+    Object? value, {
+    Iterable<String> myReactionIds = const <String>[],
+  }) {
+    if (value is! List) return const <ImReaction>[];
+    final mine = myReactionIds.toSet();
+    return value.whereType<Map>().map((raw) {
+      final json = Map<String, dynamic>.from(raw);
+      return ImReaction(
+        emojiId: '${json['emoji_id'] ?? ''}',
+        count: (json['count'] as num?)?.toInt() ?? 0,
+        reactedByMe: mine.contains('${json['emoji_id'] ?? ''}'),
+      );
+    }).where((reaction) => reaction.emojiId.isNotEmpty && reaction.count > 0)
+        .toList(growable: false);
   }
 
   String _segmentDisplayText(Map<String, dynamic> segment) {

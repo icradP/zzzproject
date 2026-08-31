@@ -63,6 +63,19 @@ class SourceBackedRepository implements ImRepository {
   );
 
   @override
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) => _source.reactToMessage(
+    conversationId: conversationId,
+    messageId: messageId,
+    emojiId: emojiId,
+    remove: remove,
+  );
+
+  @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
     required ImMediaUpload upload,

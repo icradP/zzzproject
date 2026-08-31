@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ type MemoryStore struct {
 	sessions          map[string]*Session // SHA-256 token hash -> session
 	groups            map[string]*Group
 	conversations     map[string]*Conversation
-	messages          map[string][]*Message            // conversationID -> messages
-	readStates        map[string]map[string]*ReadState // conversationID -> userID -> cursor
+	messages          map[string][]*Message                     // conversationID -> messages
+	messageReactions  map[string]map[string]map[string]struct{} // messageID -> emojiID -> userID
+	readStates        map[string]map[string]*ReadState          // conversationID -> userID -> cursor
 	friendRequests    map[string]*FriendRequest
 	friendships       map[string]map[string]time.Time
 	forwards          map[string]*ForwardMessage
@@ -34,6 +36,7 @@ func NewMemoryStore() *MemoryStore {
 		groups:            make(map[string]*Group),
 		conversations:     make(map[string]*Conversation),
 		messages:          make(map[string][]*Message),
+		messageReactions:  make(map[string]map[string]map[string]struct{}),
 		readStates:        make(map[string]map[string]*ReadState),
 		friendRequests:    make(map[string]*FriendRequest),
 		friendships:       make(map[string]map[string]time.Time),
@@ -146,6 +149,9 @@ func (s *MemoryStore) GetUserConversations(userID string) ([]*Conversation, erro
 func (s *MemoryStore) DeleteConversation(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, msg := range s.messages[id] {
+		delete(s.messageReactions, msg.ID)
+	}
 	delete(s.conversations, id)
 	delete(s.messages, id)
 	delete(s.readStates, id)
@@ -176,7 +182,9 @@ func (s *MemoryStore) GetMessage(msgID string) (*Message, error) {
 	for _, msgs := range s.messages {
 		for _, msg := range msgs {
 			if msg.ID == msgID {
-				return msg, nil
+				cloned := *msg
+				cloned.Reactions = s.reactionCountsLocked(msgID)
+				return &cloned, nil
 			}
 		}
 	}
@@ -195,8 +203,89 @@ func (s *MemoryStore) GetMessages(convID string, limit int) ([]*Message, error) 
 		start = 0
 	}
 	result := make([]*Message, limit)
-	copy(result, msgs[start:])
+	for i, msg := range msgs[start:] {
+		cloned := *msg
+		cloned.Reactions = s.reactionCountsLocked(msg.ID)
+		result[i] = &cloned
+	}
 	return result, nil
+}
+
+func (s *MemoryStore) ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var target *Message
+	for _, msgs := range s.messages {
+		for _, msg := range msgs {
+			if msg.ID == msgID {
+				target = msg
+				break
+			}
+		}
+		if target != nil {
+			break
+		}
+	}
+	if target == nil {
+		return nil, nil
+	}
+	if target.Recalled {
+		return nil, fmt.Errorf("message already recalled")
+	}
+	byEmoji := s.messageReactions[msgID]
+	if byEmoji == nil {
+		byEmoji = make(map[string]map[string]struct{})
+		s.messageReactions[msgID] = byEmoji
+	}
+	users := byEmoji[emojiID]
+	if users == nil {
+		users = make(map[string]struct{})
+		byEmoji[emojiID] = users
+	}
+	if remove {
+		delete(users, userID)
+	} else {
+		users[userID] = struct{}{}
+	}
+	if len(users) == 0 {
+		delete(byEmoji, emojiID)
+	}
+	cloned := *target
+	cloned.Reactions = s.reactionCountsLocked(msgID)
+	return &cloned, nil
+}
+
+func (s *MemoryStore) GetMessageReactionIDs(msgID, userID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	byEmoji := s.messageReactions[msgID]
+	result := make([]string, 0, len(byEmoji))
+	for emojiID, users := range byEmoji {
+		if _, ok := users[userID]; ok {
+			result = append(result, emojiID)
+		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func (s *MemoryStore) reactionCountsLocked(msgID string) []protocol.Reaction {
+	byEmoji := s.messageReactions[msgID]
+	if len(byEmoji) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(byEmoji))
+	for emojiID, users := range byEmoji {
+		if len(users) > 0 {
+			ids = append(ids, emojiID)
+		}
+	}
+	sort.Strings(ids)
+	result := make([]protocol.Reaction, 0, len(ids))
+	for _, emojiID := range ids {
+		result = append(result, protocol.Reaction{EmojiID: emojiID, Count: len(byEmoji[emojiID])})
+	}
+	return result
 }
 
 func (s *MemoryStore) RecallMessage(msgID string) (bool, error) {

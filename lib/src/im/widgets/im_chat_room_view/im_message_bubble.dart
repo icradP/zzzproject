@@ -127,6 +127,7 @@ class ImMessageBubble extends StatelessWidget {
     this.resolveQuote,
     this.onQuoteTap,
     this.resolveUserName,
+    this.onReactionTap,
     super.key,
   });
 
@@ -158,6 +159,9 @@ class ImMessageBubble extends StatelessWidget {
 
   /// Resolves a user ID to a display name (for the quote bar sender).
   final Future<String> Function(String userId)? resolveUserName;
+
+  /// Called when the user taps an existing reaction chip.
+  final ValueChanged<ImReaction>? onReactionTap;
 
   @override
   Widget build(BuildContext context) {
@@ -437,6 +441,7 @@ class ImMessageBubble extends StatelessWidget {
               child: ImReactionChips(
                 reactions: message.reactions!,
                 isMine: isMine,
+                onTap: onReactionTap,
               ),
             ),
           if (!hideTimestamp) ...[

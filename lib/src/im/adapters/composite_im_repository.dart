@@ -168,6 +168,23 @@ class CompositeImRepository implements ImRepository {
     );
   }
 
+  @override
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, messageId, 'Message');
+    return registration.repository.reactToMessage(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messageId: ImSourceAddress.localIdOf(messageId),
+      emojiId: emojiId,
+      remove: remove,
+    );
+  }
+
   void _requireMatchingSource(
     ImRepositoryRegistration registration,
     String value,

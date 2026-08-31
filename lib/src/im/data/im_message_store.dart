@@ -413,7 +413,11 @@ class ImMessageStore {
     'thumbnail_path': m.thumbnailPath,
     'media_mime': m.mediaMime,
     'reactions': m.reactions != null
-        ? jsonEncode(m.reactions!.map((r) => {'emoji_id': r.emojiId, 'count': r.count}).toList())
+        ? jsonEncode(m.reactions!.map((r) => {
+              'emoji_id': r.emojiId,
+              'count': r.count,
+              'reacted_by_me': r.reactedByMe,
+            }).toList())
         : null,
     'reply_to_message_id': m.replyToMessageId,
     'recalled': m.recalled ? 1 : 0,
@@ -436,9 +440,11 @@ class ImMessageStore {
         final list = jsonDecode(rxRaw) as List<dynamic>;
         reactions = list
             .map((e) => ImReaction(
-                  emojiId: e['emoji_id'] as String,
-                  count: e['count'] as int,
+                  emojiId: '${e['emoji_id'] ?? ''}',
+                  count: (e['count'] as num?)?.toInt() ?? 0,
+                  reactedByMe: e['reacted_by_me'] as bool? ?? false,
                 ))
+            .where((reaction) => reaction.emojiId.isNotEmpty && reaction.count > 0)
             .toList();
       } catch (_) {}
     }

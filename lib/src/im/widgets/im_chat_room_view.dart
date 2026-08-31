@@ -27,6 +27,7 @@ class ImChatRoomView extends StatefulWidget {
     this.resolveMessage,
     this.onReply,
     this.onRecall,
+    this.onReact,
     this.onManageGroup,
     this.onBack,
     super.key,
@@ -42,6 +43,8 @@ class ImChatRoomView extends StatefulWidget {
   final ImMessage? Function(String messageId)? resolveMessage;
   final Future<void> Function(String text, ImMessage replyTo)? onReply;
   final Future<void> Function(ImMessage message)? onRecall;
+  final Future<void> Function(ImMessage message, String emojiId, bool remove)?
+      onReact;
   final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
 
@@ -260,6 +263,78 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         const Duration(minutes: 2);
   }
 
+  Future<void> _applyReaction(
+    ImMessage message,
+    String emojiId, {
+    bool remove = false,
+  }) async {
+    final callback = widget.onReact;
+    if (callback == null) return;
+    try {
+      await callback(message, emojiId, remove);
+    } catch (error) {
+      if (mounted) _showError(error);
+    }
+  }
+
+  Future<void> _showReactionPicker(ImMessage message) async {
+    final emojiId = await showZzzModalPanel<String>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            key: const ValueKey('message-reaction-panel'),
+            title: 'React to message',
+            subtitle: 'Choose a reaction',
+            icon: Icons.emoji_emotions_outlined,
+            maxWidth: 420,
+            maxHeight: 360,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final id in ImReactionChips.emojiIds)
+                    GestureDetector(
+                      key: ValueKey('reaction-choice-$id'),
+                      onTap: () => Navigator.of(dialogContext).pop(id),
+                      child: Container(
+                        width: 54,
+                        height: 48,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Text(
+                          ImReactionChips.emojiFor(id),
+                          style: const TextStyle(fontSize: 24),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+    );
+    if (!mounted || emojiId == null) return;
+    final existing = message.reactions
+        ?.where((reaction) => reaction.emojiId == emojiId)
+        .firstOrNull;
+    await _applyReaction(
+      message,
+      emojiId,
+      remove: existing?.reactedByMe ?? false,
+    );
+  }
+
   Future<void> _showMessageActions(
     ImMessage message,
     Offset globalPosition,
@@ -273,6 +348,14 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         Offset.zero & overlay.size,
       ),
       items: [
+        if (widget.onReact != null)
+          const PopupMenuItem(
+            value: _MessageAction.react,
+            child: _MessageActionItem(
+              icon: Icons.add_reaction_outlined,
+              label: 'React',
+            ),
+          ),
         if (message.text.trim().isNotEmpty)
           const PopupMenuItem(
             value: _MessageAction.copy,
@@ -299,6 +382,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     );
     if (!mounted || selected == null) return;
     switch (selected) {
+      case _MessageAction.react:
+        await _showReactionPicker(message);
       case _MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.text));
         if (mounted) {
@@ -621,6 +706,14 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                     (message.id == _highlightMessageId ||
                         message.id.startsWith('${_highlightMessageId}_')),
                 resolveUserName: widget.resolveUserName,
+                onReactionTap:
+                    widget.onReact == null
+                        ? null
+                        : (reaction) => _applyReaction(
+                          message,
+                          reaction.emojiId,
+                          remove: reaction.reactedByMe,
+                        ),
               ),
             );
           },
@@ -871,7 +964,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 }
 
-enum _MessageAction { copy, reply, recall }
+enum _MessageAction { react, copy, reply, recall }
 
 class _MessageActionItem extends StatelessWidget {
   const _MessageActionItem({

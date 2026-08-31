@@ -160,6 +160,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleEnsureConversation(client, req)
 	case protocol.ActionRecallMessage:
 		g.handleRecallMessage(client, req)
+	case protocol.ActionReactMessage:
+		g.handleReactMessage(client, req)
 	case protocol.ActionGetConversations:
 		g.handleGetConversations(client, req)
 	case protocol.ActionGetMessages:
@@ -840,12 +842,93 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			Avatar:   avatar,
 		},
 		Message:   segments,
+		Reactions: msg.Reactions,
 		Timestamp: msg.Timestamp.Unix(),
 	}
 	g.broadcastToConversation(convID, event, client.userID)
 	g.pushToConversation(convID, msg, client.userID)
 
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
+}
+
+func (g *Gateway) handleReactMessage(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid react_message params")
+		return
+	}
+	messageID, _ := params["message_id"].(string)
+	emojiID, _ := params["emoji_id"].(string)
+	remove, _ := params["remove"].(bool)
+	messageID = strings.TrimSpace(messageID)
+	emojiID = strings.TrimSpace(emojiID)
+	if messageID == "" {
+		g.sendError(client, req.Echo, "message_id required")
+		return
+	}
+	if emojiID == "" || len([]rune(emojiID)) > 32 {
+		g.sendError(client, req.Echo, "emoji_id must contain 1-32 characters")
+		return
+	}
+	for _, r := range emojiID {
+		if unicode.IsControl(r) {
+			g.sendError(client, req.Echo, "emoji_id contains invalid characters")
+			return
+		}
+	}
+	message, err := g.store.GetMessage(messageID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load message")
+		return
+	}
+	if message == nil {
+		g.sendError(client, req.Echo, "message not found")
+		return
+	}
+	if !g.canAccessConversation(client.userID, message.ConversationID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
+	updated, err := g.store.ReactToMessage(messageID, client.userID, emojiID, remove)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to update reaction: "+err.Error())
+		return
+	}
+	if updated == nil {
+		g.sendError(client, req.Echo, "message not found or recalled")
+		return
+	}
+	myReactions, err := g.store.GetMessageReactionIDs(messageID, client.userID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load reaction state")
+		return
+	}
+	g.sendJSON(client, protocol.Response{
+		Status:  "ok",
+		RetCode: 0,
+		Data: map[string]interface{}{
+			"message_id":   messageID,
+			"emoji_id":     emojiID,
+			"removed":      remove,
+			"reactions":    updated.Reactions,
+			"my_reactions": myReactions,
+		},
+		Echo: req.Echo,
+	})
+	g.broadcastToConversation(message.ConversationID, protocol.NoticeEvent{
+		PostType:       "notice",
+		NoticeType:     protocol.NoticeTypeMessageReaction,
+		ConversationID: message.ConversationID,
+		MessageID:      messageID,
+		UserID:         client.userID,
+		EmojiID:        emojiID,
+		Removed:        remove,
+		Reactions:      updated.Reactions,
+	}, "")
 }
 
 func (g *Gateway) handleRecallMessage(client *Client, req *protocol.Request) {
@@ -1042,6 +1125,11 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 				status = "read"
 			}
 		}
+		myReactions, err := g.store.GetMessageReactionIDs(msg.ID, client.userID)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to load reaction state")
+			return
+		}
 		result[i] = map[string]interface{}{
 			"message_id":      msg.ID,
 			"conversation_id": msg.ConversationID,
@@ -1053,6 +1141,8 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 			"message":         msg.Segments,
 			"timestamp":       msg.Timestamp.Unix(),
 			"recalled":        msg.Recalled,
+			"reactions":       msg.Reactions,
+			"my_reactions":    myReactions,
 			"status":          status,
 			"read_count":      readCount,
 			"recipient_count": recipientCount,

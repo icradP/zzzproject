@@ -363,6 +363,47 @@ class MockImRepository implements ImRepository {
   }
 
   @override
+  Future<List<ImReaction>> reactToMessage({
+    required String conversationId,
+    required String messageId,
+    required String emojiId,
+    bool remove = false,
+  }) async {
+    final messages = _messages[conversationId];
+    if (messages == null) throw StateError('Conversation not found.');
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) throw StateError('Message not found.');
+    final message = messages[index];
+    final current = <String, ImReaction>{
+      for (final reaction in message.reactions ?? const <ImReaction>[])
+        reaction.emojiId: reaction,
+    };
+    final existing = current[emojiId];
+    if (remove) {
+      if (existing != null && existing.reactedByMe) {
+        if (existing.count > 1) {
+          current[emojiId] = existing.copyWith(
+            count: existing.count - 1,
+            reactedByMe: false,
+          );
+        } else {
+          current.remove(emojiId);
+        }
+      }
+    } else if (existing?.reactedByMe != true) {
+      current[emojiId] = ImReaction(
+        emojiId: emojiId,
+        count: (existing?.count ?? 0) + 1,
+        reactedByMe: true,
+      );
+    }
+    final updated = current.values.toList(growable: false);
+    messages[index] = message.copyWith(reactions: updated);
+    _emitMessages(conversationId);
+    return updated;
+  }
+
+  @override
   Future<ImMessage> sendMediaMessage({
     required String conversationId,
     required ImMediaUpload upload,
