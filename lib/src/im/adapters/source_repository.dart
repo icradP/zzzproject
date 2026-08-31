@@ -46,7 +46,21 @@ class SourceBackedRepository implements ImRepository {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
-  }) => _source.sendTextMessage(conversationId: conversationId, text: text);
+    String? replyToMessageId,
+  }) => _source.sendTextMessage(
+    conversationId: conversationId,
+    text: text,
+    replyToMessageId: replyToMessageId,
+  );
+
+  @override
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
+  }) => _source.recallMessage(
+    conversationId: conversationId,
+    messageId: messageId,
+  );
 
   @override
   Future<ImMessage> sendMediaMessage({

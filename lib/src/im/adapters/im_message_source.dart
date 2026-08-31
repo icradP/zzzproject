@@ -28,6 +28,12 @@ abstract class ImMessageSource {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
+  });
+
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
   });
 
   Future<ImMessage> sendMediaMessage({

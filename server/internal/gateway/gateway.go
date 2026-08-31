@@ -621,6 +621,31 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "conversation access denied")
 		return
 	}
+	replyCount := 0
+	for _, segment := range segments {
+		if segment.Type != "reply" {
+			continue
+		}
+		replyCount++
+		if replyCount > 1 {
+			g.sendError(client, req.Echo, "only one reply segment is allowed")
+			return
+		}
+		replyID, _ := segment.Data["id"].(string)
+		if strings.TrimSpace(replyID) == "" {
+			g.sendError(client, req.Echo, "reply message_id required")
+			return
+		}
+		repliedMessage, err := g.store.GetMessage(replyID)
+		if err != nil || repliedMessage == nil {
+			g.sendError(client, req.Echo, "reply message not found")
+			return
+		}
+		if repliedMessage.ConversationID != convID {
+			g.sendError(client, req.Echo, "reply message belongs to another conversation")
+			return
+		}
+	}
 	if _, err := g.store.GetOrCreateConversation(convID, convType, convID); err != nil {
 		g.sendError(client, req.Echo, "failed to load conversation")
 		return
@@ -688,33 +713,67 @@ func (g *Gateway) handleRecallMessage(client *Client, req *protocol.Request) {
 		return
 	}
 
-	msg, _ := g.store.GetMessage(msgID)
+	msg, err := g.store.GetMessage(msgID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load message")
+		return
+	}
 	if msg == nil {
 		g.sendError(client, req.Echo, "message not found")
 		return
 	}
-
-	if msg.SenderID != client.userID {
-		g.sendError(client, req.Echo, "not your message")
+	if !g.canAccessConversation(client.userID, msg.ConversationID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
+	if msg.Recalled {
+		g.sendError(client, req.Echo, "message already recalled")
+		return
+	}
+	if time.Since(msg.Timestamp) > 2*time.Minute {
+		g.sendError(client, req.Echo, "message can only be recalled within two minutes")
 		return
 	}
 
-	recalled, _ := g.store.RecallMessage(msgID)
-	if recalled {
-		g.sendJSON(client, protocol.Response{
-			Status:  "ok",
-			RetCode: 0,
-			Echo:    req.Echo,
-		})
-
-		// Broadcast recall notice
-		g.broadcastToConversation(msg.ConversationID, protocol.NoticeEvent{
-			PostType:   "notice",
-			NoticeType: protocol.NoticeTypeFriendRecall,
-			MessageID:  msgID,
-			UserID:     client.userID,
-		}, "")
+	conversation, err := g.store.GetConversation(msg.ConversationID)
+	if err != nil || conversation == nil {
+		g.sendError(client, req.Echo, "failed to load conversation")
+		return
 	}
+	isGroup := conversation.Type == "group"
+	if msg.SenderID != client.userID && (!isGroup || !g.isGroupAdmin(msg.ConversationID, client.userID)) {
+		g.sendError(client, req.Echo, "message recall permission denied")
+		return
+	}
+
+	recalled, err := g.store.RecallMessage(msgID)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to recall message")
+		return
+	}
+	if !recalled {
+		g.sendError(client, req.Echo, "message not found")
+		return
+	}
+
+	g.sendJSON(client, protocol.Response{
+		Status:  "ok",
+		RetCode: 0,
+		Echo:    req.Echo,
+	})
+
+	noticeType := protocol.NoticeTypeFriendRecall
+	if isGroup {
+		noticeType = protocol.NoticeTypeGroupRecall
+	}
+	g.broadcastToConversation(msg.ConversationID, protocol.NoticeEvent{
+		PostType:       "notice",
+		NoticeType:     noticeType,
+		ConversationID: msg.ConversationID,
+		MessageID:      msgID,
+		UserID:         msg.SenderID,
+		OperatorID:     client.userID,
+	}, "")
 }
 
 func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) {

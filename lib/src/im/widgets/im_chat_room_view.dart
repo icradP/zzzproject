@@ -25,6 +25,8 @@ class ImChatRoomView extends StatefulWidget {
     required this.resolveUserName,
     required this.resolveUserAvatar,
     this.resolveMessage,
+    this.onReply,
+    this.onRecall,
     this.onBack,
     super.key,
   });
@@ -37,6 +39,8 @@ class ImChatRoomView extends StatefulWidget {
 
   /// Look up a quoted message by id across all loaded messages.
   final ImMessage? Function(String messageId)? resolveMessage;
+  final Future<void> Function(String text, ImMessage replyTo)? onReply;
+  final Future<void> Function(ImMessage message)? onRecall;
   final VoidCallback? onBack;
 
   @override
@@ -51,6 +55,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   bool _sending = false;
   bool _showMembers = false;
   bool _showAttach = false;
+  ImMessage? _replyingTo;
   String? _highlightMessageId;
   final _pendingMedia = <ImMediaUpload>[];
   double _lastMaxExtent = 0;
@@ -79,6 +84,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     if (convChanged) {
       _lastMaxExtent = 0;
       _showMembers = false;
+      _showAttach = false;
+      _replyingTo = null;
     }
     if (convChanged || widget.messages.length != oldWidget.messages.length) {
       _scrollToBottom();
@@ -214,11 +221,145 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         });
       }
       if (text.isNotEmpty) {
-        await widget.onSend(text);
+        final reply = _replyingTo;
+        if (reply != null && widget.onReply != null) {
+          await widget.onReply!(text, reply);
+        } else {
+          await widget.onSend(text);
+        }
         _composerController.clear();
+        if (reply != null && mounted) {
+          setState(() => _replyingTo = null);
+        }
       }
+    } catch (error) {
+      if (mounted) _showError(error);
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _showError(Object error) {
+    final message = error.toString().replaceFirst('Exception: ', '');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  bool _canRecall(ImMessage message) {
+    if (widget.onRecall == null ||
+        !message.isMine ||
+        message.recalled ||
+        message.status == ImMessageStatus.sending ||
+        message.status == ImMessageStatus.failed) {
+      return false;
+    }
+    return DateTime.now().difference(message.sentAt) <=
+        const Duration(minutes: 2);
+  }
+
+  Future<void> _showMessageActions(
+    ImMessage message,
+    Offset globalPosition,
+  ) async {
+    if (message.recalled) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<_MessageAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        if (message.text.trim().isNotEmpty)
+          const PopupMenuItem(
+            value: _MessageAction.copy,
+            child: _MessageActionItem(icon: Icons.copy_rounded, label: 'Copy'),
+          ),
+        if (widget.onReply != null)
+          const PopupMenuItem(
+            value: _MessageAction.reply,
+            child: _MessageActionItem(
+              icon: Icons.reply_rounded,
+              label: 'Reply',
+            ),
+          ),
+        if (_canRecall(message))
+          const PopupMenuItem(
+            value: _MessageAction.recall,
+            child: _MessageActionItem(
+              icon: Icons.undo_rounded,
+              label: 'Recall',
+              destructive: true,
+            ),
+          ),
+      ],
+    );
+    if (!mounted || selected == null) return;
+    switch (selected) {
+      case _MessageAction.copy:
+        await Clipboard.setData(ClipboardData(text: message.text));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Message copied'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      case _MessageAction.reply:
+        setState(() {
+          _replyingTo = message;
+          _showAttach = false;
+        });
+        _composerFocus.requestFocus();
+      case _MessageAction.recall:
+        await _confirmRecall(message);
+    }
+  }
+
+  Future<void> _confirmRecall(ImMessage message) async {
+    final confirmed = await showZzzModalPanel<bool>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            key: const ValueKey('recall-message-panel'),
+            title: 'Recall message',
+            subtitle: 'This replaces the message for everyone.',
+            icon: Icons.undo_rounded,
+            maxWidth: 420,
+            maxHeight: 300,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                key: const ValueKey('confirm-recall-message'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                icon: const Icon(Icons.undo_rounded),
+                label: const Text('Recall'),
+              ),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Text(
+                message.text,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.onRecall!(message);
+      if (mounted && _replyingTo?.id == message.id) {
+        setState(() => _replyingTo = null);
+      }
+    } catch (error) {
+      if (mounted) _showError(error);
     }
   }
 
@@ -440,8 +581,15 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                 snapshot.data?.$2 ??
                 AssetImage(AppAssets.fallbackAvatarForId(message.senderId));
             _messageKeys.putIfAbsent(message.id, () => GlobalKey());
-            return Container(
+            return GestureDetector(
               key: _messageKeys[message.id],
+              behavior: HitTestBehavior.translucent,
+              onLongPressStart:
+                  (details) =>
+                      _showMessageActions(message, details.globalPosition),
+              onSecondaryTapDown:
+                  (details) =>
+                      _showMessageActions(message, details.globalPosition),
               child: ImMessageBubble(
                 message: message,
                 senderName: senderName,
@@ -619,46 +767,119 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 
   Widget _buildComposer() {
-    return Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: Focus(
-            onKeyEvent: (_, event) {
-              if (event is KeyDownEvent &&
-                  event.logicalKey == LogicalKeyboardKey.keyV &&
-                  HardwareKeyboard.instance.isMetaPressed) {
-                _pasteFromClipboardWithLog().then((path) {
-                  if (path != null && mounted) {
-                    setState(() {
-                      _pendingMedia.add(
-                        ImMediaUpload(
-                          kind: ImMessageKind.image,
-                          fileName: path.split(Platform.pathSeparator).last,
-                          filePath: path,
-                          mimeType: 'image/png',
-                        ),
-                      );
-                    });
-                  }
-                });
-              }
-              return KeyEventResult.ignored;
-            },
-            child: ZzzTextInput(
-              controller: _composerController,
-              focusNode: _composerFocus,
-              hintText: 'Message something...',
-              minLines: 1,
-              maxLines: 3,
-              textInputAction: TextInputAction.send,
-              fillColor: Colors.white.withValues(alpha: 0.08),
-              foregroundColor: Colors.white,
-              onSubmitted: (_) => _submit(),
-            ),
+        if (_replyingTo != null) _buildReplyComposerBar(_replyingTo!),
+        IgnorePointer(
+          ignoring: _sending,
+          child: Row(
+            children: [
+              Expanded(
+                child: Focus(
+                  onKeyEvent: (_, event) {
+                    if (event is KeyDownEvent &&
+                        event.logicalKey == LogicalKeyboardKey.keyV &&
+                        HardwareKeyboard.instance.isMetaPressed) {
+                      _pasteFromClipboardWithLog().then((path) {
+                        if (path != null && mounted) {
+                          setState(() {
+                            _pendingMedia.add(
+                              ImMediaUpload(
+                                kind: ImMessageKind.image,
+                                fileName:
+                                    path.split(Platform.pathSeparator).last,
+                                filePath: path,
+                                mimeType: 'image/png',
+                              ),
+                            );
+                          });
+                        }
+                      });
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: ZzzTextInput(
+                    controller: _composerController,
+                    focusNode: _composerFocus,
+                    hintText: 'Message something...',
+                    minLines: 1,
+                    maxLines: 3,
+                    textInputAction: TextInputAction.send,
+                    fillColor: Colors.white.withValues(alpha: 0.08),
+                    foregroundColor: Colors.white,
+                    onSubmitted: (_) => _submit(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ImCircleButton(onTap: _toggleAttach),
+            ],
           ),
         ),
-        const SizedBox(width: 8),
-        ImCircleButton(onTap: _toggleAttach),
+      ],
+    );
+  }
+
+  Widget _buildReplyComposerBar(ImMessage message) {
+    return Container(
+      key: const ValueKey('reply-composer-bar'),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(
+          left: BorderSide(color: ZzzColors.yellow, width: 3),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply_rounded, size: 18, color: ZzzColors.yellow),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('cancel-message-reply'),
+            tooltip: 'Cancel reply',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _replyingTo = null),
+            icon: const Icon(Icons.close_rounded, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _MessageAction { copy, reply, recall }
+
+class _MessageActionItem extends StatelessWidget {
+  const _MessageActionItem({
+    required this.icon,
+    required this.label,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = destructive ? ZzzColors.red : null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 19, color: color),
+        const SizedBox(width: 10),
+        Text(label, style: TextStyle(color: color)),
       ],
     );
   }

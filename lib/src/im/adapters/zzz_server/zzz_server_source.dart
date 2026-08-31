@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:onebot_flutter/onebot_flutter.dart' show oneBotChainFromJson;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../models/im_models.dart';
@@ -215,17 +216,41 @@ class ZzzServerSource implements ImMessageSource {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
       throw ArgumentError.value(text, 'text', 'Message cannot be empty.');
     }
     return _sendMessage(conversationId, [
+      if (replyToMessageId != null)
+        {
+          'type': 'reply',
+          'data': {'id': replyToMessageId},
+        },
       {
         'type': 'text',
         'data': {'text': trimmed},
       },
     ]);
+  }
+
+  @override
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final response = await _request('recall_message', {
+      'message_id': messageId,
+    });
+    _requireOk(response, 'Recall message');
+    final messages = _messages[conversationId];
+    final index =
+        messages?.indexWhere((message) => message.id == messageId) ?? -1;
+    if (messages != null && index >= 0) {
+      messages[index] = messages[index].copyWith(recalled: true);
+      _emitMessages(conversationId);
+    }
   }
 
   @override
@@ -810,7 +835,12 @@ class ZzzServerSource implements ImMessageSource {
               .map((segment) => Map<String, dynamic>.from(segment))
               .toList() ??
           const <Map<String, dynamic>>[];
-      final first = segments.isEmpty ? null : segments.first;
+      final first = _firstSegmentWhere(segments, (segment) {
+        return segment['type'] != 'reply';
+      });
+      final reply = _firstSegmentWhere(segments, (segment) {
+        return segment['type'] == 'reply';
+      });
       final data =
           first?['data'] is Map
               ? Map<String, dynamic>.from(first!['data'] as Map)
@@ -839,11 +869,13 @@ class ZzzServerSource implements ImMessageSource {
         readCount: (json['read_count'] as num?)?.toInt() ?? 0,
         recipientCount: (json['recipient_count'] as num?)?.toInt() ?? 0,
         isMine: senderId == _selfId,
+        segments: oneBotChainFromJson(segments),
         mediaPath: _resolveMediaUrl(mediaUrl),
         mediaUrl: mediaUrl,
         mediaSize: (data['size'] as num?)?.toInt(),
         mediaMime: data['mime_type'] as String?,
         recalled: json['recalled'] as bool? ?? false,
+        replyToMessageId: _replyMessageId(reply),
       );
     } catch (_) {
       return null;
@@ -862,6 +894,7 @@ class ZzzServerSource implements ImMessageSource {
       'video' => '${data['name'] ?? '[视频]'}',
       'file' => '${data['name'] ?? '[文件]'}',
       'at' => '@${data['qq'] ?? ''}',
+      'reply' => '',
       final type => '[${type ?? 'unknown'}]',
     };
   }
@@ -928,7 +961,14 @@ class ZzzServerSource implements ImMessageSource {
     });
     _requireOk(response, 'Send message');
     final responseData = response['data'] as Map?;
-    final firstData = segments.first['data'] as Map?;
+    final first = segments.firstWhere(
+      (segment) => segment['type'] != 'reply',
+      orElse: () => segments.first,
+    );
+    final reply = _firstSegmentWhere(segments, (segment) {
+      return segment['type'] == 'reply';
+    });
+    final firstData = first['data'] as Map?;
     final mediaUrl = firstData?['url'] as String?;
     final message = ImMessage(
       id: '${responseData?['message_id']}',
@@ -936,7 +976,7 @@ class ZzzServerSource implements ImMessageSource {
       senderId: _selfId,
       text: segments.map(_segmentDisplayText).join().trim(),
       sentAt: DateTime.now(),
-      kind: _kindForSegment(segments.first['type'] as String?),
+      kind: _kindForSegment(first['type'] as String?),
       status: ImMessageStatus.sent,
       recipientCount:
           conversation?.participantIds
@@ -944,6 +984,8 @@ class ZzzServerSource implements ImMessageSource {
               .length ??
           0,
       isMine: true,
+      segments: oneBotChainFromJson(segments),
+      replyToMessageId: _replyMessageId(reply),
       mediaPath: _resolveMediaUrl(mediaUrl),
       mediaUrl: mediaUrl,
       mediaSize: (firstData?['size'] as num?)?.toInt(),
@@ -951,6 +993,23 @@ class ZzzServerSource implements ImMessageSource {
     );
     _addMessageToStream(message);
     return message;
+  }
+
+  Map<String, dynamic>? _firstSegmentWhere(
+    List<Map<String, dynamic>> segments,
+    bool Function(Map<String, dynamic> segment) predicate,
+  ) {
+    for (final segment in segments) {
+      if (predicate(segment)) return segment;
+    }
+    return null;
+  }
+
+  String? _replyMessageId(Map<String, dynamic>? reply) {
+    final data = reply?['data'];
+    if (data is! Map) return null;
+    final id = '${data['id'] ?? ''}'.trim();
+    return id.isEmpty ? null : id;
   }
 
   Future<void> _ensureRemoteConversation(ImConversation conversation) async {

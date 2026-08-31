@@ -15,9 +15,10 @@ ImUser oneBotSenderToImUser(
 }) {
   return ImUser(
     id: sender.userId,
-    displayName: (sender.card != null && sender.card!.isNotEmpty)
-        ? sender.card!
-        : sender.nickname,
+    displayName:
+        (sender.card != null && sender.card!.isNotEmpty)
+            ? sender.card!
+            : sender.nickname,
     avatarAssetPath: avatarResolver(sender.userId),
     isOnline: true,
   );
@@ -64,7 +65,7 @@ String oneBotSegmentsToDisplayText(
       case 'video':
         buf.write('[视频]');
       case 'reply':
-        buf.write('[回复]');
+        break;
       case 'forward':
         buf.write('[合并转发]');
       case 'json':
@@ -224,7 +225,10 @@ List<ImMessage> _buildSplitMessages({
   final textSegs = <OneBotMessageSegment>[];
   final mediaSegs = <OneBotMessageSegment>[];
   for (final s in segments) {
-    if (s.type == 'text' || s.type == 'at' || s.type == 'face' || s.type == 'reply') {
+    if (s.type == 'text' ||
+        s.type == 'at' ||
+        s.type == 'face' ||
+        s.type == 'reply') {
       textSegs.add(s);
     } else {
       mediaSegs.add(s);
@@ -237,17 +241,19 @@ List<ImMessage> _buildSplitMessages({
 
   // Text bubble (if any).
   if (textSegs.isNotEmpty) {
-    results.add(ImMessage(
-      id: '${baseId}_$idx',
-      conversationId: conversationId,
-      senderId: senderId,
-      text: oneBotSegmentsToDisplayText(textSegs, resolveName: resolveName),
-      sentAt: sentAt,
-      kind: ImMessageKind.text,
-      isMine: isMine,
-      segments: textSegs,
-      replyToMessageId: replyId,
-    ));
+    results.add(
+      ImMessage(
+        id: '${baseId}_$idx',
+        conversationId: conversationId,
+        senderId: senderId,
+        text: oneBotSegmentsToDisplayText(textSegs, resolveName: resolveName),
+        sentAt: sentAt,
+        kind: ImMessageKind.text,
+        isMine: isMine,
+        segments: textSegs,
+        replyToMessageId: replyId,
+      ),
+    );
     idx++;
   }
 
@@ -261,18 +267,20 @@ List<ImMessage> _buildSplitMessages({
       final card = _parseJsonCard(seg.data['data'] as String?);
       previewUrl = card.previewUrl;
     }
-    results.add(ImMessage(
-      id: '${baseId}_$idx',
-      conversationId: conversationId,
-      senderId: senderId,
-      text: oneBotSegmentsToDisplayText([seg], resolveName: resolveName),
-      sentAt: sentAt,
-      kind: kind,
-      isMine: isMine,
-      segments: [seg],
-      mediaUrl: previewUrl,
-      mediaSize: fileSize,
-    ));
+    results.add(
+      ImMessage(
+        id: '${baseId}_$idx',
+        conversationId: conversationId,
+        senderId: senderId,
+        text: oneBotSegmentsToDisplayText([seg], resolveName: resolveName),
+        sentAt: sentAt,
+        kind: kind,
+        isMine: isMine,
+        segments: [seg],
+        mediaUrl: previewUrl,
+        mediaSize: fileSize,
+      ),
+    );
     idx++;
   }
 
@@ -285,7 +293,8 @@ List<ImMessage> _buildSplitMessages({
     final obj = jsonDecode(raw) as Map<String, dynamic>;
     final meta = obj['meta'] as Map<String, dynamic>?;
     final detail1 = meta?['detail_1'] as Map<String, dynamic>?;
-    final preview = (obj['preview'] as String?) ??
+    final preview =
+        (obj['preview'] as String?) ??
         (detail1?['preview'] as String?) ??
         (detail1?['qqdocurl'] as String?);
     // Build a rich display string from available fields.
@@ -317,7 +326,6 @@ String? _extractReplyId(List<OneBotMessageSegment> segments) {
   }
   return null;
 }
-
 
 /// Builds an [ImConversation] from a private message event.
 ImConversation oneBotPrivateEventToConversation({
@@ -362,7 +370,19 @@ ImConversation oneBotGroupEventToConversation({
 
 /// Converts an [ImMessage] into OneBot message segments for sending.
 List<OneBotMessageSegment> imMessageToOneBotChain(ImMessage message) {
-  return [OneBotMessageSegment.plain(message.text)];
+  return [
+    if (message.replyToMessageId != null)
+      OneBotMessageSegment(
+        type: 'reply',
+        data: {'id': _oneBotBaseMessageId(message.replyToMessageId!)},
+      ),
+    OneBotMessageSegment.plain(message.text),
+  ];
+}
+
+String _oneBotBaseMessageId(String messageId) {
+  final match = RegExp(r'^(-?\d+)(?:_\d+)?$').firstMatch(messageId);
+  return match?.group(1) ?? messageId;
 }
 
 /// Result type for `parseConversationId`.
@@ -399,10 +419,7 @@ List<ImMessage> oneBotChainToImMessages(List<OneBotMessageSegment> chain) {
 
   // NapCat format: direct segments (no node wrappers).
   if (!chain.any((s) => s.type == 'node')) {
-    final text = oneBotSegmentsToDisplayText(
-      chain,
-      resolveName: (_) => '',
-    );
+    final text = oneBotSegmentsToDisplayText(chain, resolveName: (_) => '');
     return [
       ImMessage(
         id: 'fw_0',
@@ -441,20 +458,25 @@ List<ImMessage> oneBotChainToImMessages(List<OneBotMessageSegment> chain) {
     } else {
       inner = [OneBotMessageSegment.plain('[unknown]')];
     }
-    final text = oneBotSegmentsToDisplayText(inner,
-        resolveName: (_) => nickname);
-    messages.add(ImMessage(
-      id: 'fw_${idx++}',
-      conversationId: '',
-      senderId: nickname,
-      text: text,
-      sentAt: time != null
-          ? DateTime.fromMillisecondsSinceEpoch(time * 1000)
-          : DateTime.now(),
-      kind: ImMessageKind.text,
-      segments: inner,
-      isMine: false,
-    ));
+    final text = oneBotSegmentsToDisplayText(
+      inner,
+      resolveName: (_) => nickname,
+    );
+    messages.add(
+      ImMessage(
+        id: 'fw_${idx++}',
+        conversationId: '',
+        senderId: nickname,
+        text: text,
+        sentAt:
+            time != null
+                ? DateTime.fromMillisecondsSinceEpoch(time * 1000)
+                : DateTime.now(),
+        kind: ImMessageKind.text,
+        segments: inner,
+        isMine: false,
+      ),
+    );
   }
   return messages;
 }

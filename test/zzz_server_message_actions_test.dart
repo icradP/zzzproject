@@ -1,0 +1,159 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
+
+void main() {
+  test(
+    'ZZZ server source preserves replies and applies recall notices',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      Map<String, dynamic>? sentMessageRequest;
+      Map<String, dynamic>? recallRequest;
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((raw) {
+          final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
+          final action = requestJson['action'];
+          if (action == 'send_message') sentMessageRequest = requestJson;
+          if (action == 'recall_message') recallRequest = requestJson;
+          final data = switch (action) {
+            'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+            'get_friends' => [
+              {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
+            ],
+            'get_conversations' => [
+              {
+                'conversation_id': 'private_me_bob',
+                'type': 'private',
+                'title': 'Bob',
+                'participants': ['me', 'bob'],
+                'unread_count': 0,
+                'last_timestamp': 200,
+              },
+            ],
+            'get_messages' => [
+              _messageJson(id: 'message-1', text: 'Original', timestamp: 100),
+              _messageJson(
+                id: 'message-2',
+                text: 'Reply body',
+                timestamp: 200,
+                replyTo: 'message-1',
+              ),
+            ],
+            'send_message' => {'message_id': 'message-3'},
+            _ => <String, Object?>{},
+          };
+          socket.add(
+            jsonEncode({
+              'status': 'ok',
+              'retcode': 0,
+              'data': data,
+              'echo': requestJson['echo'],
+            }),
+          );
+        });
+      });
+
+      final source = ZzzServerSource(
+        config: ZzzServerConfig(
+          serverUrl: 'ws://127.0.0.1:${server.port}',
+          selfId: 'me',
+        ),
+        allowReconnect: false,
+      );
+      addTearDown(() async {
+        source.disconnect();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+      });
+
+      await source.connect();
+      final initial = await source.watchMessages('private_me_bob').first;
+      expect(initial, hasLength(2));
+      expect(initial.last.replyToMessageId, 'message-1');
+      expect(initial.last.text, 'Reply body');
+      expect(initial.last.segments?.first.type, 'reply');
+
+      final sent = await source.sendTextMessage(
+        conversationId: 'private_me_bob',
+        text: 'Another reply',
+        replyToMessageId: 'message-2',
+      );
+      expect(sent.replyToMessageId, 'message-2');
+      final sentSegments =
+          (sentMessageRequest!['params'] as Map<String, dynamic>)['message']
+              as List<dynamic>;
+      expect(sentSegments.first['type'], 'reply');
+      expect(sentSegments.first['data']['id'], 'message-2');
+
+      final recalledFuture = source
+          .watchMessages('private_me_bob')
+          .skip(1)
+          .firstWhere(
+            (messages) => messages.any(
+              (message) => message.id == 'message-2' && message.recalled,
+            ),
+          )
+          .timeout(const Duration(seconds: 2));
+      sockets.single.add(
+        jsonEncode({
+          'post_type': 'notice',
+          'notice_type': 'friend_recall',
+          'conversation_id': 'private_me_bob',
+          'message_id': 'message-2',
+          'user_id': 'bob',
+          'operator_id': 'bob',
+        }),
+      );
+      final recalled = await recalledFuture;
+      expect(
+        recalled.singleWhere((message) => message.id == 'message-2').recalled,
+        isTrue,
+      );
+
+      await source.recallMessage(
+        conversationId: 'private_me_bob',
+        messageId: 'message-3',
+      );
+      expect(
+        (recallRequest!['params'] as Map<String, dynamic>)['message_id'],
+        'message-3',
+      );
+    },
+  );
+}
+
+Map<String, Object?> _messageJson({
+  required String id,
+  required String text,
+  required int timestamp,
+  String? replyTo,
+}) {
+  return {
+    'message_id': id,
+    'conversation_id': 'private_me_bob',
+    'sender': {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
+    'message': [
+      if (replyTo != null)
+        {
+          'type': 'reply',
+          'data': {'id': replyTo},
+        },
+      {
+        'type': 'text',
+        'data': {'text': text},
+      },
+    ],
+    'timestamp': timestamp,
+    'status': 'sent',
+    'read_count': 0,
+    'recipient_count': 1,
+  };
+}

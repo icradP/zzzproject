@@ -135,8 +135,17 @@ class NoneBotSource implements ImMessageSource {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
   }) async {
     throw UnsupportedError('sendTextMessage is not available on web');
+  }
+
+  @override
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    throw UnsupportedError('recallMessage is not available on web');
   }
 
   @override

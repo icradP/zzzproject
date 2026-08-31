@@ -26,6 +26,13 @@ abstract class ImRepository {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
+  });
+
+  /// Recall a message remotely when the source and server policy allow it.
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
   });
 
   /// Send a media message (image, voice, video, file).

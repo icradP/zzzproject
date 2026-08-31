@@ -293,6 +293,7 @@ class MockImRepository implements ImRepository {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
@@ -307,6 +308,7 @@ class MockImRepository implements ImRepository {
       sentAt: DateTime.now(),
       isMine: true,
       status: ImMessageStatus.sent,
+      replyToMessageId: replyToMessageId,
     );
 
     final list = _messages.putIfAbsent(conversationId, () => []);
@@ -338,6 +340,22 @@ class MockImRepository implements ImRepository {
     _emitConversations();
 
     return message;
+  }
+
+  @override
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final messages = _messages[conversationId];
+    if (messages == null) throw StateError('Conversation not found.');
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) throw StateError('Message not found.');
+    if (!messages[index].isMine) {
+      throw StateError('Only your messages can be recalled.');
+    }
+    messages[index] = messages[index].copyWith(recalled: true);
+    _emitMessages(conversationId);
   }
 
   @override

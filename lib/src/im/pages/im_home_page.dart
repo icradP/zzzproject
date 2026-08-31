@@ -571,6 +571,22 @@ class _ImHomePageState extends State<ImHomePage>
                       text: text,
                     );
                   },
+                  onReply: (text, replyTo) async {
+                    await ImScope.interactionsOf(
+                      context,
+                    ).onSendMessage(conversation: conv, text: text);
+                    await repository.sendTextMessage(
+                      conversationId: conv.id,
+                      text: text,
+                      replyToMessageId: replyTo.id,
+                    );
+                  },
+                  onRecall: (message) async {
+                    await repository.recallMessage(
+                      conversationId: conv.id,
+                      messageId: message.id,
+                    );
+                  },
                 ),
               );
             },

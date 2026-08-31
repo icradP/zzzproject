@@ -277,6 +277,7 @@ class NoneBotSource implements ImMessageSource {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
@@ -292,6 +293,7 @@ class NoneBotSource implements ImMessageSource {
       sentAt: DateTime.now(),
       isMine: true,
       status: ImMessageStatus.sending,
+      replyToMessageId: replyToMessageId,
     );
 
     final list = _messages.putIfAbsent(conversationId, () => []);
@@ -381,6 +383,27 @@ class NoneBotSource implements ImMessageSource {
     }
 
     return message;
+  }
+
+  @override
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final baseId = _oneBotBaseMessageId(messageId);
+    if (!_mock) {
+      final numericId = int.tryParse(baseId);
+      if (numericId == null || _client == null) {
+        throw StateError('This message cannot be recalled.');
+      }
+      await _client!.deleteMsg(numericId);
+    }
+    _markRecalledByPrefix(conversationId, baseId, _selfId);
+  }
+
+  String _oneBotBaseMessageId(String messageId) {
+    final match = RegExp(r'^(-?\d+)(?:_\d+)?$').firstMatch(messageId);
+    return match?.group(1) ?? messageId;
   }
 
   @override
@@ -874,9 +897,12 @@ class NoneBotSource implements ImMessageSource {
   }
 
   void _markRecalled(String convId, int messageId, String operatorId) {
+    _markRecalledByPrefix(convId, '$messageId', operatorId);
+  }
+
+  void _markRecalledByPrefix(String convId, String prefix, String operatorId) {
     final list = _messages[convId];
     if (list == null) return;
-    final prefix = '$messageId';
     final opName = _users[operatorId]?.displayName ?? operatorId;
     var found = false;
     for (var i = 0; i < list.length; i++) {
@@ -891,7 +917,7 @@ class NoneBotSource implements ImMessageSource {
     }
     if (found) {
       _emitMessages(convId);
-      ImLogger.logRaw(ImLogger.event, 'recall msg=$messageId by=$operatorId');
+      ImLogger.logRaw(ImLogger.event, 'recall msg=$prefix by=$operatorId');
     }
   }
 

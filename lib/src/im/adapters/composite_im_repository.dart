@@ -138,13 +138,49 @@ class CompositeImRepository implements ImRepository {
   Future<ImMessage> sendTextMessage({
     required String conversationId,
     required String text,
+    String? replyToMessageId,
   }) async {
     final registration = _registrationForValue(conversationId);
+    if (replyToMessageId != null) {
+      _requireMatchingSource(registration, replyToMessageId, 'Reply message');
+    }
     final message = await registration.repository.sendTextMessage(
       conversationId: ImSourceAddress.localIdOf(conversationId),
       text: text,
+      replyToMessageId:
+          replyToMessageId == null
+              ? null
+              : ImSourceAddress.localIdOf(replyToMessageId),
     );
     return _scopeMessage(registration, message);
+  }
+
+  @override
+  Future<void> recallMessage({
+    required String conversationId,
+    required String messageId,
+  }) {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, messageId, 'Message');
+    return registration.repository.recallMessage(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messageId: ImSourceAddress.localIdOf(messageId),
+    );
+  }
+
+  void _requireMatchingSource(
+    ImRepositoryRegistration registration,
+    String value,
+    String label,
+  ) {
+    final sourceId = ImSourceAddress.sourceIdOf(value);
+    if (sourceId != null && sourceId != registration.id) {
+      throw ArgumentError.value(
+        value,
+        label,
+        'Source does not match conversation source ${registration.id}.',
+      );
+    }
   }
 
   @override
@@ -518,6 +554,9 @@ class CompositeImRepository implements ImRepository {
         .map((segment) {
           final data = Map<String, dynamic>.from(segment.data);
           if (segment.type == 'forward' && data['id'] is String) {
+            data['id'] = ImSourceAddress.scope(sourceId, data['id'] as String);
+          }
+          if (segment.type == 'reply' && data['id'] is String) {
             data['id'] = ImSourceAddress.scope(sourceId, data['id'] as String);
           }
           if (segment.type == 'record' && data['file'] is String) {
