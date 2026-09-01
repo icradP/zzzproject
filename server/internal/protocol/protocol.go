@@ -115,6 +115,7 @@ const (
 	NoticeTypeGroupTransfer           NoticeType = "group_transfer"
 	NoticeTypeGroupDismiss            NoticeType = "group_dismiss"
 	NoticeTypeGroupMuteAll            NoticeType = "group_mute_all"
+	NoticeTypeGroupAnnouncement       NoticeType = "group_announcement"
 	NoticeTypePoke                    NoticeType = "poke"
 	NoticeTypeMessageRead             NoticeType = "message_read"
 	NoticeTypeMessageReaction         NoticeType = "message_reaction"
@@ -141,6 +142,9 @@ type NoticeEvent struct {
 	Online            *bool      `json:"online,omitempty"`
 	IsPinned          *bool      `json:"is_pinned,omitempty"`
 	IsMuted           *bool      `json:"is_muted,omitempty"`
+	NotificationLevel string     `json:"notification_level,omitempty"`
+	AnnouncementID    string     `json:"announcement_id,omitempty"`
+	Action            string     `json:"action,omitempty"`
 	Reactions         []Reaction `json:"reactions,omitempty"`
 	Nickname          string     `json:"nickname,omitempty"`
 	Avatar            string     `json:"avatar_url,omitempty"`
@@ -215,6 +219,11 @@ const (
 	ActionTransferGroup              = "transfer_group"
 	ActionDismissGroup               = "dismiss_group"
 	ActionGroupMuteAll               = "group_mute_all"
+	ActionGetGroupAnnouncements      = "get_group_announcements"
+	ActionCreateGroupAnnouncement    = "create_group_announcement"
+	ActionUpdateGroupAnnouncement    = "update_group_announcement"
+	ActionDeleteGroupAnnouncement    = "delete_group_announcement"
+	ActionMarkGroupAnnouncementRead  = "mark_group_announcement_read"
 	ActionFriendRequest              = "friend_request"
 	ActionFriendHandle               = "friend_request_handle"
 	ActionUploadFile                 = "upload_file"
@@ -273,9 +282,10 @@ type GetMessagesParams struct {
 
 // SetConversationPreferencesParams are the params for per-user inbox settings.
 type SetConversationPreferencesParams struct {
-	ConversationID string `json:"conversation_id"`
-	IsPinned       bool   `json:"is_pinned"`
-	IsMuted        bool   `json:"is_muted"`
+	ConversationID    string `json:"conversation_id"`
+	IsPinned          bool   `json:"is_pinned"`
+	NotificationLevel string `json:"notification_level,omitempty"`
+	IsMuted           bool   `json:"is_muted"`
 }
 
 // MarkReadParams are the params for the "mark_read" action.
@@ -344,6 +354,13 @@ type TransferGroupParams struct {
 type GroupMuteAllParams struct {
 	GroupID string `json:"group_id"`
 	Enabled bool   `json:"enabled"`
+}
+
+type GroupAnnouncementParams struct {
+	GroupID        string `json:"group_id,omitempty"`
+	AnnouncementID string `json:"announcement_id,omitempty"`
+	Content        string `json:"content,omitempty"`
+	IsPinned       bool   `json:"is_pinned,omitempty"`
 }
 
 // FriendRequestParams are the params for the "friend_request" action.
@@ -423,14 +440,15 @@ type GroupMember struct {
 
 // Conversation represents a conversation in API responses.
 type Conversation struct {
-	ConversationID string   `json:"conversation_id"`
-	Type           string   `json:"type"` // "private" or "group"
-	Title          string   `json:"title"`
-	Avatar         string   `json:"avatar_url,omitempty"`
-	UnreadCount    int      `json:"unread_count"`
-	IsPinned       bool     `json:"is_pinned"`
-	IsMuted        bool     `json:"is_muted"`
-	LastMessage    string   `json:"last_message,omitempty"`
-	LastTimestamp  int64    `json:"last_timestamp"`
-	Participants   []string `json:"participants,omitempty"`
+	ConversationID    string   `json:"conversation_id"`
+	Type              string   `json:"type"` // "private" or "group"
+	Title             string   `json:"title"`
+	Avatar            string   `json:"avatar_url,omitempty"`
+	UnreadCount       int      `json:"unread_count"`
+	IsPinned          bool     `json:"is_pinned"`
+	IsMuted           bool     `json:"is_muted"`
+	NotificationLevel string   `json:"notification_level"`
+	LastMessage       string   `json:"last_message,omitempty"`
+	LastTimestamp     int64    `json:"last_timestamp"`
+	Participants      []string `json:"participants,omitempty"`
 }

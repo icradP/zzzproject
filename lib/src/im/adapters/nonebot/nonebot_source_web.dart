@@ -265,7 +265,7 @@ class NoneBotSource extends ImMessageSource {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) async {
     throw UnsupportedError(
       'Conversation preferences are unavailable on the web stub.',

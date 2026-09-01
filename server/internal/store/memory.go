@@ -13,38 +13,43 @@ import (
 type MemoryStore struct {
 	mu sync.RWMutex
 
-	users             map[string]*User
-	sessions          map[string]*Session // SHA-256 token hash -> session
-	groups            map[string]*Group
-	conversations     map[string]*Conversation
-	preferences       map[string]map[string]*ConversationPreference // conversationID -> userID -> preference
-	messages          map[string][]*Message                         // conversationID -> messages
-	messageReactions  map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
-	readStates        map[string]map[string]*ReadState              // conversationID -> userID -> cursor
-	friendRequests    map[string]*FriendRequest
-	friendships       map[string]map[string]time.Time
-	forwards          map[string]*ForwardMessage
-	mediaFiles        map[string]*MediaFile
-	pushSubscriptions map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
-	msgCounter        int64
-	friendReqCounter  int64
+	users               map[string]*User
+	sessions            map[string]*Session // SHA-256 token hash -> session
+	groups              map[string]*Group
+	conversations       map[string]*Conversation
+	preferences         map[string]map[string]*ConversationPreference // conversationID -> userID -> preference
+	groupAnnouncements  map[string][]*GroupAnnouncement               // groupID -> announcements
+	announcementReads   map[string]map[string]bool                    // announcementID -> userID -> read
+	messages            map[string][]*Message                         // conversationID -> messages
+	messageReactions    map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
+	readStates          map[string]map[string]*ReadState              // conversationID -> userID -> cursor
+	friendRequests      map[string]*FriendRequest
+	friendships         map[string]map[string]time.Time
+	forwards            map[string]*ForwardMessage
+	mediaFiles          map[string]*MediaFile
+	pushSubscriptions   map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
+	msgCounter          int64
+	announcementCounter int64
+	friendReqCounter    int64
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:             make(map[string]*User),
-		sessions:          make(map[string]*Session),
-		groups:            make(map[string]*Group),
-		conversations:     make(map[string]*Conversation),
-		preferences:       make(map[string]map[string]*ConversationPreference),
-		messages:          make(map[string][]*Message),
-		messageReactions:  make(map[string]map[string]map[string]struct{}),
-		readStates:        make(map[string]map[string]*ReadState),
-		friendRequests:    make(map[string]*FriendRequest),
-		friendships:       make(map[string]map[string]time.Time),
-		forwards:          make(map[string]*ForwardMessage),
-		mediaFiles:        make(map[string]*MediaFile),
-		pushSubscriptions: make(map[string]map[string]*PushSubscription),
+		users:              make(map[string]*User),
+		sessions:           make(map[string]*Session),
+		groups:             make(map[string]*Group),
+		conversations:      make(map[string]*Conversation),
+		preferences:        make(map[string]map[string]*ConversationPreference),
+		groupAnnouncements: make(map[string][]*GroupAnnouncement),
+		announcementReads:  make(map[string]map[string]bool),
+		messages:           make(map[string][]*Message),
+		messageReactions:   make(map[string]map[string]map[string]struct{}),
+		readStates:         make(map[string]map[string]*ReadState),
+		friendRequests:     make(map[string]*FriendRequest),
+		friendships:        make(map[string]map[string]time.Time),
+		forwards:           make(map[string]*ForwardMessage),
+		mediaFiles:         make(map[string]*MediaFile),
+		pushSubscriptions:  make(map[string]map[string]*PushSubscription),
 	}
 }
 
@@ -168,6 +173,8 @@ func (s *MemoryStore) SetConversationPreference(preference *ConversationPreferen
 		s.preferences[preference.ConversationID] = byUser
 	}
 	copy := *preference
+	copy.NotificationLevel = NormalizeNotificationLevel(copy.NotificationLevel, copy.IsMuted)
+	copy.IsMuted = copy.NotificationLevel == NotificationLevelMuted
 	copy.UpdatedAt = time.Now()
 	byUser[preference.UserID] = &copy
 	return nil
@@ -518,6 +525,10 @@ func (s *MemoryStore) DeleteGroup(groupID string) error {
 	delete(s.conversations, groupID)
 	delete(s.messages, groupID)
 	delete(s.readStates, groupID)
+	for _, announcement := range s.groupAnnouncements[groupID] {
+		delete(s.announcementReads, announcement.ID)
+	}
+	delete(s.groupAnnouncements, groupID)
 	return nil
 }
 

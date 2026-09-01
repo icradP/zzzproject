@@ -143,11 +143,11 @@ class SourceBackedRepository implements ImRepository {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) => _source.setConversationPreferences(
     conversationId: conversationId,
     isPinned: isPinned,
-    isMuted: isMuted,
+    notificationLevel: notificationLevel,
   );
 
   @override
@@ -213,6 +213,40 @@ class SourceBackedRepository implements ImRepository {
   @override
   Future<ImGroupDetails> getGroupDetails(String groupId) =>
       _source.getGroupDetails(groupId);
+
+  @override
+  Future<List<ImGroupAnnouncement>> getGroupAnnouncements(String groupId) =>
+      _source.getGroupAnnouncements(groupId);
+
+  @override
+  Future<ImGroupAnnouncement> createGroupAnnouncement({
+    required String groupId,
+    required String content,
+    required bool isPinned,
+  }) => _source.createGroupAnnouncement(
+    groupId: groupId,
+    content: content,
+    isPinned: isPinned,
+  );
+
+  @override
+  Future<ImGroupAnnouncement> updateGroupAnnouncement({
+    required String announcementId,
+    required String content,
+    required bool isPinned,
+  }) => _source.updateGroupAnnouncement(
+    announcementId: announcementId,
+    content: content,
+    isPinned: isPinned,
+  );
+
+  @override
+  Future<void> deleteGroupAnnouncement(String announcementId) =>
+      _source.deleteGroupAnnouncement(announcementId);
+
+  @override
+  Future<void> markGroupAnnouncementRead(String announcementId) =>
+      _source.markGroupAnnouncementRead(announcementId);
 
   @override
   Future<void> inviteGroupMembers({

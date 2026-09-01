@@ -261,6 +261,16 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleDismissGroup(client, req)
 	case protocol.ActionGroupMuteAll:
 		g.handleGroupMuteAll(client, req)
+	case protocol.ActionGetGroupAnnouncements:
+		g.handleGetGroupAnnouncements(client, req)
+	case protocol.ActionCreateGroupAnnouncement:
+		g.handleCreateGroupAnnouncement(client, req)
+	case protocol.ActionUpdateGroupAnnouncement:
+		g.handleUpdateGroupAnnouncement(client, req)
+	case protocol.ActionDeleteGroupAnnouncement:
+		g.handleDeleteGroupAnnouncement(client, req)
+	case protocol.ActionMarkGroupAnnouncementRead:
+		g.handleMarkGroupAnnouncementRead(client, req)
 	case protocol.ActionFriendRequest:
 		g.handleFriendRequest(client, req)
 	case protocol.ActionFriendHandle:
@@ -1004,7 +1014,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		Timestamp: msg.Timestamp.Unix(),
 	}
 	g.broadcastToConversation(convID, event, client.userID)
-	g.pushToConversation(convID, msg, client.userID)
+	g.pushToConversation(convID, msg, client.userID, false)
 
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
 }
@@ -1387,16 +1397,17 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 			return
 		}
 		result[i] = protocol.Conversation{
-			ConversationID: conv.ID,
-			Type:           conv.Type,
-			Title:          title,
-			Avatar:         avatar,
-			UnreadCount:    unreadCount,
-			IsPinned:       preference != nil && preference.IsPinned,
-			IsMuted:        preference != nil && preference.IsMuted,
-			LastMessage:    lastMsg,
-			LastTimestamp:  lastTs,
-			Participants:   conv.Participants,
+			ConversationID:    conv.ID,
+			Type:              conv.Type,
+			Title:             title,
+			Avatar:            avatar,
+			UnreadCount:       unreadCount,
+			IsPinned:          preference != nil && preference.IsPinned,
+			IsMuted:           preference != nil && preference.IsMuted,
+			NotificationLevel: conversationNotificationLevel(preference),
+			LastMessage:       lastMsg,
+			LastTimestamp:     lastTs,
+			Participants:      conv.Participants,
 		}
 	}
 
@@ -1420,20 +1431,29 @@ func (g *Gateway) handleSetConversationPreferences(client *Client, req *protocol
 	}
 	conversationID, _ := params["conversation_id"].(string)
 	isPinned, pinnedOK := params["is_pinned"].(bool)
-	isMuted, mutedOK := params["is_muted"].(bool)
-	if conversationID == "" || !pinnedOK || !mutedOK {
-		g.sendError(client, req.Echo, "conversation_id, is_pinned and is_muted required")
+	legacyMuted, mutedOK := params["is_muted"].(bool)
+	level, levelOK := params["notification_level"].(string)
+	if conversationID == "" || !pinnedOK || (!levelOK && !mutedOK) {
+		g.sendError(client, req.Echo, "conversation_id, is_pinned and notification_level required")
 		return
 	}
+	if levelOK && level != store.NotificationLevelNormal &&
+		level != store.NotificationLevelMentionsOnly && level != store.NotificationLevelMuted {
+		g.sendError(client, req.Echo, "invalid notification_level")
+		return
+	}
+	level = store.NormalizeNotificationLevel(level, legacyMuted)
+	isMuted := level == store.NotificationLevelMuted
 	if !g.canAccessConversation(client.userID, conversationID) {
 		g.sendError(client, req.Echo, "conversation access denied")
 		return
 	}
 	preference := &store.ConversationPreference{
-		ConversationID: conversationID,
-		UserID:         client.userID,
-		IsPinned:       isPinned,
-		IsMuted:        isMuted,
+		ConversationID:    conversationID,
+		UserID:            client.userID,
+		IsPinned:          isPinned,
+		NotificationLevel: level,
+		IsMuted:           isMuted,
 	}
 	if err := g.store.SetConversationPreference(preference); err != nil {
 		g.sendError(client, req.Echo, "failed to save conversation preferences")
@@ -1443,13 +1463,21 @@ func (g *Gateway) handleSetConversationPreferences(client *Client, req *protocol
 		Status: "ok", RetCode: 0, Data: preference, Echo: req.Echo,
 	})
 	g.sendToUser(client.userID, protocol.NoticeEvent{
-		PostType:       "notice",
-		NoticeType:     protocol.NoticeTypeConversationPreferences,
-		UserID:         client.userID,
-		ConversationID: conversationID,
-		IsPinned:       &isPinned,
-		IsMuted:        &isMuted,
+		PostType:          "notice",
+		NoticeType:        protocol.NoticeTypeConversationPreferences,
+		UserID:            client.userID,
+		ConversationID:    conversationID,
+		IsPinned:          &isPinned,
+		IsMuted:           &isMuted,
+		NotificationLevel: level,
 	})
+}
+
+func conversationNotificationLevel(preference *store.ConversationPreference) string {
+	if preference == nil {
+		return store.NotificationLevelNormal
+	}
+	return store.NormalizeNotificationLevel(preference.NotificationLevel, preference.IsMuted)
 }
 
 func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
@@ -2984,7 +3012,7 @@ func (g *Gateway) broadcastToConversation(convID string, event interface{}, excl
 	}
 }
 
-func (g *Gateway) pushToConversation(convID string, message *store.Message, excludeUserID string) {
+func (g *Gateway) pushToConversation(convID string, message *store.Message, excludeUserID string, important bool) {
 	if g.pushSender == nil || !g.pushSender.Enabled() {
 		return
 	}
@@ -3009,7 +3037,9 @@ func (g *Gateway) pushToConversation(convID string, message *store.Message, excl
 				log.Printf("[push] failed to load conversation preferences for %s: %v", userID, err)
 				continue
 			}
-			if preference != nil && preference.IsMuted {
+			level := conversationNotificationLevel(preference)
+			if level == store.NotificationLevelMuted ||
+				(level == store.NotificationLevelMentionsOnly && !important && !messageMentionsUser(message.Segments, userID)) {
 				continue
 			}
 			subscriptions, err := g.store.GetPushSubscriptions(userID)
@@ -3035,6 +3065,21 @@ func (g *Gateway) pushToConversation(convID string, message *store.Message, excl
 			}
 		}
 	}()
+}
+
+func messageMentionsUser(segments []protocol.MessageSegment, userID string) bool {
+	for _, segment := range segments {
+		if segment.Type != "at" {
+			continue
+		}
+		for _, key := range []string{"qq", "user_id", "target_id"} {
+			target, _ := segment.Data[key].(string)
+			if target == userID || target == "all" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (g *Gateway) pushEventToUser(
@@ -3169,6 +3214,12 @@ func pushBody(segments []protocol.MessageSegment) string {
 			text.WriteString("[Chat records]")
 		case "poke":
 			text.WriteString("[Poke]")
+		case "system":
+			if value, ok := segment.Data["text"].(string); ok {
+				text.WriteString(value)
+			} else {
+				text.WriteString("[System message]")
+			}
 		}
 	}
 	result := strings.TrimSpace(text.String())

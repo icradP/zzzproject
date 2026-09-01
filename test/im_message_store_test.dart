@@ -125,7 +125,7 @@ void main() {
       participantIds: ['test_bot', '30003'],
       updatedAt: DateTime(2026, 5, 26),
       isPinned: true,
-      isMuted: true,
+      notificationLevel: ImConversationNotificationLevel.muted,
     );
 
     await store.upsertConversation(older);

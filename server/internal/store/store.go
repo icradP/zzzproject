@@ -61,6 +61,12 @@ type Store interface {
 	RemoveGroupMember(groupID, userID string) (bool, error)
 	IsGroupMember(groupID, userID string) (bool, error)
 	GetGroupMembers(groupID string) ([]*GroupMember, error)
+	CreateGroupAnnouncement(groupID, content, authorID string, isPinned bool) (*GroupAnnouncement, error)
+	GetGroupAnnouncement(id string) (*GroupAnnouncement, error)
+	GetGroupAnnouncements(groupID, userID string) ([]*GroupAnnouncement, error)
+	UpdateGroupAnnouncement(id, content string, isPinned bool) (*GroupAnnouncement, error)
+	DeleteGroupAnnouncement(id string) (bool, error)
+	MarkGroupAnnouncementRead(id, userID string) error
 
 	// ---- Friend request operations ----
 	GetFriends(userID string) ([]*User, error)
@@ -137,11 +143,30 @@ type Conversation struct {
 
 // ConversationPreference stores per-user inbox behavior for a conversation.
 type ConversationPreference struct {
-	ConversationID string    `json:"conversation_id"`
-	UserID         string    `json:"user_id"`
-	IsPinned       bool      `json:"is_pinned"`
-	IsMuted        bool      `json:"is_muted"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ConversationID    string    `json:"conversation_id"`
+	UserID            string    `json:"user_id"`
+	IsPinned          bool      `json:"is_pinned"`
+	NotificationLevel string    `json:"notification_level"`
+	IsMuted           bool      `json:"is_muted"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+const (
+	NotificationLevelNormal       = "normal"
+	NotificationLevelMentionsOnly = "mentions_only"
+	NotificationLevelMuted        = "muted"
+)
+
+// NormalizeNotificationLevel maps empty legacy values to the old mute flag.
+func NormalizeNotificationLevel(level string, legacyMuted bool) string {
+	switch level {
+	case NotificationLevelNormal, NotificationLevelMentionsOnly, NotificationLevelMuted:
+		return level
+	}
+	if legacyMuted {
+		return NotificationLevelMuted
+	}
+	return NotificationLevelNormal
 }
 
 // User represents a user.
@@ -181,6 +206,18 @@ type GroupMember struct {
 	Role       string    `json:"role"` // "owner", "admin", "member"
 	JoinedAt   time.Time `json:"joined_at"`
 	MutedUntil time.Time `json:"muted_until,omitempty"`
+}
+
+// GroupAnnouncement is an independently managed, durable group notice.
+type GroupAnnouncement struct {
+	ID        string    `json:"announcement_id"`
+	GroupID   string    `json:"group_id"`
+	Content   string    `json:"content"`
+	AuthorID  string    `json:"author_id"`
+	IsPinned  bool      `json:"is_pinned"`
+	IsRead    bool      `json:"is_read"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // FriendRequest represents a pending friend request.

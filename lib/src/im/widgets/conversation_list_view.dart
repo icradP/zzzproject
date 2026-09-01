@@ -31,13 +31,13 @@ class _ConversationListViewState extends State<ConversationListView> {
   Future<void> _setPreference(
     ImConversation conversation, {
     bool? isPinned,
-    bool? isMuted,
+    ImConversationNotificationLevel? notificationLevel,
   }) async {
     try {
       await ImScope.repositoryOf(context).setConversationPreferences(
         conversationId: conversation.id,
         isPinned: isPinned ?? conversation.isPinned,
-        isMuted: isMuted ?? conversation.isMuted,
+        notificationLevel: notificationLevel ?? conversation.notificationLevel,
       );
     } catch (error) {
       if (!mounted) return;
@@ -49,6 +49,86 @@ class _ConversationListViewState extends State<ConversationListView> {
       );
     }
   }
+
+  Future<void> _selectNotificationLevel(ImConversation conversation) async {
+    final selected = await showZzzModalPanel<ImConversationNotificationLevel>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            key: const ValueKey('conversation-notification-panel'),
+            title: 'Conversation notifications',
+            subtitle: conversation.title,
+            icon: Icons.notifications_outlined,
+            maxWidth: 440,
+            maxHeight: 430,
+            actions: [
+              TextButton.icon(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                icon: const Icon(Icons.close_rounded),
+                label: const Text('Cancel'),
+              ),
+            ],
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              shrinkWrap: true,
+              children: [
+                _notificationChoice(
+                  dialogContext,
+                  conversation,
+                  ImConversationNotificationLevel.normal,
+                  'All messages',
+                  'Notify for every new message.',
+                  Icons.notifications_active_outlined,
+                ),
+                _notificationChoice(
+                  dialogContext,
+                  conversation,
+                  ImConversationNotificationLevel.mentionsOnly,
+                  'Mentions and announcements',
+                  'Only notify for @mentions and group announcements.',
+                  Icons.alternate_email,
+                ),
+                _notificationChoice(
+                  dialogContext,
+                  conversation,
+                  ImConversationNotificationLevel.muted,
+                  'Muted',
+                  'Keep messages and unread counts without notifications.',
+                  Icons.notifications_off_outlined,
+                ),
+              ],
+            ),
+          ),
+    );
+    if (!mounted ||
+        selected == null ||
+        selected == conversation.notificationLevel) {
+      return;
+    }
+    await _setPreference(conversation, notificationLevel: selected);
+  }
+
+  Widget _notificationChoice(
+    BuildContext dialogContext,
+    ImConversation conversation,
+    ImConversationNotificationLevel value,
+    String title,
+    String subtitle,
+    IconData icon,
+  ) => Material(
+    color: Colors.transparent,
+    child: ListTile(
+      key: ValueKey('conversation-notification-${value.wireValue}'),
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      trailing:
+          conversation.notificationLevel == value
+              ? const Icon(Icons.check_circle_rounded)
+              : const Icon(Icons.circle_outlined),
+      onTap: () => Navigator.of(dialogContext).pop(value),
+    ),
+  );
 
   @override
   void dispose() {
@@ -131,10 +211,8 @@ class _ConversationListViewState extends State<ConversationListView> {
                           () => unawaited(
                             _setPreference(conv, isPinned: !conv.isPinned),
                           ),
-                      onToggleMuted:
-                          () => unawaited(
-                            _setPreference(conv, isMuted: !conv.isMuted),
-                          ),
+                      onChangeNotifications:
+                          () => unawaited(_selectNotificationLevel(conv)),
                       onDelete: () {
                         ImScope.repositoryOf(
                           context,

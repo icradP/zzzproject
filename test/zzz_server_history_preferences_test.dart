@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
+import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
   test('ZZZ source paginates older history and saves preferences', () async {
@@ -92,12 +93,16 @@ void main() {
     await source.setConversationPreferences(
       conversationId: 'private_me_bob',
       isPinned: true,
-      isMuted: true,
+      notificationLevel: ImConversationNotificationLevel.muted,
     );
     final conversation = (await source.watchConversations().first).single;
     expect(conversation.isPinned, isTrue);
     expect(conversation.isMuted, isTrue);
     expect(preferenceRequest!['params'], containsPair('is_muted', true));
+    expect(
+      preferenceRequest!['params'],
+      containsPair('notification_level', 'muted'),
+    );
   });
 }
 

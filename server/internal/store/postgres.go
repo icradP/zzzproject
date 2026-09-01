@@ -66,6 +66,7 @@ func (s *PostgresStore) initSchema() error {
 		user_id VARCHAR(32) NOT NULL,
 		is_pinned BOOLEAN DEFAULT FALSE,
 		is_muted BOOLEAN DEFAULT FALSE,
+		notification_level VARCHAR(20) DEFAULT 'normal',
 		updated_at TIMESTAMP DEFAULT NOW(),
 		PRIMARY KEY (conversation_id, user_id)
 	);
@@ -139,6 +140,26 @@ func (s *PostgresStore) initSchema() error {
 		PRIMARY KEY (group_id, user_id)
 	);
 
+	CREATE TABLE IF NOT EXISTS group_announcements (
+		id VARCHAR(64) PRIMARY KEY,
+		group_id VARCHAR(32) NOT NULL,
+		content TEXT NOT NULL,
+		author_id VARCHAR(32) NOT NULL,
+		is_pinned BOOLEAN DEFAULT FALSE,
+		created_at TIMESTAMP DEFAULT NOW(),
+		updated_at TIMESTAMP DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_group_announcements_group
+		ON group_announcements(group_id, is_pinned DESC, created_at DESC);
+
+	CREATE TABLE IF NOT EXISTS group_announcement_reads (
+		announcement_id VARCHAR(64) NOT NULL,
+		user_id VARCHAR(32) NOT NULL,
+		read_at TIMESTAMP DEFAULT NOW(),
+		PRIMARY KEY (announcement_id, user_id)
+	);
+
 	CREATE TABLE IF NOT EXISTS friend_requests (
 		id VARCHAR(32) PRIMARY KEY,
 		from_id VARCHAR(32) NOT NULL,
@@ -201,6 +222,7 @@ func (s *PostgresStore) initSchema() error {
 		return err
 	}
 	for _, statement := range []string{
+		"ALTER TABLE conversation_preferences ADD COLUMN IF NOT EXISTS notification_level VARCHAR(20) DEFAULT 'normal'",
 		"ALTER TABLE groups ADD COLUMN IF NOT EXISTS announcement TEXT DEFAULT ''",
 		"ALTER TABLE groups ADD COLUMN IF NOT EXISTS mute_all BOOLEAN DEFAULT FALSE",
 		"ALTER TABLE group_members ADD COLUMN IF NOT EXISTS muted_until TIMESTAMP",
@@ -213,7 +235,21 @@ func (s *PostgresStore) initSchema() error {
 			return err
 		}
 	}
-	return s.migrateLegacyFriendships()
+	if _, err = s.db.Exec(`UPDATE conversation_preferences
+		SET notification_level = CASE WHEN is_muted THEN 'muted' ELSE 'normal' END
+		WHERE is_muted OR notification_level IS NULL OR notification_level = ''`); err != nil {
+		return err
+	}
+	if err := s.migrateLegacyFriendships(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO group_announcements
+		(id, group_id, content, author_id, is_pinned, created_at, updated_at)
+		SELECT 'announcement_legacy_' || id, id, announcement, owner_id, TRUE, created_at, created_at
+		FROM groups g WHERE BTRIM(g.announcement) <> ''
+		AND NOT EXISTS (SELECT 1 FROM group_announcements a WHERE a.group_id = g.id)
+		ON CONFLICT (id) DO NOTHING`)
+	return err
 }
 
 func (s *PostgresStore) migrateLegacyFriendships() error {
@@ -423,12 +459,12 @@ func (s *PostgresStore) GetUserConversations(userID string) ([]*Conversation, er
 func (s *PostgresStore) GetConversationPreference(conversationID, userID string) (*ConversationPreference, error) {
 	preference := &ConversationPreference{}
 	err := s.db.QueryRow(
-		`SELECT conversation_id, user_id, is_pinned, is_muted, updated_at
+		`SELECT conversation_id, user_id, is_pinned, is_muted, notification_level, updated_at
 		 FROM conversation_preferences WHERE conversation_id = $1 AND user_id = $2`,
 		conversationID, userID,
 	).Scan(
 		&preference.ConversationID, &preference.UserID, &preference.IsPinned,
-		&preference.IsMuted, &preference.UpdatedAt,
+		&preference.IsMuted, &preference.NotificationLevel, &preference.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -436,20 +472,26 @@ func (s *PostgresStore) GetConversationPreference(conversationID, userID string)
 	if err != nil {
 		return nil, err
 	}
+	preference.NotificationLevel = NormalizeNotificationLevel(preference.NotificationLevel, preference.IsMuted)
+	preference.IsMuted = preference.NotificationLevel == NotificationLevelMuted
 	return preference, nil
 }
 
 func (s *PostgresStore) SetConversationPreference(preference *ConversationPreference) error {
+	level := NormalizeNotificationLevel(preference.NotificationLevel, preference.IsMuted)
+	preference.NotificationLevel = level
+	preference.IsMuted = level == NotificationLevelMuted
 	_, err := s.db.Exec(`
 		INSERT INTO conversation_preferences
-			(conversation_id, user_id, is_pinned, is_muted, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
+			(conversation_id, user_id, is_pinned, is_muted, notification_level, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (conversation_id, user_id) DO UPDATE SET
 			is_pinned = EXCLUDED.is_pinned,
 			is_muted = EXCLUDED.is_muted,
+			notification_level = EXCLUDED.notification_level,
 			updated_at = EXCLUDED.updated_at`,
 		preference.ConversationID, preference.UserID, preference.IsPinned,
-		preference.IsMuted, time.Now(),
+		preference.IsMuted, level, time.Now(),
 	)
 	return err
 }
@@ -920,6 +962,8 @@ func (s *PostgresStore) DeleteGroup(groupID string) error {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		"DELETE FROM group_announcement_reads WHERE announcement_id IN (SELECT id FROM group_announcements WHERE group_id = $1)",
+		"DELETE FROM group_announcements WHERE group_id = $1",
 		"DELETE FROM conversation_reads WHERE conversation_id = $1",
 		"DELETE FROM messages WHERE conversation_id = $1",
 		"DELETE FROM group_members WHERE group_id = $1",

@@ -8,6 +8,30 @@ import 'im_platform_image_provider.dart';
 
 enum ImConversationType { direct, group }
 
+enum ImConversationNotificationLevel { normal, mentionsOnly, muted }
+
+ImConversationNotificationLevel imConversationNotificationLevelFromString(
+  String? value, {
+  bool legacyMuted = false,
+}) => switch (value) {
+  'mentions_only' => ImConversationNotificationLevel.mentionsOnly,
+  'muted' => ImConversationNotificationLevel.muted,
+  'normal' => ImConversationNotificationLevel.normal,
+  _ =>
+    legacyMuted
+        ? ImConversationNotificationLevel.muted
+        : ImConversationNotificationLevel.normal,
+};
+
+extension ImConversationNotificationLevelValue
+    on ImConversationNotificationLevel {
+  String get wireValue => switch (this) {
+    ImConversationNotificationLevel.normal => 'normal',
+    ImConversationNotificationLevel.mentionsOnly => 'mentions_only',
+    ImConversationNotificationLevel.muted => 'muted',
+  };
+}
+
 enum ImGroupRole { owner, admin, member }
 
 ImGroupRole imGroupRoleFromString(String? value) => switch (value) {
@@ -237,7 +261,7 @@ class ImConversation {
     this.updatedAt,
     this.unreadCount = 0,
     this.isPinned = false,
-    this.isMuted = false,
+    this.notificationLevel = ImConversationNotificationLevel.normal,
     this.sourceId,
     this.sourceLabel,
   });
@@ -254,12 +278,14 @@ class ImConversation {
   final DateTime? updatedAt;
   final int unreadCount;
   final bool isPinned;
-  final bool isMuted;
+  final ImConversationNotificationLevel notificationLevel;
   final String? sourceId;
   final String? sourceLabel;
 
   bool get isGroup => type == ImConversationType.group;
   bool get isDirect => type == ImConversationType.direct;
+  bool get isMuted =>
+      notificationLevel == ImConversationNotificationLevel.muted;
 
   /// Builds an [ImageProvider] for this conversation's avatar, checking
   /// local file cache first, then asset path.
@@ -284,7 +310,7 @@ class ImConversation {
     DateTime? updatedAt,
     int? unreadCount,
     bool? isPinned,
-    bool? isMuted,
+    ImConversationNotificationLevel? notificationLevel,
     List<String>? participantIds,
     String? sourceId,
     String? sourceLabel,
@@ -300,7 +326,7 @@ class ImConversation {
       updatedAt: updatedAt ?? this.updatedAt,
       unreadCount: unreadCount ?? this.unreadCount,
       isPinned: isPinned ?? this.isPinned,
-      isMuted: isMuted ?? this.isMuted,
+      notificationLevel: notificationLevel ?? this.notificationLevel,
       sourceId: sourceId ?? this.sourceId,
       sourceLabel: sourceLabel ?? this.sourceLabel,
     );
@@ -323,6 +349,44 @@ class ImGroupMember {
   bool get isMuted => mutedUntil?.isAfter(DateTime.now()) ?? false;
 }
 
+class ImGroupAnnouncement {
+  const ImGroupAnnouncement({
+    required this.id,
+    required this.groupId,
+    required this.content,
+    required this.authorId,
+    required this.createdAt,
+    required this.updatedAt,
+    this.isPinned = false,
+    this.isRead = false,
+  });
+
+  final String id;
+  final String groupId;
+  final String content;
+  final String authorId;
+  final bool isPinned;
+  final bool isRead;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  ImGroupAnnouncement copyWith({
+    String? content,
+    bool? isPinned,
+    bool? isRead,
+    DateTime? updatedAt,
+  }) => ImGroupAnnouncement(
+    id: id,
+    groupId: groupId,
+    content: content ?? this.content,
+    authorId: authorId,
+    isPinned: isPinned ?? this.isPinned,
+    isRead: isRead ?? this.isRead,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+}
+
 class ImGroupDetails {
   const ImGroupDetails({
     required this.conversation,
@@ -332,6 +396,7 @@ class ImGroupDetails {
     required this.supportsMemberRemoval,
     required this.canLeave,
     this.announcement = '',
+    this.announcements = const [],
     this.muteAll = false,
     this.supportsNameEditing = false,
     this.supportsAvatarEditing = false,
@@ -350,6 +415,7 @@ class ImGroupDetails {
   final bool supportsMemberRemoval;
   final bool canLeave;
   final String announcement;
+  final List<ImGroupAnnouncement> announcements;
   final bool muteAll;
   final bool supportsNameEditing;
   final bool supportsAvatarEditing;

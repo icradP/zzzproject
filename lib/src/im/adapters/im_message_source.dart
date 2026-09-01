@@ -103,7 +103,7 @@ abstract class ImMessageSource {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) async {
     throw UnsupportedError(
       'Conversation preferences are not supported by this source.',
@@ -187,6 +187,46 @@ abstract class ImMessageSource {
 
   Future<ImGroupDetails> getGroupDetails(String groupId) async {
     throw UnsupportedError('Group details are not supported by this source.');
+  }
+
+  Future<List<ImGroupAnnouncement>> getGroupAnnouncements(
+    String groupId,
+  ) async {
+    throw UnsupportedError(
+      'Group announcements are not supported by this source.',
+    );
+  }
+
+  Future<ImGroupAnnouncement> createGroupAnnouncement({
+    required String groupId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    throw UnsupportedError(
+      'Group announcements are not supported by this source.',
+    );
+  }
+
+  Future<ImGroupAnnouncement> updateGroupAnnouncement({
+    required String announcementId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    throw UnsupportedError(
+      'Group announcements are not supported by this source.',
+    );
+  }
+
+  Future<void> deleteGroupAnnouncement(String announcementId) async {
+    throw UnsupportedError(
+      'Group announcements are not supported by this source.',
+    );
+  }
+
+  Future<void> markGroupAnnouncementRead(String announcementId) async {
+    throw UnsupportedError(
+      'Group announcements are not supported by this source.',
+    );
   }
 
   Future<void> inviteGroupMembers({

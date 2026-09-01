@@ -14,12 +14,21 @@ class ImReleaseNote {
 
 /// Versioned product updates shown on first launch and from Settings.
 abstract final class ImReleaseNotes {
-  static const currentVersion = '1.2.0';
+  static const currentVersion = '1.3.0';
   static const _dismissedVersionKey = 'im.release_notes.dismissed_version';
 
   static const releases = <ImReleaseNote>[
     ImReleaseNote(
       version: currentVersion,
+      title: 'Group governance',
+      items: [
+        'Publish, edit, pin, read, and remove announcements from group history.',
+        'Manage group owners and administrators with server-enforced permissions.',
+        'Choose all messages, mentions and announcements, or muted notifications per conversation.',
+      ],
+    ),
+    ImReleaseNote(
+      version: '1.2.0',
       title: 'Everyday messaging',
       items: [
         'Record, preview, and send voice messages on Web and desktop.',

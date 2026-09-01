@@ -63,6 +63,7 @@ func (s *SQLiteStore) initSchema() error {
 			user_id TEXT NOT NULL,
 			is_pinned BOOLEAN DEFAULT FALSE,
 			is_muted BOOLEAN DEFAULT FALSE,
+			notification_level TEXT DEFAULT 'normal',
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (conversation_id, user_id),
 			FOREIGN KEY (conversation_id) REFERENCES conversations(id)
@@ -138,6 +139,28 @@ func (s *SQLiteStore) initSchema() error {
 		FOREIGN KEY (group_id) REFERENCES groups(id)
 	);
 
+	CREATE TABLE IF NOT EXISTS group_announcements (
+		id TEXT PRIMARY KEY,
+		group_id TEXT NOT NULL,
+		content TEXT NOT NULL,
+		author_id TEXT NOT NULL,
+		is_pinned BOOLEAN DEFAULT FALSE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (group_id) REFERENCES groups(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_group_announcements_group
+		ON group_announcements(group_id, is_pinned, created_at);
+
+	CREATE TABLE IF NOT EXISTS group_announcement_reads (
+		announcement_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (announcement_id, user_id),
+		FOREIGN KEY (announcement_id) REFERENCES group_announcements(id)
+	);
+
 	CREATE TABLE IF NOT EXISTS friend_requests (
 		id TEXT PRIMARY KEY,
 		from_id TEXT NOT NULL,
@@ -203,6 +226,7 @@ func (s *SQLiteStore) initSchema() error {
 		return err
 	}
 	for _, statement := range []string{
+		"ALTER TABLE conversation_preferences ADD COLUMN notification_level TEXT DEFAULT 'normal'",
 		"ALTER TABLE groups ADD COLUMN announcement TEXT DEFAULT ''",
 		"ALTER TABLE groups ADD COLUMN mute_all BOOLEAN DEFAULT FALSE",
 		"ALTER TABLE group_members ADD COLUMN muted_until DATETIME",
@@ -216,7 +240,20 @@ func (s *SQLiteStore) initSchema() error {
 			return err
 		}
 	}
-	return s.migrateLegacyFriendships()
+	if _, err := s.db.Exec(`UPDATE conversation_preferences
+		SET notification_level = CASE WHEN is_muted THEN 'muted' ELSE 'normal' END
+		WHERE is_muted OR notification_level IS NULL OR notification_level = ''`); err != nil {
+		return err
+	}
+	if err := s.migrateLegacyFriendships(); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO group_announcements
+		(id, group_id, content, author_id, is_pinned, created_at, updated_at)
+		SELECT 'announcement_legacy_' || id, id, announcement, owner_id, TRUE, created_at, created_at
+		FROM groups g WHERE TRIM(g.announcement) <> ''
+		AND NOT EXISTS (SELECT 1 FROM group_announcements a WHERE a.group_id = g.id)`)
+	return err
 }
 
 func (s *SQLiteStore) migrateLegacyFriendships() error {
@@ -407,12 +444,12 @@ func (s *SQLiteStore) GetUserConversations(userID string) ([]*Conversation, erro
 func (s *SQLiteStore) GetConversationPreference(conversationID, userID string) (*ConversationPreference, error) {
 	preference := &ConversationPreference{}
 	err := s.db.QueryRow(
-		`SELECT conversation_id, user_id, is_pinned, is_muted, updated_at
+		`SELECT conversation_id, user_id, is_pinned, is_muted, notification_level, updated_at
 		 FROM conversation_preferences WHERE conversation_id = ? AND user_id = ?`,
 		conversationID, userID,
 	).Scan(
 		&preference.ConversationID, &preference.UserID, &preference.IsPinned,
-		&preference.IsMuted, &preference.UpdatedAt,
+		&preference.IsMuted, &preference.NotificationLevel, &preference.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -420,20 +457,26 @@ func (s *SQLiteStore) GetConversationPreference(conversationID, userID string) (
 	if err != nil {
 		return nil, err
 	}
+	preference.NotificationLevel = NormalizeNotificationLevel(preference.NotificationLevel, preference.IsMuted)
+	preference.IsMuted = preference.NotificationLevel == NotificationLevelMuted
 	return preference, nil
 }
 
 func (s *SQLiteStore) SetConversationPreference(preference *ConversationPreference) error {
+	level := NormalizeNotificationLevel(preference.NotificationLevel, preference.IsMuted)
+	preference.NotificationLevel = level
+	preference.IsMuted = level == NotificationLevelMuted
 	_, err := s.db.Exec(`
 		INSERT INTO conversation_preferences
-			(conversation_id, user_id, is_pinned, is_muted, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+			(conversation_id, user_id, is_pinned, is_muted, notification_level, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conversation_id, user_id) DO UPDATE SET
 			is_pinned = excluded.is_pinned,
 			is_muted = excluded.is_muted,
+			notification_level = excluded.notification_level,
 			updated_at = excluded.updated_at`,
 		preference.ConversationID, preference.UserID, preference.IsPinned,
-		preference.IsMuted, time.Now(),
+		preference.IsMuted, level, time.Now(),
 	)
 	return err
 }
@@ -930,6 +973,8 @@ func (s *SQLiteStore) DeleteGroup(groupID string) error {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		"DELETE FROM group_announcement_reads WHERE announcement_id IN (SELECT id FROM group_announcements WHERE group_id = ?)",
+		"DELETE FROM group_announcements WHERE group_id = ?",
 		"DELETE FROM conversation_reads WHERE conversation_id = ?",
 		"DELETE FROM messages WHERE conversation_id = ?",
 		"DELETE FROM group_members WHERE group_id = ?",

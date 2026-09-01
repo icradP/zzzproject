@@ -590,11 +590,14 @@ class NoneBotSource extends ImMessageSource {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) async {
     final conversation = _conversations[conversationId];
     if (conversation == null) throw StateError('Conversation not found.');
-    final updated = conversation.copyWith(isPinned: isPinned, isMuted: isMuted);
+    final updated = conversation.copyWith(
+      isPinned: isPinned,
+      notificationLevel: notificationLevel,
+    );
     _conversations[conversationId] = updated;
     _saveConv(updated);
     _emitConversations();
@@ -766,7 +769,8 @@ class NoneBotSource extends ImMessageSource {
       updatedAt: existing?.updatedAt,
       unreadCount: existing?.unreadCount ?? 0,
       isPinned: existing?.isPinned ?? false,
-      isMuted: existing?.isMuted ?? false,
+      notificationLevel:
+          existing?.notificationLevel ?? ImConversationNotificationLevel.normal,
     );
     _conversations[groupId] = conversation;
     _emitConversations();

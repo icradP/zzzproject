@@ -42,6 +42,8 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
   String? _error;
   bool _loading = true;
   bool _busy = false;
+  String? _editingAnnouncementId;
+  bool _announcementPinned = false;
 
   @override
   void initState() {
@@ -91,7 +93,10 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
       setState(() {
         _details = details;
         _nameController.text = details.conversation.title;
-        _announcementController.text = details.announcement;
+        if (_editingAnnouncementId == null) {
+          _announcementController.clear();
+          _announcementPinned = false;
+        }
         _availableUsers = users;
         _error = userLoadError;
         _selectedInvitees.removeWhere(
@@ -250,16 +255,10 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
       setState(() => _error = 'Group name must be 1-80 characters.');
       return;
     }
-    final announcement = _announcementController.text.trim();
-    if (announcement.length > 2000) {
-      setState(() => _error = 'Announcement must be 2000 characters or less.');
-      return;
-    }
     await _runGroupAction(() async {
       await widget.repository.updateGroup(
         groupId: widget.conversation.id,
         name: details.supportsNameEditing ? name : null,
-        announcement: details.supportsAnnouncementEditing ? announcement : null,
         avatar:
             _avatarBytes == null
                 ? null
@@ -274,6 +273,91 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
       _avatarName = null;
       _avatarMime = null;
     });
+  }
+
+  Future<void> _saveAnnouncement() async {
+    final content = _announcementController.text.trim();
+    if (content.isEmpty || content.length > 2000) {
+      setState(() => _error = 'Announcement must be 1-2000 characters.');
+      return;
+    }
+    final editingId = _editingAnnouncementId;
+    await _runGroupAction(() async {
+      if (editingId == null) {
+        await widget.repository.createGroupAnnouncement(
+          groupId: widget.conversation.id,
+          content: content,
+          isPinned: _announcementPinned,
+        );
+      } else {
+        await widget.repository.updateGroupAnnouncement(
+          announcementId: editingId,
+          content: content,
+          isPinned: _announcementPinned,
+        );
+      }
+      _editingAnnouncementId = null;
+      _announcementController.clear();
+      _announcementPinned = false;
+    });
+  }
+
+  void _editAnnouncement(ImGroupAnnouncement announcement) {
+    setState(() {
+      _editingAnnouncementId = announcement.id;
+      _announcementController.text = announcement.content;
+      _announcementPinned = announcement.isPinned;
+      _error = null;
+    });
+  }
+
+  void _cancelAnnouncementEdit() {
+    setState(() {
+      _editingAnnouncementId = null;
+      _announcementController.clear();
+      _announcementPinned = false;
+    });
+  }
+
+  Future<void> _toggleAnnouncementPin(ImGroupAnnouncement announcement) =>
+      _runGroupAction(
+        () => widget.repository.updateGroupAnnouncement(
+          announcementId: announcement.id,
+          content: announcement.content,
+          isPinned: !announcement.isPinned,
+        ),
+      );
+
+  Future<void> _deleteAnnouncement(ImGroupAnnouncement announcement) async {
+    final confirmed = await _confirm(
+      title: 'Delete announcement',
+      message: 'This removes the announcement from group history.',
+      actionLabel: 'Delete',
+    );
+    if (!confirmed || !mounted) return;
+    await _runGroupAction(
+      () => widget.repository.deleteGroupAnnouncement(announcement.id),
+    );
+  }
+
+  Future<void> _markAnnouncementsRead() async {
+    final unread =
+        _details?.announcements.where((value) => !value.isRead) ??
+        const <ImGroupAnnouncement>[];
+    if (unread.isEmpty) return;
+    try {
+      for (final announcement in unread) {
+        await widget.repository.markGroupAnnouncementRead(announcement.id);
+      }
+      await _load();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
+  }
+
+  void _changeTab(String value) {
+    setState(() => _tab = value);
+    if (value == 'announcements') unawaited(_markAnnouncementsRead());
   }
 
   Future<void> _setAdministrator(ImGroupMember member, bool enabled) =>
@@ -452,6 +536,14 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
           tooltip: 'Invite members',
           icon: Icons.person_add_alt_1_rounded,
         ),
+      if (details != null &&
+          (details.supportsAnnouncementEditing ||
+              details.announcements.isNotEmpty))
+        const ZzzSegmentItem<String>(
+          value: 'announcements',
+          tooltip: 'Announcements',
+          icon: Icons.campaign_outlined,
+        ),
       if (hasSettings)
         const ZzzSegmentItem<String>(
           value: 'settings',
@@ -485,7 +577,7 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
                         key: const ValueKey('group-management-tabs'),
                         value: _tab,
                         items: tabs,
-                        onChanged: (value) => setState(() => _tab = value),
+                        onChanged: _changeTab,
                       ),
                       const SizedBox(height: 12),
                     ],
@@ -497,6 +589,9 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
                                 duration: const Duration(milliseconds: 180),
                                 child: switch (_tab) {
                                   'invite' => _buildInviteList(),
+                                  'announcements' => _buildAnnouncements(
+                                    details,
+                                  ),
                                   'settings' => _buildSettings(details),
                                   _ => _buildMemberList(details),
                                 },
@@ -593,11 +688,231 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
     );
   }
 
+  Widget _buildAnnouncements(ImGroupDetails details) {
+    final announcements = details.announcements;
+    return Column(
+      key: const ValueKey('group-announcements-tab'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (details.currentUserIsManager &&
+            details.supportsAnnouncementEditing) ...[
+          ZzzTextInput(
+            key: const ValueKey('group-announcement-input'),
+            controller: _announcementController,
+            hintText:
+                _editingAnnouncementId == null
+                    ? 'Publish an announcement'
+                    : 'Edit announcement',
+            minLines: 2,
+            maxLines: 4,
+            maxLength: 2000,
+            prefixIcon: const Icon(Icons.campaign_outlined),
+            fillColor: Colors.white.withValues(alpha: 0.08),
+            foregroundColor: Colors.white,
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Material(
+                  color: Colors.transparent,
+                  child: CheckboxListTile(
+                    key: const ValueKey('group-announcement-pinned'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text('Pin announcement'),
+                    value: _announcementPinned,
+                    onChanged:
+                        _busy
+                            ? null
+                            : (value) => setState(
+                              () => _announcementPinned = value ?? false,
+                            ),
+                  ),
+                ),
+              ),
+              if (_editingAnnouncementId != null)
+                IconButton(
+                  key: const ValueKey('group-announcement-cancel-edit'),
+                  tooltip: 'Cancel editing',
+                  onPressed: _busy ? null : _cancelAnnouncementEdit,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              FilledButton.icon(
+                key: const ValueKey('group-announcement-save'),
+                onPressed: _busy ? null : _saveAnnouncement,
+                icon: Icon(
+                  _editingAnnouncementId == null
+                      ? Icons.send_rounded
+                      : Icons.save_outlined,
+                ),
+                label: Text(
+                  _editingAnnouncementId == null ? 'Publish' : 'Save',
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 20, color: Colors.white12),
+        ],
+        Expanded(
+          child:
+              announcements.isEmpty
+                  ? const Center(
+                    child: Text(
+                      'No announcements yet',
+                      style: TextStyle(color: Colors.white38),
+                    ),
+                  )
+                  : ListView.separated(
+                    key: const ValueKey('group-announcement-list'),
+                    itemCount: announcements.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder:
+                        (context, index) => _buildAnnouncementItem(
+                          details,
+                          announcements[index],
+                        ),
+                  ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAnnouncementItem(
+    ImGroupDetails details,
+    ImGroupAnnouncement announcement,
+  ) {
+    String? author;
+    for (final member in details.members) {
+      if (member.user.id == announcement.authorId) {
+        author = member.user.displayName;
+        break;
+      }
+    }
+    return Container(
+      key: ValueKey('group-announcement-${announcement.id}'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 12),
+      decoration: BoxDecoration(
+        color:
+            announcement.isRead
+                ? Colors.white.withValues(alpha: 0.045)
+                : ZzzColors.yellow.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color:
+              announcement.isPinned
+                  ? ZzzColors.yellow.withValues(alpha: 0.5)
+                  : Colors.white12,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              if (announcement.isPinned) ...[
+                const Icon(Icons.push_pin_rounded, size: 16),
+                const SizedBox(width: 5),
+              ],
+              Expanded(
+                child: Text(
+                  '${author ?? announcement.authorId} · ${_formatAnnouncementTime(announcement.updatedAt)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ),
+              if (!announcement.isRead)
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: const BoxDecoration(
+                    color: ZzzColors.yellow,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              if (details.currentUserIsManager &&
+                  details.supportsAnnouncementEditing)
+                PopupMenuButton<String>(
+                  key: ValueKey(
+                    'group-announcement-actions-${announcement.id}',
+                  ),
+                  tooltip: 'Manage announcement',
+                  enabled: !_busy,
+                  onSelected: (action) {
+                    switch (action) {
+                      case 'edit':
+                        _editAnnouncement(announcement);
+                      case 'pin':
+                        unawaited(_toggleAnnouncementPin(announcement));
+                      case 'delete':
+                        unawaited(_deleteAnnouncement(announcement));
+                    }
+                  },
+                  itemBuilder:
+                      (_) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.edit_outlined),
+                            title: Text('Edit'),
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'pin',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              announcement.isPinned
+                                  ? Icons.push_pin_outlined
+                                  : Icons.push_pin_rounded,
+                            ),
+                            title: Text(
+                              announcement.isPinned ? 'Unpin' : 'Pin',
+                            ),
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              Icons.delete_outline_rounded,
+                              color: Colors.redAccent,
+                            ),
+                            title: Text(
+                              'Delete',
+                              style: TextStyle(color: Colors.redAccent),
+                            ),
+                          ),
+                        ),
+                      ],
+                  icon: const Icon(Icons.more_vert_rounded),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            announcement.content,
+            style: const TextStyle(color: Colors.white, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatAnnouncementTime(DateTime value) {
+    final local = value.toLocal();
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '${local.month}/${local.day} ${local.hour}:$minute';
+  }
+
   Widget _buildSettings(ImGroupDetails details) {
     final profile = ZzzExpandableSection(
       key: const ValueKey('group-profile-settings'),
       title: 'Group profile',
-      subtitle: 'Name, image and announcement',
+      subtitle: 'Name and image',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -638,20 +953,6 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
               hintText: 'Group name',
               maxLength: 80,
               prefixIcon: const Icon(Icons.group_outlined),
-              fillColor: Colors.white.withValues(alpha: 0.08),
-              foregroundColor: Colors.white,
-            ),
-            const SizedBox(height: 10),
-          ],
-          if (details.supportsAnnouncementEditing) ...[
-            ZzzTextInput(
-              key: const ValueKey('group-announcement-input'),
-              controller: _announcementController,
-              hintText: 'Group announcement',
-              minLines: 3,
-              maxLines: 5,
-              maxLength: 2000,
-              prefixIcon: const Icon(Icons.campaign_outlined),
               fillColor: Colors.white.withValues(alpha: 0.08),
               foregroundColor: Colors.white,
             ),

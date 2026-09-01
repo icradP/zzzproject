@@ -542,20 +542,21 @@ class ZzzServerSource implements ImMessageSource {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) async {
     final previous = _conversations[conversationId];
     if (previous == null) throw StateError('Conversation not found.');
     _conversations[conversationId] = previous.copyWith(
       isPinned: isPinned,
-      isMuted: isMuted,
+      notificationLevel: notificationLevel,
     );
     _emitConversations();
     try {
       final response = await _request('set_conversation_preferences', {
         'conversation_id': conversationId,
         'is_pinned': isPinned,
-        'is_muted': isMuted,
+        'notification_level': notificationLevel.wireValue,
+        'is_muted': notificationLevel == ImConversationNotificationLevel.muted,
       });
       _requireOk(response, 'Save conversation preferences');
     } catch (_) {
@@ -739,7 +740,9 @@ class ZzzServerSource implements ImMessageSource {
           updatedAt: existing?.updatedAt,
           unreadCount: existing?.unreadCount ?? 0,
           isPinned: existing?.isPinned ?? false,
-          isMuted: existing?.isMuted ?? false,
+          notificationLevel:
+              existing?.notificationLevel ??
+              ImConversationNotificationLevel.normal,
         );
         _conversations[id] = conversation;
         groups.add(conversation);
@@ -905,7 +908,8 @@ class ZzzServerSource implements ImMessageSource {
       updatedAt: existing?.updatedAt,
       unreadCount: existing?.unreadCount ?? 0,
       isPinned: existing?.isPinned ?? false,
-      isMuted: existing?.isMuted ?? false,
+      notificationLevel:
+          existing?.notificationLevel ?? ImConversationNotificationLevel.normal,
     );
     _conversations[groupId] = conversation;
     _emitConversations();
@@ -916,6 +920,7 @@ class ZzzServerSource implements ImMessageSource {
         break;
       }
     }
+    final announcements = await getGroupAnnouncements(groupId);
     return ImGroupDetails(
       conversation: conversation,
       members: members,
@@ -924,6 +929,7 @@ class ZzzServerSource implements ImMessageSource {
       supportsMemberRemoval: true,
       canLeave: currentRole != null && currentRole != ImGroupRole.owner,
       announcement: '${data['announcement'] ?? ''}',
+      announcements: announcements,
       muteAll: data['mute_all'] as bool? ?? false,
       supportsNameEditing: true,
       supportsAvatarEditing: true,
@@ -934,6 +940,82 @@ class ZzzServerSource implements ImMessageSource {
       supportsOwnershipTransfer: true,
       supportsDismissal: true,
     );
+  }
+
+  @override
+  Future<List<ImGroupAnnouncement>> getGroupAnnouncements(
+    String groupId,
+  ) async {
+    final response = await _request('get_group_announcements', {
+      'group_id': groupId,
+    });
+    _requireOk(response, 'Load group announcements');
+    return (response['data'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (value) =>
+              _groupAnnouncementFromJson(Map<String, dynamic>.from(value)),
+        )
+        .whereType<ImGroupAnnouncement>()
+        .toList(growable: false);
+  }
+
+  @override
+  Future<ImGroupAnnouncement> createGroupAnnouncement({
+    required String groupId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    final response = await _request('create_group_announcement', {
+      'group_id': groupId,
+      'content': content.trim(),
+      'is_pinned': isPinned,
+    });
+    _requireOk(response, 'Publish group announcement');
+    final parsed = _groupAnnouncementFromJson(
+      Map<String, dynamic>.from(response['data'] as Map? ?? const {}),
+    );
+    if (parsed == null) {
+      throw StateError('Invalid group announcement response.');
+    }
+    return parsed;
+  }
+
+  @override
+  Future<ImGroupAnnouncement> updateGroupAnnouncement({
+    required String announcementId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    final response = await _request('update_group_announcement', {
+      'announcement_id': announcementId,
+      'content': content.trim(),
+      'is_pinned': isPinned,
+    });
+    _requireOk(response, 'Update group announcement');
+    final parsed = _groupAnnouncementFromJson(
+      Map<String, dynamic>.from(response['data'] as Map? ?? const {}),
+    );
+    if (parsed == null) {
+      throw StateError('Invalid group announcement response.');
+    }
+    return parsed;
+  }
+
+  @override
+  Future<void> deleteGroupAnnouncement(String announcementId) async {
+    final response = await _request('delete_group_announcement', {
+      'announcement_id': announcementId,
+    });
+    _requireOk(response, 'Delete group announcement');
+  }
+
+  @override
+  Future<void> markGroupAnnouncementRead(String announcementId) async {
+    final response = await _request('mark_group_announcement_read', {
+      'announcement_id': announcementId,
+    });
+    _requireOk(response, 'Mark group announcement read');
   }
 
   @override
@@ -1214,11 +1296,39 @@ class ZzzServerSource implements ImMessageSource {
           ),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
       isPinned: json['is_pinned'] as bool? ?? false,
-      isMuted: json['is_muted'] as bool? ?? false,
+      notificationLevel: imConversationNotificationLevelFromString(
+        json['notification_level'] as String?,
+        legacyMuted: json['is_muted'] as bool? ?? false,
+      ),
       updatedAt:
           timestamp > 0
               ? DateTime.fromMillisecondsSinceEpoch(timestamp * 1000)
               : null,
+    );
+  }
+
+  ImGroupAnnouncement? _groupAnnouncementFromJson(Map<String, dynamic> json) {
+    final id = '${json['announcement_id'] ?? ''}';
+    final groupId = '${json['group_id'] ?? ''}';
+    final authorId = '${json['author_id'] ?? ''}';
+    final content = '${json['content'] ?? ''}';
+    final createdAt = DateTime.tryParse('${json['created_at'] ?? ''}');
+    final updatedAt = DateTime.tryParse('${json['updated_at'] ?? ''}');
+    if (id.isEmpty ||
+        groupId.isEmpty ||
+        authorId.isEmpty ||
+        createdAt == null) {
+      return null;
+    }
+    return ImGroupAnnouncement(
+      id: id,
+      groupId: groupId,
+      content: content,
+      authorId: authorId,
+      isPinned: json['is_pinned'] as bool? ?? false,
+      isRead: json['is_read'] as bool? ?? false,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? createdAt,
     );
   }
 
@@ -1272,7 +1382,10 @@ class ZzzServerSource implements ImMessageSource {
       if (conversation != null) {
         _conversations[conversationId] = conversation.copyWith(
           isPinned: json['is_pinned'] as bool? ?? conversation.isPinned,
-          isMuted: json['is_muted'] as bool? ?? conversation.isMuted,
+          notificationLevel: imConversationNotificationLevelFromString(
+            json['notification_level'] as String?,
+            legacyMuted: json['is_muted'] as bool? ?? conversation.isMuted,
+          ),
         );
         _emitConversations();
       }
@@ -1618,6 +1731,7 @@ class ZzzServerSource implements ImMessageSource {
       'location' => '${data['name'] ?? '[位置]'}',
       'forward' => '[聊天记录]',
       'poke' => '[戳一戳]',
+      'system' => '${data['text'] ?? '[系统消息]'}',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',
@@ -1634,6 +1748,7 @@ class ZzzServerSource implements ImMessageSource {
     'share' => ImMessageKind.share,
     'location' => ImMessageKind.location,
     'poke' => ImMessageKind.poke,
+    'system' => ImMessageKind.system,
     'json' => ImMessageKind.json,
     _ => ImMessageKind.text,
   };

@@ -9,9 +9,9 @@ import (
 	"github.com/icradp/zzz-im-server/internal/store"
 )
 
-func TestConversationPreferencesPersistAndMutePush(t *testing.T) {
+func TestConversationNotificationLevelsFilterPushWithoutDroppingUnread(t *testing.T) {
 	database := store.NewMemoryStore()
-	pushSender := &fakePushSender{deliveries: make(chan pushDelivery, 1)}
+	pushSender := &fakePushSender{deliveries: make(chan pushDelivery, 4)}
 	gateway := NewGateway(database, pushSender)
 	server := httptest.NewServer(gateway)
 	t.Cleanup(server.Close)
@@ -42,19 +42,21 @@ func TestConversationPreferencesPersistAndMutePush(t *testing.T) {
 		"participants":    []string{"alice", "bob"},
 	}))
 	assertOK(t, request(t, bob, "set_conversation_preferences", map[string]interface{}{
-		"conversation_id": conversationID,
-		"is_pinned":       true,
-		"is_muted":        true,
+		"conversation_id":    conversationID,
+		"is_pinned":          true,
+		"notification_level": "muted",
 	}))
 	preferenceNotice := readJSON(t, bob)
 	if preferenceNotice["notice_type"] != "conversation_preferences" ||
-		preferenceNotice["is_pinned"] != true || preferenceNotice["is_muted"] != true {
+		preferenceNotice["is_pinned"] != true || preferenceNotice["is_muted"] != true ||
+		preferenceNotice["notification_level"] != "muted" {
 		t.Fatalf("unexpected preference notice: %#v", preferenceNotice)
 	}
 
 	conversations := responseDataList(t, request(t, bob, "get_conversations", map[string]interface{}{}))
 	conversation := conversations[0].(map[string]interface{})
-	if conversation["is_pinned"] != true || conversation["is_muted"] != true {
+	if conversation["is_pinned"] != true || conversation["is_muted"] != true ||
+		conversation["notification_level"] != "muted" {
 		t.Fatalf("preferences missing from conversation: %#v", conversation)
 	}
 
@@ -72,5 +74,49 @@ func TestConversationPreferencesPersistAndMutePush(t *testing.T) {
 	case delivery := <-pushSender.deliveries:
 		t.Fatalf("muted conversation produced push delivery: %#v", delivery)
 	case <-time.After(250 * time.Millisecond):
+	}
+	conversations = responseDataList(t, request(t, bob, "get_conversations", map[string]interface{}{}))
+	conversation = conversations[0].(map[string]interface{})
+	if conversation["unread_count"] != float64(1) {
+		t.Fatalf("muted message did not accumulate unread state: %#v", conversation)
+	}
+
+	assertOK(t, request(t, bob, "set_conversation_preferences", map[string]interface{}{
+		"conversation_id":    conversationID,
+		"is_pinned":          true,
+		"notification_level": "mentions_only",
+	}))
+	preferenceNotice = readJSON(t, bob)
+	if preferenceNotice["notification_level"] != "mentions_only" || preferenceNotice["is_muted"] != false {
+		t.Fatalf("unexpected mentions-only notice: %#v", preferenceNotice)
+	}
+	assertOK(t, request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message": []map[string]interface{}{
+			{"type": "text", "data": map[string]interface{}{"text": "ordinary message"}},
+		},
+	}))
+	_ = readJSON(t, bob)
+	select {
+	case delivery := <-pushSender.deliveries:
+		t.Fatalf("ordinary message produced mentions-only push: %#v", delivery)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	assertOK(t, request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message": []map[string]interface{}{
+			{"type": "at", "data": map[string]interface{}{"qq": "bob"}},
+			{"type": "text", "data": map[string]interface{}{"text": "please review"}},
+		},
+	}))
+	_ = readJSON(t, bob)
+	select {
+	case delivery := <-pushSender.deliveries:
+		if delivery.subscription.UserID != "bob" {
+			t.Fatalf("mention push reached wrong user: %#v", delivery)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("mention did not produce push delivery")
 	}
 }

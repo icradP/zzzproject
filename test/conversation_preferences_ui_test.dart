@@ -9,7 +9,9 @@ import 'package:zzzproject/src/im/im_scope.dart';
 import 'package:zzzproject/src/im/widgets/conversation_list_view.dart';
 
 void main() {
-  testWidgets('conversation menu toggles mute and pin state', (tester) async {
+  testWidgets('conversation menu selects notification level and pin state', (
+    tester,
+  ) async {
     tester.view
       ..physicalSize = const Size(420, 760)
       ..devicePixelRatio = 1;
@@ -43,9 +45,15 @@ void main() {
     await tester.longPress(find.text('Belle'));
     await tester.pumpAndSettle();
     expect(find.text('Unpin'), findsOneWidget);
-    expect(find.text('Mute notifications'), findsOneWidget);
+    expect(find.text('Notification settings'), findsOneWidget);
 
-    await tester.tap(find.text('Mute notifications'));
+    await tester.tap(find.text('Notification settings'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('conversation-notification-panel')),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Muted'));
     await tester.pumpAndSettle();
     expect((await repository.getConversation('dm_belle_me'))!.isMuted, isTrue);
     expect(find.byIcon(Icons.notifications_off_outlined), findsWidgets);

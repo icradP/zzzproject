@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -68,10 +69,10 @@ func TestConversationPreferencesAndMessageCursor(t *testing.T) {
 			}
 
 			preference := &ConversationPreference{
-				ConversationID: conversationID,
-				UserID:         "bob",
-				IsPinned:       true,
-				IsMuted:        true,
+				ConversationID:    conversationID,
+				UserID:            "bob",
+				IsPinned:          true,
+				NotificationLevel: NotificationLevelMentionsOnly,
 			}
 			if err := database.SetConversationPreference(preference); err != nil {
 				t.Fatal(err)
@@ -80,9 +81,66 @@ func TestConversationPreferencesAndMessageCursor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stored == nil || !stored.IsPinned || !stored.IsMuted {
+			if stored == nil || !stored.IsPinned || stored.IsMuted || stored.NotificationLevel != NotificationLevelMentionsOnly {
 				t.Fatalf("unexpected preference: %#v", stored)
 			}
 		})
+	}
+}
+
+func TestSQLiteMigratesLegacyMuteAndAnnouncementOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-preferences.db")
+	legacy, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE conversations (
+			id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL,
+			avatar_url TEXT DEFAULT '', owner_id TEXT DEFAULT '', participants TEXT DEFAULT '[]',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE conversation_preferences (
+			conversation_id TEXT NOT NULL, user_id TEXT NOT NULL,
+			is_pinned BOOLEAN DEFAULT FALSE, is_muted BOOLEAN DEFAULT FALSE,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (conversation_id, user_id)
+		)`,
+		`CREATE TABLE groups (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar_url TEXT DEFAULT '',
+			announcement TEXT DEFAULT '', owner_id TEXT NOT NULL,
+			mute_all BOOLEAN DEFAULT FALSE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT INTO conversations (id, type, title, participants)
+			VALUES ('group_legacy', 'group', 'Legacy', '["owner","member"]')`,
+		`INSERT INTO conversation_preferences (conversation_id, user_id, is_pinned, is_muted)
+			VALUES ('group_legacy', 'member', TRUE, TRUE)`,
+		`INSERT INTO groups (id, name, announcement, owner_id)
+			VALUES ('group_legacy', 'Legacy', 'Legacy notice', 'owner')`,
+	} {
+		if _, err := legacy.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		database, err := NewSQLiteStore(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		preference, err := database.GetConversationPreference("group_legacy", "member")
+		if err != nil || preference == nil || preference.NotificationLevel != NotificationLevelMuted || !preference.IsMuted {
+			t.Fatalf("legacy mute was not migrated: %#v err=%v", preference, err)
+		}
+		announcements, err := database.GetGroupAnnouncements("group_legacy", "member")
+		if err != nil || len(announcements) != 1 || announcements[0].Content != "Legacy notice" {
+			t.Fatalf("legacy announcement migration is not idempotent: %#v err=%v", announcements, err)
+		}
+		if err := database.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

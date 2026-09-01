@@ -160,16 +160,25 @@ void main() {
       find.byKey(const ValueKey('group-name-input')),
       'Commission Board',
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('group-announcement-input')),
-      'Meet at Random Play.',
-    );
     await tester.tap(find.byKey(const ValueKey('group-settings-save')));
     await tester.pumpAndSettle();
     var details = await repository.getGroupDetails('group_cunning_hares');
     expect(details.conversation.title, 'Commission Board');
-    expect(details.announcement, 'Meet at Random Play.');
 
+    await tester.tap(find.byTooltip('Announcements'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('group-announcement-input')),
+      'Meet at Random Play.',
+    );
+    await tester.tap(find.byKey(const ValueKey('group-announcement-save')));
+    await tester.pumpAndSettle();
+    details = await repository.getGroupDetails('group_cunning_hares');
+    expect(details.announcements, hasLength(1));
+    expect(details.announcements.single.content, 'Meet at Random Play.');
+
+    await tester.tap(find.byTooltip('Group settings'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('group-mute-all')));
     await tester.pumpAndSettle();
     details = await repository.getGroupDetails('group_cunning_hares');

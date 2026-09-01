@@ -366,13 +366,13 @@ class CompositeImRepository implements ImRepository {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) {
     final registration = _registrationForValue(conversationId);
     return registration.repository.setConversationPreferences(
       conversationId: ImSourceAddress.localIdOf(conversationId),
       isPinned: isPinned,
-      isMuted: isMuted,
+      notificationLevel: notificationLevel,
     );
   }
 
@@ -594,6 +594,9 @@ class CompositeImRepository implements ImRepository {
       supportsMemberRemoval: details.supportsMemberRemoval,
       canLeave: details.canLeave,
       announcement: details.announcement,
+      announcements: details.announcements
+          .map((value) => _scopeAnnouncement(registration, value))
+          .toList(growable: false),
       muteAll: details.muteAll,
       supportsNameEditing: details.supportsNameEditing,
       supportsAvatarEditing: details.supportsAvatarEditing,
@@ -603,6 +606,65 @@ class CompositeImRepository implements ImRepository {
       supportsWholeGroupMute: details.supportsWholeGroupMute,
       supportsOwnershipTransfer: details.supportsOwnershipTransfer,
       supportsDismissal: details.supportsDismissal,
+    );
+  }
+
+  @override
+  Future<List<ImGroupAnnouncement>> getGroupAnnouncements(
+    String groupId,
+  ) async {
+    final registration = _registrationForValue(groupId);
+    final values = await registration.repository.getGroupAnnouncements(
+      ImSourceAddress.localIdOf(groupId),
+    );
+    return values
+        .map((value) => _scopeAnnouncement(registration, value))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<ImGroupAnnouncement> createGroupAnnouncement({
+    required String groupId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    final registration = _registrationForValue(groupId);
+    final value = await registration.repository.createGroupAnnouncement(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      content: content,
+      isPinned: isPinned,
+    );
+    return _scopeAnnouncement(registration, value);
+  }
+
+  @override
+  Future<ImGroupAnnouncement> updateGroupAnnouncement({
+    required String announcementId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    final registration = _registrationForValue(announcementId);
+    final value = await registration.repository.updateGroupAnnouncement(
+      announcementId: ImSourceAddress.localIdOf(announcementId),
+      content: content,
+      isPinned: isPinned,
+    );
+    return _scopeAnnouncement(registration, value);
+  }
+
+  @override
+  Future<void> deleteGroupAnnouncement(String announcementId) {
+    final registration = _registrationForValue(announcementId);
+    return registration.repository.deleteGroupAnnouncement(
+      ImSourceAddress.localIdOf(announcementId),
+    );
+  }
+
+  @override
+  Future<void> markGroupAnnouncementRead(String announcementId) {
+    final registration = _registrationForValue(announcementId);
+    return registration.repository.markGroupAnnouncementRead(
+      ImSourceAddress.localIdOf(announcementId),
     );
   }
 
@@ -788,6 +850,20 @@ class CompositeImRepository implements ImRepository {
     );
   }
 
+  ImGroupAnnouncement _scopeAnnouncement(
+    ImRepositoryRegistration registration,
+    ImGroupAnnouncement announcement,
+  ) => ImGroupAnnouncement(
+    id: ImSourceAddress.scope(registration.id, announcement.id),
+    groupId: ImSourceAddress.scope(registration.id, announcement.groupId),
+    content: announcement.content,
+    authorId: ImSourceAddress.scope(registration.id, announcement.authorId),
+    isPinned: announcement.isPinned,
+    isRead: announcement.isRead,
+    createdAt: announcement.createdAt,
+    updatedAt: announcement.updatedAt,
+  );
+
   ImConversation _scopeConversation(
     ImRepositoryRegistration registration,
     ImConversation conversation,
@@ -805,7 +881,7 @@ class CompositeImRepository implements ImRepository {
       updatedAt: conversation.updatedAt,
       unreadCount: conversation.unreadCount,
       isPinned: conversation.isPinned,
-      isMuted: conversation.isMuted,
+      notificationLevel: conversation.notificationLevel,
       sourceId: registration.id,
       sourceLabel: registration.label,
     );
@@ -825,7 +901,7 @@ class CompositeImRepository implements ImRepository {
       updatedAt: conversation.updatedAt,
       unreadCount: conversation.unreadCount,
       isPinned: conversation.isPinned,
-      isMuted: conversation.isMuted,
+      notificationLevel: conversation.notificationLevel,
     );
   }
 

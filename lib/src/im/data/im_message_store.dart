@@ -18,7 +18,7 @@ class ImMessageStore {
 
   Database? _db;
 
-  static const _version = 8;
+  static const _version = 9;
 
   static bool _ffiInitialized = false;
 
@@ -79,6 +79,7 @@ class ImMessageStore {
         unread_count    INTEGER NOT NULL DEFAULT 0,
         is_pinned       INTEGER NOT NULL DEFAULT 0,
         is_muted        INTEGER NOT NULL DEFAULT 0,
+        notification_level TEXT NOT NULL DEFAULT 'normal',
         extra           TEXT NOT NULL DEFAULT '{}'
       )
     ''');
@@ -175,6 +176,14 @@ class ImMessageStore {
     if (oldV < 8) {
       await db.execute('ALTER TABLE messages ADD COLUMN media_width INTEGER');
       await db.execute('ALTER TABLE messages ADD COLUMN media_height INTEGER');
+    }
+    if (oldV < 9) {
+      await db.execute(
+        "ALTER TABLE conversations ADD COLUMN notification_level TEXT NOT NULL DEFAULT 'normal'",
+      );
+      await db.execute(
+        "UPDATE conversations SET notification_level = 'muted' WHERE is_muted = 1",
+      );
     }
   }
 
@@ -353,6 +362,7 @@ class ImMessageStore {
     'unread_count': c.unreadCount,
     'is_pinned': c.isPinned ? 1 : 0,
     'is_muted': c.isMuted ? 1 : 0,
+    'notification_level': c.notificationLevel.wireValue,
     'extra': '{}',
   };
 
@@ -399,7 +409,10 @@ class ImMessageStore {
             : null,
     unreadCount: (r['unread_count'] as int?) ?? 0,
     isPinned: (r['is_pinned'] as int?) == 1,
-    isMuted: (r['is_muted'] as int?) == 1,
+    notificationLevel: imConversationNotificationLevelFromString(
+      r['notification_level'] as String?,
+      legacyMuted: (r['is_muted'] as int?) == 1,
+    ),
   );
 
   Map<String, dynamic> _msgToRow(ImMessage m) => {

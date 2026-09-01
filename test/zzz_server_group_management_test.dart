@@ -78,6 +78,7 @@ void main() {
             },
           ],
           'get_messages' => <Object?>[],
+          'get_group_announcements' => <Object?>[],
           'get_group_info' => {
             'group_id': 'group_team',
             'name': groupName,

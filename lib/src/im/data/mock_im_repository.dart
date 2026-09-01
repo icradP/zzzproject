@@ -18,7 +18,8 @@ class MockImRepository extends ImRepository {
   final _users = <String, ImUser>{};
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
-  final _groupAnnouncements = <String, String>{};
+  final _groupAnnouncements = <String, List<ImGroupAnnouncement>>{};
+  var _announcementCounter = 0;
   final _groupMuteAll = <String, bool>{};
   final _groupRoles = <String, Map<String, ImGroupRole>>{};
   final _groupMutedUntil = <String, Map<String, DateTime?>>{};
@@ -503,13 +504,13 @@ class MockImRepository extends ImRepository {
   Future<void> setConversationPreferences({
     required String conversationId,
     required bool isPinned,
-    required bool isMuted,
+    required ImConversationNotificationLevel notificationLevel,
   }) async {
     final conversation = _conversations[conversationId];
     if (conversation == null) throw StateError('Conversation not found.');
     _conversations[conversationId] = conversation.copyWith(
       isPinned: isPinned,
-      isMuted: isMuted,
+      notificationLevel: notificationLevel,
     );
     _emitConversations();
   }
@@ -677,7 +678,13 @@ class MockImRepository extends ImRepository {
       supportsInvites: true,
       supportsMemberRemoval: true,
       canLeave: ownerID != _currentUserId,
-      announcement: _groupAnnouncements[groupId] ?? '',
+      announcement:
+          (_groupAnnouncements[groupId]?.isNotEmpty ?? false)
+              ? _groupAnnouncements[groupId]!.first.content
+              : '',
+      announcements: List.unmodifiable(
+        _groupAnnouncements[groupId] ?? const <ImGroupAnnouncement>[],
+      ),
       muteAll: _groupMuteAll[groupId] ?? false,
       supportsNameEditing: true,
       supportsAvatarEditing: true,
@@ -688,6 +695,87 @@ class MockImRepository extends ImRepository {
       supportsOwnershipTransfer: true,
       supportsDismissal: true,
     );
+  }
+
+  @override
+  Future<List<ImGroupAnnouncement>> getGroupAnnouncements(
+    String groupId,
+  ) async => List.unmodifiable(
+    _groupAnnouncements[groupId] ?? const <ImGroupAnnouncement>[],
+  );
+
+  @override
+  Future<ImGroupAnnouncement> createGroupAnnouncement({
+    required String groupId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    final now = DateTime.now();
+    final announcement = ImGroupAnnouncement(
+      id: 'announcement_${++_announcementCounter}',
+      groupId: groupId,
+      content: content.trim(),
+      authorId: _currentUserId,
+      isPinned: isPinned,
+      isRead: true,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _groupAnnouncements.putIfAbsent(groupId, () => []).insert(0, announcement);
+    return announcement;
+  }
+
+  @override
+  Future<ImGroupAnnouncement> updateGroupAnnouncement({
+    required String announcementId,
+    required String content,
+    required bool isPinned,
+  }) async {
+    for (final announcements in _groupAnnouncements.values) {
+      final index = announcements.indexWhere(
+        (value) => value.id == announcementId,
+      );
+      if (index >= 0) {
+        final updated = announcements[index].copyWith(
+          content: content.trim(),
+          isPinned: isPinned,
+          isRead: true,
+          updatedAt: DateTime.now(),
+        );
+        announcements[index] = updated;
+        announcements.sort((left, right) {
+          if (left.isPinned != right.isPinned) return left.isPinned ? -1 : 1;
+          return right.updatedAt.compareTo(left.updatedAt);
+        });
+        return updated;
+      }
+    }
+    throw StateError('Announcement not found.');
+  }
+
+  @override
+  Future<void> deleteGroupAnnouncement(String announcementId) async {
+    for (final announcements in _groupAnnouncements.values) {
+      final before = announcements.length;
+      announcements.removeWhere((value) => value.id == announcementId);
+      if (announcements.length != before) {
+        return;
+      }
+    }
+    throw StateError('Announcement not found.');
+  }
+
+  @override
+  Future<void> markGroupAnnouncementRead(String announcementId) async {
+    for (final announcements in _groupAnnouncements.values) {
+      final index = announcements.indexWhere(
+        (value) => value.id == announcementId,
+      );
+      if (index >= 0) {
+        announcements[index] = announcements[index].copyWith(isRead: true);
+        return;
+      }
+    }
   }
 
   @override
@@ -741,7 +829,23 @@ class MockImRepository extends ImRepository {
       avatarLocalPath: avatar?.filePath,
     );
     if (announcement != null) {
-      _groupAnnouncements[groupId] = announcement.trim();
+      final trimmed = announcement.trim();
+      final existing = _groupAnnouncements.putIfAbsent(groupId, () => []);
+      if (trimmed.isEmpty) {
+        existing.clear();
+      } else if (existing.isEmpty) {
+        await createGroupAnnouncement(
+          groupId: groupId,
+          content: trimmed,
+          isPinned: true,
+        );
+      } else {
+        await updateGroupAnnouncement(
+          announcementId: existing.first.id,
+          content: trimmed,
+          isPinned: existing.first.isPinned,
+        );
+      }
     }
     _emitConversations();
   }

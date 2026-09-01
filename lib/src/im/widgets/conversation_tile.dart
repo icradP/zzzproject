@@ -12,7 +12,7 @@ class ConversationTile extends StatefulWidget {
     required this.selected,
     required this.onTap,
     this.onTogglePinned,
-    this.onToggleMuted,
+    this.onChangeNotifications,
     this.onDelete,
     super.key,
   });
@@ -21,7 +21,7 @@ class ConversationTile extends StatefulWidget {
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback? onTogglePinned;
-  final VoidCallback? onToggleMuted;
+  final VoidCallback? onChangeNotifications;
   final VoidCallback? onDelete;
 
   @override
@@ -99,7 +99,7 @@ class _ConversationTileState extends State<ConversationTile>
       if (distanceFromRight < _actionWidth) {
         _onHideTap();
       } else if (distanceFromRight < _actionWidth * 2) {
-        _runAction(widget.onToggleMuted);
+        _runAction(widget.onChangeNotifications);
       } else {
         _runAction(widget.onTogglePinned);
       }
@@ -132,19 +132,13 @@ class _ConversationTileState extends State<ConversationTile>
           ),
         ),
         PopupMenuItem(
-          value: _ConversationAction.mute,
+          value: _ConversationAction.notifications,
           child: ListTile(
             dense: true,
             leading: Icon(
-              widget.conversation.isMuted
-                  ? Icons.notifications_active_outlined
-                  : Icons.notifications_off_outlined,
+              _notificationIcon(widget.conversation.notificationLevel),
             ),
-            title: Text(
-              widget.conversation.isMuted
-                  ? 'Enable notifications'
-                  : 'Mute notifications',
-            ),
+            title: Text('Notification settings'),
           ),
         ),
         if (widget.onDelete != null)
@@ -162,8 +156,8 @@ class _ConversationTileState extends State<ConversationTile>
     switch (selected) {
       case _ConversationAction.pin:
         widget.onTogglePinned?.call();
-      case _ConversationAction.mute:
-        widget.onToggleMuted?.call();
+      case _ConversationAction.notifications:
+        widget.onChangeNotifications?.call();
       case _ConversationAction.hide:
         _onHideTap();
     }
@@ -236,16 +230,12 @@ class _ConversationTileState extends State<ConversationTile>
                         onPressed: widget.onTogglePinned,
                       ),
                       _buildSwipeAction(
-                        icon:
-                            widget.conversation.isMuted
-                                ? Icons.notifications_active_outlined
-                                : Icons.notifications_off_outlined,
-                        tooltip:
-                            widget.conversation.isMuted
-                                ? 'Enable notifications'
-                                : 'Mute notifications',
+                        icon: _notificationIcon(
+                          widget.conversation.notificationLevel,
+                        ),
+                        tooltip: 'Notification settings',
                         color: Colors.white24,
-                        onPressed: widget.onToggleMuted,
+                        onPressed: widget.onChangeNotifications,
                       ),
                       _buildSwipeAction(
                         icon: Icons.close_rounded,
@@ -481,4 +471,12 @@ class _ConversationTileState extends State<ConversationTile>
   }
 }
 
-enum _ConversationAction { pin, mute, hide }
+IconData _notificationIcon(
+  ImConversationNotificationLevel level,
+) => switch (level) {
+  ImConversationNotificationLevel.normal => Icons.notifications_active_outlined,
+  ImConversationNotificationLevel.mentionsOnly => Icons.alternate_email,
+  ImConversationNotificationLevel.muted => Icons.notifications_off_outlined,
+};
+
+enum _ConversationAction { pin, notifications, hide }
