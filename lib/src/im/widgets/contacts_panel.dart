@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
+import '../data/im_repository.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
 import '../models/im_source_address.dart';
@@ -23,6 +25,8 @@ class ContactsPanel extends StatefulWidget {
 
 class _ContactsPanelState extends State<ContactsPanel> {
   final _searchController = TextEditingController();
+  StreamSubscription<List<ImUser>>? _usersSubscription;
+  ImRepository? _subscribedRepository;
   String _query = '';
 
   List<ImUser> _users = const [];
@@ -39,7 +43,24 @@ class _ContactsPanelState extends State<ContactsPanel> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final repository = ImScope.repositoryOf(context);
+    if (identical(repository, _subscribedRepository)) return;
+    _subscribedRepository = repository;
+    unawaited(_usersSubscription?.cancel());
+    _usersSubscription = repository.watchUsers().listen((users) {
+      if (!mounted) return;
+      setState(() {
+        _users = users;
+        _loading = false;
+      });
+    });
+  }
+
+  @override
   void dispose() {
+    unawaited(_usersSubscription?.cancel());
     _searchController.dispose();
     super.dispose();
   }
@@ -648,7 +669,9 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       return IconButton(
         key: const ValueKey('create-group-avatar-pick'),
         tooltip:
-            _avatarBytes == null ? 'Upload group avatar' : 'Change group avatar',
+            _avatarBytes == null
+                ? 'Upload group avatar'
+                : 'Change group avatar',
         onPressed: _pickGroupAvatar,
         icon: Icon(
           _avatarBytes == null

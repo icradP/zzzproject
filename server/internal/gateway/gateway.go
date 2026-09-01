@@ -25,9 +25,35 @@ import (
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	conn   *websocket.Conn
-	userID string
-	send   chan []byte
+	conn     *websocket.Conn
+	userID   string
+	send     chan []byte
+	sendMu   sync.RWMutex
+	sendDone bool
+}
+
+func (c *Client) enqueue(data []byte) bool {
+	c.sendMu.RLock()
+	defer c.sendMu.RUnlock()
+	if c.sendDone {
+		return false
+	}
+	select {
+	case c.send <- data:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) closeSend() {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.sendDone {
+		return
+	}
+	c.sendDone = true
+	close(c.send)
 }
 
 // Gateway manages WebSocket connections and message routing.
@@ -39,8 +65,11 @@ type Gateway struct {
 	inviteCode  string
 	upgrader    websocket.Upgrader
 
-	mu      sync.RWMutex
-	clients map[string]*Client // userID -> Client
+	mu sync.RWMutex
+	// A user may be connected from several devices at once. Keep every
+	// connection so desktop, mobile, and browser sessions receive the same
+	// realtime events.
+	clients map[string]map[*Client]struct{} // userID -> active clients
 }
 
 // PushSender abstracts VAPID delivery so the gateway remains testable.
@@ -65,7 +94,7 @@ func NewGateway(database store.Store, pushSenders ...PushSender) *Gateway {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients: make(map[string]*Client),
+		clients: make(map[string]map[*Client]struct{}),
 	}
 }
 
@@ -358,9 +387,10 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "valid user_id required")
 		return
 	}
-
-	// Register client.
-	g.addClient(client, userID)
+	if client.userID != "" && client.userID != userID {
+		g.sendError(client, req.Echo, "connection already authenticated as another user")
+		return
+	}
 
 	// Ensure user exists in store.
 	user, _ := g.store.GetUser(userID)
@@ -372,11 +402,25 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 		user = &store.User{
 			ID:       userID,
 			Nickname: userID,
-			Online:   true,
+			Online:   false,
 		}
-		g.store.SetUser(user)
-	} else {
-		g.store.SetUserOnline(userID, true)
+		if err := g.store.SetUser(user); err != nil {
+			g.sendError(client, req.Echo, "failed to load account")
+			return
+		}
+	}
+
+	firstConnection := false
+	if client.userID == "" {
+		var err error
+		firstConnection, err = g.addClient(client, userID)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to update presence")
+			return
+		}
+	}
+	if firstConnection {
+		user.Online = true
 	}
 
 	// Send success response.
@@ -396,6 +440,9 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 		Data:    responseData,
 		Echo:    req.Echo,
 	})
+	if firstConnection {
+		g.notifyFriendPresence(userID, true)
+	}
 
 	log.Printf("[gateway] user %s authenticated (device=%s)", userID, deviceID)
 }
@@ -2389,23 +2436,58 @@ func (g *Gateway) handleUnregisterPush(client *Client, req *protocol.Request) {
 
 // Client management.
 
-func (g *Gateway) addClient(client *Client, userID string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	client.userID = userID
-	g.clients[userID] = client
-}
-
-func (g *Gateway) removeClient(client *Client) {
+func (g *Gateway) addClient(client *Client, userID string) (bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if client.userID != "" {
-		g.store.SetUserOnline(client.userID, false)
-		if existing, ok := g.clients[client.userID]; ok && existing == client {
-			delete(g.clients, client.userID)
+		return false, nil
+	}
+	clients := g.clients[userID]
+	firstConnection := len(clients) == 0
+	if firstConnection {
+		if err := g.store.SetUserOnline(userID, true); err != nil {
+			return false, err
 		}
 	}
-	close(client.send)
+	client.userID = userID
+	if clients == nil {
+		clients = make(map[*Client]struct{})
+		g.clients[userID] = clients
+	}
+	clients[client] = struct{}{}
+	return firstConnection, nil
+}
+
+func (g *Gateway) removeClient(client *Client) {
+	userID, lastConnection := g.detachClient(client)
+	client.closeSend()
+	if !lastConnection {
+		return
+	}
+	g.notifyFriendPresence(userID, false)
+}
+
+func (g *Gateway) detachClient(client *Client) (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	userID := client.userID
+	if userID == "" {
+		return "", false
+	}
+	client.userID = ""
+	clients := g.clients[userID]
+	if clients == nil {
+		return userID, false
+	}
+	delete(clients, client)
+	lastConnection := len(clients) == 0
+	if lastConnection {
+		delete(g.clients, userID)
+		if err := g.store.SetUserOnline(userID, false); err != nil {
+			log.Printf("[gateway] failed to mark %s offline: %v", userID, err)
+		}
+	}
+	return userID, lastConnection
 }
 
 func (g *Gateway) broadcastToConversation(convID string, event interface{}, excludeUserID string) {
@@ -2419,21 +2501,14 @@ func (g *Gateway) broadcastToConversation(convID string, event interface{}, excl
 		return
 	}
 
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
+	var clients []*Client
 	if conv.Type == "private" {
 		// For private conversations, send to participants
 		for _, userID := range conv.Participants {
 			if userID == excludeUserID {
 				continue
 			}
-			if client, ok := g.clients[userID]; ok {
-				select {
-				case client.send <- data:
-				default:
-				}
-			}
+			clients = append(clients, g.clientsForUser(userID)...)
 		}
 	} else {
 		// For group conversations, send to all group members
@@ -2442,13 +2517,11 @@ func (g *Gateway) broadcastToConversation(convID string, event interface{}, excl
 			if member.UserID == excludeUserID {
 				continue
 			}
-			if client, ok := g.clients[member.UserID]; ok {
-				select {
-				case client.send <- data:
-				default:
-				}
-			}
+			clients = append(clients, g.clientsForUser(member.UserID)...)
 		}
+	}
+	for _, client := range clients {
+		client.enqueue(data)
 	}
 }
 
@@ -2563,14 +2636,35 @@ func (g *Gateway) sendToUser(userID string, event interface{}) {
 		return
 	}
 
+	for _, client := range g.clientsForUser(userID) {
+		client.enqueue(data)
+	}
+}
+
+func (g *Gateway) clientsForUser(userID string) []*Client {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	clients := make([]*Client, 0, len(g.clients[userID]))
+	for client := range g.clients[userID] {
+		clients = append(clients, client)
+	}
+	return clients
+}
 
-	if client, ok := g.clients[userID]; ok {
-		select {
-		case client.send <- data:
-		default:
-		}
+func (g *Gateway) notifyFriendPresence(userID string, online bool) {
+	friends, err := g.store.GetFriends(userID)
+	if err != nil {
+		log.Printf("[gateway] failed to load friends for presence of %s: %v", userID, err)
+		return
+	}
+	event := protocol.NoticeEvent{
+		PostType:   "notice",
+		NoticeType: protocol.NoticeTypeFriendPresence,
+		UserID:     userID,
+		Online:     &online,
+	}
+	for _, friend := range friends {
+		g.sendToUser(friend.ID, event)
 	}
 }
 
@@ -2582,9 +2676,7 @@ func (g *Gateway) sendJSON(client *Client, v interface{}) {
 		log.Printf("[gateway] marshal error: %v", err)
 		return
 	}
-	select {
-	case client.send <- data:
-	default:
+	if !client.enqueue(data) {
 		log.Printf("[gateway] client %s buffer full", client.userID)
 	}
 }

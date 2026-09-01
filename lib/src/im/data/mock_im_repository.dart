@@ -22,6 +22,7 @@ class MockImRepository implements ImRepository {
   final _conversationControllers =
       <String, StreamController<List<ImConversation>>>{};
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
+  final _usersController = StreamController<List<ImUser>>.broadcast();
 
   @override
   bool get supportsFriendManagement => false;
@@ -275,6 +276,12 @@ class MockImRepository implements ImRepository {
   Future<ImUser?> getUser(String userId) async => _users[userId];
 
   @override
+  Stream<List<ImUser>> watchUsers() {
+    Future.microtask(_emitUsers);
+    return _usersController.stream;
+  }
+
+  @override
   Stream<List<ImConversation>> watchConversations() {
     final controller = _conversationController();
     Future.microtask(_emitConversations);
@@ -463,7 +470,7 @@ class MockImRepository implements ImRepository {
 
   @override
   Future<List<ImUser>> getUsers() async {
-    return _users.values.where((u) => u.id != _currentUserId).toList();
+    return _visibleUsers();
   }
 
   @override
@@ -537,6 +544,7 @@ class MockImRepository implements ImRepository {
       isOnline: true,
     );
     _users[_currentUserId] = updated;
+    _emitUsers();
     return updated;
   }
 
@@ -761,6 +769,16 @@ class MockImRepository implements ImRepository {
     return _users[otherId]?.displayName ?? otherId;
   }
 
+  List<ImUser> _visibleUsers() => _users.values
+      .where((user) => user.id != _currentUserId)
+      .toList(growable: false);
+
+  void _emitUsers() {
+    if (!_usersController.isClosed) {
+      _usersController.add(List.unmodifiable(_visibleUsers()));
+    }
+  }
+
   @override
   void dispose() {
     for (final controller in _conversationControllers.values) {
@@ -769,5 +787,6 @@ class MockImRepository implements ImRepository {
     for (final controller in _messageControllers.values) {
       controller.close();
     }
+    _usersController.close();
   }
 }

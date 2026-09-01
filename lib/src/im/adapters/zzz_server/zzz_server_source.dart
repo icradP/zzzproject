@@ -68,6 +68,7 @@ class ZzzServerSource implements ImMessageSource {
   static const _heartbeatInterval = Duration(seconds: 30);
 
   final _statusController = StreamController<ConnectionStatus>.broadcast();
+  final _usersController = StreamController<List<ImUser>>.broadcast();
   final _conversationsController =
       StreamController<List<ImConversation>>.broadcast();
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
@@ -137,6 +138,7 @@ class ZzzServerSource implements ImMessageSource {
     unawaited(_closeChannel());
     _setStatus(ConnectionStatus.disconnected);
     unawaited(_statusController.close());
+    unawaited(_usersController.close());
     unawaited(_conversationsController.close());
     for (final controller in _messageControllers.values) {
       unawaited(controller.close());
@@ -190,6 +192,12 @@ class ZzzServerSource implements ImMessageSource {
     } catch (_) {
       return null;
     }
+  }
+
+  @override
+  Stream<List<ImUser>> watchUsers() {
+    Future.microtask(_emitUsers);
+    return _usersController.stream;
   }
 
   @override
@@ -360,10 +368,7 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
-  Future<List<ImUser>> getUsers() async => _friendIds
-      .map((id) => _users[id])
-      .whereType<ImUser>()
-      .toList(growable: false);
+  Future<List<ImUser>> getUsers() async => _visibleUsers();
 
   @override
   Future<List<ImUser>> searchUsers(String query) async {
@@ -465,6 +470,7 @@ class ZzzServerSource implements ImMessageSource {
     _requireOk(response, 'Remove friend');
     _users.remove(localId);
     _friendIds.remove(localId);
+    _emitUsers();
     _conversations.removeWhere(
       (id, conversation) =>
           conversation.isDirect &&
@@ -907,6 +913,7 @@ class ZzzServerSource implements ImMessageSource {
         relationship: imRelationshipFromString(json['relationship'] as String?),
       );
     }
+    _emitUsers();
   }
 
   Future<void> _syncMessages(String conversationId) async {
@@ -1002,6 +1009,19 @@ class ZzzServerSource implements ImMessageSource {
       return;
     }
     final noticeType = json['notice_type'];
+    if (noticeType == 'friend_presence') {
+      final userID = '${json['user_id'] ?? ''}';
+      final user = _users[userID];
+      if (user != null && json['online'] is bool) {
+        _users[userID] = user.copyWith(isOnline: json['online'] as bool);
+        _emitUsers();
+      }
+      return;
+    }
+    if (noticeType == 'friend_add' || noticeType == 'friend_remove') {
+      unawaited(_syncUsers().catchError((_) {}));
+      return;
+    }
     if (noticeType == 'group_dismiss') {
       final groupId = '${json['group_id'] ?? ''}';
       if (groupId.isNotEmpty) {
@@ -1152,6 +1172,7 @@ class ZzzServerSource implements ImMessageSource {
               : const <String, dynamic>{};
       final myReactionIds = _stringList(json['my_reactions']);
 
+      final knownSender = _users[senderId];
       _users[senderId] = ImUser(
         id: senderId,
         displayName: '${sender['nickname'] ?? senderId}',
@@ -1160,7 +1181,9 @@ class ZzzServerSource implements ImMessageSource {
           sender['avatar_url'] as String?,
         ),
         isOnline: true,
+        relationship: knownSender?.relationship ?? ImRelationship.none,
       );
+      if (_friendIds.contains(senderId)) _emitUsers();
       final mediaUrl = (data['url'] as String?) ?? (data['file'] as String?);
       return ImMessage(
         id: '${json['message_id']}',
@@ -1194,7 +1217,10 @@ class ZzzServerSource implements ImMessageSource {
 
   List<String> _stringList(Object? value) {
     if (value is! List) return const <String>[];
-    return value.map((item) => '$item').where((item) => item.isNotEmpty).toList();
+    return value
+        .map((item) => '$item')
+        .where((item) => item.isNotEmpty)
+        .toList();
   }
 
   List<ImReaction> _parseReactions(
@@ -1203,14 +1229,17 @@ class ZzzServerSource implements ImMessageSource {
   }) {
     if (value is! List) return const <ImReaction>[];
     final mine = myReactionIds.toSet();
-    return value.whereType<Map>().map((raw) {
-      final json = Map<String, dynamic>.from(raw);
-      return ImReaction(
-        emojiId: '${json['emoji_id'] ?? ''}',
-        count: (json['count'] as num?)?.toInt() ?? 0,
-        reactedByMe: mine.contains('${json['emoji_id'] ?? ''}'),
-      );
-    }).where((reaction) => reaction.emojiId.isNotEmpty && reaction.count > 0)
+    return value
+        .whereType<Map>()
+        .map((raw) {
+          final json = Map<String, dynamic>.from(raw);
+          return ImReaction(
+            emojiId: '${json['emoji_id'] ?? ''}',
+            count: (json['count'] as num?)?.toInt() ?? 0,
+            reactedByMe: mine.contains('${json['emoji_id'] ?? ''}'),
+          );
+        })
+        .where((reaction) => reaction.emojiId.isNotEmpty && reaction.count > 0)
         .toList(growable: false);
   }
 
@@ -1574,6 +1603,17 @@ class ZzzServerSource implements ImMessageSource {
     }
   }
 
+  List<ImUser> _visibleUsers() => _friendIds
+      .map((id) => _users[id])
+      .whereType<ImUser>()
+      .toList(growable: false);
+
+  void _emitUsers() {
+    if (!_usersController.isClosed) {
+      _usersController.add(List.unmodifiable(_visibleUsers()));
+    }
+  }
+
   void _emitMessages(String conversationId) {
     final controller = _messageControllers[conversationId];
     if (controller != null && !controller.isClosed) {
@@ -1593,6 +1633,7 @@ class ZzzServerSource implements ImMessageSource {
     _channel = null;
     _failPending(StateError('ZZZ Server disconnected'));
     if (_disposed || _manualDisconnect) return;
+    _markFriendsOffline();
     _setStatus(ConnectionStatus.disconnected);
     _scheduleReconnect();
   }
@@ -1602,6 +1643,7 @@ class ZzzServerSource implements ImMessageSource {
     _channel = null;
     _failPending(error);
     if (_disposed || _manualDisconnect) return;
+    _markFriendsOffline();
     _setStatus(ConnectionStatus.failed);
     _scheduleReconnect();
   }
@@ -1620,6 +1662,16 @@ class ZzzServerSource implements ImMessageSource {
       if (!completer.isCompleted) completer.completeError(error);
     }
     _echoCompleters.clear();
+  }
+
+  void _markFriendsOffline() {
+    for (final userID in _friendIds) {
+      final user = _users[userID];
+      if (user != null && user.isOnline) {
+        _users[userID] = user.copyWith(isOnline: false);
+      }
+    }
+    _emitUsers();
   }
 
   void _scheduleReconnect() {

@@ -6,6 +6,45 @@ import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/models/im_source_address.dart';
 
 void main() {
+  test('aggregates live users with source namespaces', () async {
+    final repository = CompositeImRepository(
+      registrations: [
+        ImRepositoryRegistration(
+          id: 'zzz',
+          label: 'ZZZ Server',
+          repository: MockImRepository(),
+        ),
+        ImRepositoryRegistration(
+          id: 'qq',
+          label: 'QQ',
+          repository: MockImRepository(),
+        ),
+      ],
+      primarySourceId: 'zzz',
+    );
+    addTearDown(repository.dispose);
+
+    final users = await repository.watchUsers().firstWhere(
+      (value) => value.length == 10,
+    );
+    expect(users.map((user) => user.id).toSet(), {
+      'zzz::belle',
+      'zzz::wise',
+      'zzz::nicole',
+      'zzz::anby',
+      'zzz::fairy',
+      'qq::belle',
+      'qq::wise',
+      'qq::nicole',
+      'qq::anby',
+      'qq::fairy',
+    });
+    expect(
+      users.singleWhere((user) => user.id == 'qq::belle').sourceLabel,
+      'QQ',
+    );
+  });
+
   test(
     'namespaces overlapping identities and conversations by source',
     () async {

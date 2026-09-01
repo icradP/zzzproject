@@ -35,6 +35,12 @@ class CompositeImRepository implements ImRepository {
        },
        _primarySourceId = primarySourceId {
     for (final registration in registrations) {
+      _userSubscriptions.add(
+        registration.repository.watchUsers().listen((users) {
+          _userSnapshots[registration.id] = users;
+          _emitUsers();
+        }, onError: _usersController.addError),
+      );
       _conversationSubscriptions.add(
         registration.repository.watchConversations().listen((conversations) {
           _conversationSnapshots[registration.id] = conversations;
@@ -55,10 +61,13 @@ class CompositeImRepository implements ImRepository {
 
   final Map<String, ImRepositoryRegistration> _registrations;
   final String? _primarySourceId;
+  final Map<String, List<ImUser>> _userSnapshots = {};
   final Map<String, List<ImConversation>> _conversationSnapshots = {};
   final Map<String, ConnectionStatus> _statusSnapshots = {};
+  final List<StreamSubscription<dynamic>> _userSubscriptions = [];
   final List<StreamSubscription<dynamic>> _conversationSubscriptions = [];
   final List<StreamSubscription<dynamic>> _statusSubscriptions = [];
+  final _usersController = StreamController<List<ImUser>>.broadcast();
   final _conversationController =
       StreamController<List<ImConversation>>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
@@ -103,6 +112,12 @@ class CompositeImRepository implements ImRepository {
       ImSourceAddress.localIdOf(userId),
     );
     return user == null ? null : _scopeUser(registration, user);
+  }
+
+  @override
+  Stream<List<ImUser>> watchUsers() {
+    Future.microtask(_emitUsers);
+    return _usersController.stream;
   }
 
   @override
@@ -750,6 +765,21 @@ class CompositeImRepository implements ImRepository {
     _conversationController.add(_sortConversations(conversations));
   }
 
+  void _emitUsers() {
+    if (_usersController.isClosed) return;
+    final users = <ImUser>[];
+    for (final entry in _userSnapshots.entries) {
+      final registration = _registrations[entry.key];
+      if (registration == null) continue;
+      users.addAll(entry.value.map((user) => _scopeUser(registration, user)));
+    }
+    users.sort((a, b) {
+      if (a.isOnline != b.isOnline) return a.isOnline ? -1 : 1;
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
+    _usersController.add(List.unmodifiable(users));
+  }
+
   List<ImConversation> _sortConversations(List<ImConversation> conversations) {
     conversations.sort((a, b) {
       if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
@@ -777,6 +807,9 @@ class CompositeImRepository implements ImRepository {
 
   @override
   void dispose() {
+    for (final subscription in _userSubscriptions) {
+      unawaited(subscription.cancel());
+    }
     for (final subscription in _conversationSubscriptions) {
       unawaited(subscription.cancel());
     }
@@ -786,6 +819,7 @@ class CompositeImRepository implements ImRepository {
     for (final registration in _registrations.values) {
       registration.repository.dispose();
     }
+    unawaited(_usersController.close());
     unawaited(_conversationController.close());
     unawaited(_statusController.close());
   }

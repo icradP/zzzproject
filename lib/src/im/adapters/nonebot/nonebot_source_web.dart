@@ -91,6 +91,9 @@ class NoneBotSource implements ImMessageSource {
   Future<ImUser?> getUser(String userId) async => null;
 
   @override
+  Stream<List<ImUser>> watchUsers() => Stream.value(const []);
+
+  @override
   Future<ImUser> updateProfile({
     String? nickname,
     ImMediaUpload? avatar,

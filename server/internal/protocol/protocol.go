@@ -102,6 +102,7 @@ type NoticeType string
 const (
 	NoticeTypeFriendAdd       NoticeType = "friend_add"
 	NoticeTypeFriendRemove    NoticeType = "friend_remove"
+	NoticeTypeFriendPresence  NoticeType = "friend_presence"
 	NoticeTypeFriendRecall    NoticeType = "friend_recall"
 	NoticeTypeGroupRecall     NoticeType = "group_recall"
 	NoticeTypeGroupIncrease   NoticeType = "group_increase"
@@ -134,6 +135,7 @@ type NoticeEvent struct {
 	Enabled           bool       `json:"enabled,omitempty"`
 	EmojiID           string     `json:"emoji_id,omitempty"`
 	Removed           bool       `json:"removed,omitempty"`
+	Online            *bool      `json:"online,omitempty"`
 	Reactions         []Reaction `json:"reactions,omitempty"`
 }
 

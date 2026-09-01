@@ -13,6 +13,9 @@ abstract class ImRepository {
   /// Lookup a user by id.
   Future<ImUser?> getUser(String userId);
 
+  /// Live contacts known by the active source or sources.
+  Stream<List<ImUser>> watchUsers();
+
   /// Live conversation list for the inbox.
   Stream<List<ImConversation>> watchConversations();
 
@@ -43,7 +46,9 @@ abstract class ImRepository {
     required String emojiId,
     bool remove = false,
   }) async {
-    throw UnsupportedError('Message reactions are not supported by this source.');
+    throw UnsupportedError(
+      'Message reactions are not supported by this source.',
+    );
   }
 
   /// Send a media message (image, voice, video, file).

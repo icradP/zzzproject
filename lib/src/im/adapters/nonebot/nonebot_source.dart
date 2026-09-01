@@ -102,6 +102,7 @@ class NoneBotSource implements ImMessageSource {
       <String, StreamController<List<ImConversation>>>{};
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
   final _statusController = StreamController<ConnectionStatus>.broadcast();
+  final _usersController = StreamController<List<ImUser>>.broadcast();
 
   static String? _defaultAvatar(String userId) => null;
 
@@ -182,6 +183,7 @@ class NoneBotSource implements ImMessageSource {
     for (final c in _messageControllers.values) {
       c.close();
     }
+    _usersController.close();
   }
 
   @override
@@ -221,6 +223,12 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<ImUser?> getUser(String userId) async => _users[userId];
+
+  @override
+  Stream<List<ImUser>> watchUsers() {
+    Future.microtask(_emitUsers);
+    return _usersController.stream;
+  }
 
   @override
   Future<ImUser> updateProfile({
@@ -564,6 +572,10 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<List<ImUser>> getUsers() async {
+    return _visibleUsers();
+  }
+
+  List<ImUser> _visibleUsers() {
     return _friendIds
         .map((id) => _users[id])
         .where((u) => u != null)
@@ -1244,12 +1256,30 @@ class NoneBotSource implements ImMessageSource {
 
   /// Persist a message to SQLite (fire-and-forget).
   void _saveMsg(ImMessage msg) {
-    _store?.insertMessage(msg);
+    final store = _store;
+    if (store == null) return;
+    unawaited(
+      store.insertMessage(msg).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        ImLogger.logRaw(ImLogger.store, 'save message error: $error');
+      }),
+    );
   }
 
   /// Persist a conversation to SQLite.
   void _saveConv(ImConversation conv) {
-    _store?.upsertConversation(conv);
+    final store = _store;
+    if (store == null) return;
+    unawaited(
+      store.upsertConversation(conv).catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        ImLogger.logRaw(ImLogger.store, 'save conversation error: $error');
+      }),
+    );
   }
 
   Future<void> _populateInitialData() async {
@@ -1284,6 +1314,7 @@ class NoneBotSource implements ImMessageSource {
         );
         _fetchUserAvatar(id);
       }
+      _emitUsers();
     } catch (_) {}
 
     // Resolve group names and member lists.
@@ -1350,6 +1381,7 @@ class NoneBotSource implements ImMessageSource {
       if (u == null) return;
       _users[userId] = u.copyWith(avatarLocalPath: path);
       ImLogger.avatarReady(userId, path);
+      if (_friendIds.contains(userId)) _emitUsers();
     });
   }
 
@@ -1488,6 +1520,12 @@ class NoneBotSource implements ImMessageSource {
         });
     final c = _conversationControllers['all'];
     if (c != null && !c.isClosed) c.add(sorted);
+  }
+
+  void _emitUsers() {
+    if (!_usersController.isClosed) {
+      _usersController.add(List.unmodifiable(_visibleUsers()));
+    }
   }
 
   /// Optional callback invoked when a new message arrives (for notifications).

@@ -167,6 +167,203 @@ func TestWebSocketChatHistoryAndPush(t *testing.T) {
 	}
 }
 
+func TestWebSocketDeliversToMultipleDevicesAndKeepsPresenceUntilLastDisconnect(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	aliceDesktop := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = aliceDesktop.Close() })
+	aliceMobile := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = aliceMobile.Close() })
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, aliceDesktop, "alice")
+	authenticate(t, aliceMobile, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+
+	const conversationID = "private_alice_bob_multi_device"
+	assertOK(t, request(t, aliceDesktop, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+
+	send := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message": []map[string]interface{}{
+			{"type": "text", "data": map[string]interface{}{"text": "hello both devices"}},
+		},
+	})
+	assertOK(t, send)
+	messageID := responseData(t, send)["message_id"]
+	for name, connection := range map[string]*websocket.Conn{
+		"desktop": aliceDesktop,
+		"mobile":  aliceMobile,
+	} {
+		event := readJSON(t, connection)
+		if event["post_type"] != "message" ||
+			event["conversation_id"] != conversationID ||
+			event["message_id"] != messageID {
+			t.Fatalf("%s did not receive the message event: %#v", name, event)
+		}
+	}
+
+	// Closing one device must not make the account appear offline while the
+	// second device is still connected.
+	_ = aliceDesktop.Close()
+	time.Sleep(50 * time.Millisecond)
+	user := responseData(t, request(t, bob, "get_user", map[string]interface{}{
+		"user_id": "alice",
+	}))
+	if user["online"] != true {
+		t.Fatalf("alice went offline while another device was connected: %#v", user)
+	}
+
+	_ = aliceMobile.Close()
+	presence := readJSON(t, bob)
+	if presence["notice_type"] != "friend_presence" ||
+		presence["user_id"] != "alice" ||
+		presence["online"] != false {
+		t.Fatalf("unexpected final-device presence notice: %#v", presence)
+	}
+	time.Sleep(50 * time.Millisecond)
+	storedUser, err := database.GetUser("alice")
+	if err != nil || storedUser == nil || storedUser.Online {
+		t.Fatalf("alice remained online after the last device disconnected: %#v", storedUser)
+	}
+}
+
+func TestFriendPresenceChangesOnlyOnFirstAndLastDevice(t *testing.T) {
+	database := store.NewMemoryStore()
+	for _, userID := range []string{"alice", "bob"} {
+		if err := database.SetUser(&store.User{ID: userID, Nickname: userID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, bob, "bob")
+	events := make(chan map[string]interface{}, 4)
+	errors := make(chan error, 1)
+	go func() {
+		for {
+			var event map[string]interface{}
+			if err := bob.ReadJSON(&event); err != nil {
+				errors <- err
+				return
+			}
+			events <- event
+		}
+	}()
+
+	aliceDesktop := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = aliceDesktop.Close() })
+	authenticate(t, aliceDesktop, "alice")
+	assertPresenceEvent(t, events, errors, "alice", true)
+
+	aliceMobile := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = aliceMobile.Close() })
+	authenticate(t, aliceMobile, "alice")
+	assertNoPresenceEvent(t, events, errors)
+
+	_ = aliceDesktop.Close()
+	assertNoPresenceEvent(t, events, errors)
+	_ = aliceMobile.Close()
+	assertPresenceEvent(t, events, errors, "alice", false)
+}
+
+func TestFailedAndRepeatedAuthenticationDoNotLeakClientRegistrations(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	gateway.SetAccessToken("shared-secret")
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	connection := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = connection.Close() })
+	failed := request(t, connection, "auth", map[string]interface{}{
+		"token": "wrong-secret", "user_id": "alice",
+	})
+	if failed["status"] == "ok" {
+		t.Fatalf("invalid credentials were accepted: %#v", failed)
+	}
+	gateway.mu.RLock()
+	registeredAfterFailure := len(gateway.clients)
+	gateway.mu.RUnlock()
+	if registeredAfterFailure != 0 {
+		t.Fatalf("failed authentication registered a client: %#v", gateway.clients)
+	}
+
+	assertOK(t, request(t, connection, "auth", map[string]interface{}{
+		"token": "shared-secret", "user_id": "alice",
+	}))
+	repeated := request(t, connection, "auth", map[string]interface{}{
+		"token": "shared-secret", "user_id": "bob",
+	})
+	if repeated["status"] == "ok" {
+		t.Fatalf("connection switched authenticated users: %#v", repeated)
+	}
+	gateway.mu.RLock()
+	aliceClients := len(gateway.clients["alice"])
+	bobClients := len(gateway.clients["bob"])
+	gateway.mu.RUnlock()
+	if aliceClients != 1 || bobClients != 0 {
+		t.Fatalf("unexpected client registrations: alice=%d bob=%d", aliceClients, bobClients)
+	}
+}
+
+func assertPresenceEvent(
+	t *testing.T,
+	events <-chan map[string]interface{},
+	errors <-chan error,
+	userID string,
+	online bool,
+) {
+	t.Helper()
+	select {
+	case event := <-events:
+		if event["notice_type"] != "friend_presence" ||
+			event["user_id"] != userID ||
+			event["online"] != online {
+			t.Fatalf("unexpected presence event: %#v", event)
+		}
+	case err := <-errors:
+		t.Fatalf("presence observer failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s presence=%v", userID, online)
+	}
+}
+
+func assertNoPresenceEvent(
+	t *testing.T,
+	events <-chan map[string]interface{},
+	errors <-chan error,
+) {
+	t.Helper()
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected duplicate presence event: %#v", event)
+	case err := <-errors:
+		t.Fatalf("presence observer failed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestWebSocketSharedTokenAuthenticationUsesExplicitUserID(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)

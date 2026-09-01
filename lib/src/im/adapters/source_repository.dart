@@ -31,6 +31,9 @@ class SourceBackedRepository implements ImRepository {
   Future<ImUser?> getUser(String userId) => _source.getUser(userId);
 
   @override
+  Stream<List<ImUser>> watchUsers() => _source.watchUsers();
+
+  @override
   Stream<List<ImConversation>> watchConversations() =>
       _source.watchConversations();
 

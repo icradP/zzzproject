@@ -19,6 +19,8 @@ abstract class ImMessageSource {
 
   Future<ImUser?> getUser(String userId);
 
+  Stream<List<ImUser>> watchUsers();
+
   Stream<List<ImConversation>> watchConversations();
 
   Stream<List<ImMessage>> watchMessages(String conversationId);
@@ -43,7 +45,9 @@ abstract class ImMessageSource {
     required String emojiId,
     bool remove = false,
   }) async {
-    throw UnsupportedError('Message reactions are not supported by this source.');
+    throw UnsupportedError(
+      'Message reactions are not supported by this source.',
+    );
   }
 
   Future<ImMessage> sendMediaMessage({
