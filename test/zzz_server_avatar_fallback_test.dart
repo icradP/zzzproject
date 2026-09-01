@@ -8,7 +8,7 @@ import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
 
 void main() {
   test(
-    'ZZZ server applies varied fallback avatars to empty profiles',
+    'ZZZ server applies varied fallback identities to smoke profiles',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
@@ -21,8 +21,16 @@ void main() {
           final data = switch (action) {
             'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
             'get_friends' => [
-              {'user_id': 'smoke-alice', 'nickname': 'Alice', 'avatar_url': ''},
-              {'user_id': 'smoke-bob', 'nickname': 'Bob', 'avatar_url': ''},
+              {
+                'user_id': 'smoke-alice',
+                'nickname': 'smoke-alice',
+                'avatar_url': '',
+              },
+              {
+                'user_id': 'smoke-bob',
+                'nickname': 'smoke-bob',
+                'avatar_url': '',
+              },
             ],
             'search_users' => [
               {
@@ -61,6 +69,7 @@ void main() {
         ),
         allowReconnect: false,
         avatarResolver: AppAssets.fallbackAvatarForId,
+        displayNameResolver: AppAssets.displayNameForAccount,
       );
       addTearDown(() async {
         source.disconnect();
@@ -81,6 +90,8 @@ void main() {
       );
       expect(bob?.avatarAssetPath, AppAssets.fallbackAvatarForId('smoke-bob'));
       expect(alice?.avatarAssetPath, isNot(bob?.avatarAssetPath));
+      expect(alice?.displayName, 'Alice Zhou');
+      expect(bob?.displayName, 'Bo Chen');
       expect(conversation?.avatarAssetPath, alice?.avatarAssetPath);
 
       final searchResults = await source.searchUsers('stranger');

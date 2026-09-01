@@ -190,7 +190,8 @@ class _ZzzModalPanelState extends State<ZzzModalPanel> {
                     // use Expanded keep a bounded height while the panel is open.
                     child: widget.child,
                   ),
-                if (widget.actions.isNotEmpty) ...[
+                if (widget.actions.isNotEmpty &&
+                    (!widget.collapsible || _expanded)) ...[
                   const Divider(height: 1, color: Colors.white12),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),

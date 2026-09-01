@@ -314,6 +314,8 @@ class _CreateGroupRequest {
   final ImMediaUpload? avatar;
 }
 
+enum _CreateGroupStep { profile, members, review }
+
 class _CreateGroupPanel extends StatefulWidget {
   const _CreateGroupPanel({required this.users});
 
@@ -333,6 +335,7 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   String? _avatarError;
   String _memberQuery = '';
   bool _showSelectedOnly = false;
+  _CreateGroupStep _step = _CreateGroupStep.profile;
 
   bool get _hasValidName {
     final name = _nameController.text.trim();
@@ -427,21 +430,14 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final filteredUsers = _filteredUsers;
-    final selectedUsers = _selectedUsers;
-    final selectedCount = _selectedMemberIds.length;
+  void _setStep(_CreateGroupStep step) {
+    if (_step == step) return;
+    setState(() => _step = step);
+  }
 
-    return ZzzModalPanel(
-      key: const ValueKey('create-group-panel'),
-      title: 'Create group',
-      subtitle: '$selectedCount selected',
-      icon: Icons.group_add_outlined,
-      maxWidth: 780,
-      maxHeight: 700,
-      collapsible: true,
-      actions: [
+  List<Widget> _buildActions({required bool compact}) {
+    if (!compact) {
+      return [
         TextButton.icon(
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.close_rounded),
@@ -452,7 +448,71 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
           icon: const Icon(Icons.group_add_outlined),
           label: const Text('Create'),
         ),
-      ],
+      ];
+    }
+
+    return [
+      if (_step != _CreateGroupStep.profile)
+        TextButton.icon(
+          key: const ValueKey('create-group-back'),
+          onPressed:
+              () => _setStep(
+                _step == _CreateGroupStep.review
+                    ? _CreateGroupStep.members
+                    : _CreateGroupStep.profile,
+              ),
+          icon: const Icon(Icons.arrow_back_rounded),
+          label: const Text('Back'),
+        ),
+      FilledButton.icon(
+        key: ValueKey(
+          _step == _CreateGroupStep.review
+              ? 'create-group-submit'
+              : 'create-group-next',
+        ),
+        onPressed:
+            _step == _CreateGroupStep.review
+                ? (_hasValidName ? _submit : null)
+                : _step == _CreateGroupStep.profile && !_hasValidName
+                ? null
+                : () => _setStep(
+                  _step == _CreateGroupStep.profile
+                      ? _CreateGroupStep.members
+                      : _CreateGroupStep.review,
+                ),
+        icon: Icon(
+          _step == _CreateGroupStep.review
+              ? Icons.group_add_outlined
+              : Icons.arrow_forward_rounded,
+        ),
+        label: Text(_step == _CreateGroupStep.review ? 'Create' : 'Next'),
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredUsers = _filteredUsers;
+    final selectedUsers = _selectedUsers;
+    final selectedCount = _selectedMemberIds.length;
+    final compact = MediaQuery.sizeOf(context).width < 688;
+
+    return ZzzModalPanel(
+      key: const ValueKey('create-group-panel'),
+      title: 'Create group',
+      subtitle:
+          compact
+              ? '${switch (_step) {
+                _CreateGroupStep.profile => 'Profile',
+                _CreateGroupStep.members => 'Members',
+                _CreateGroupStep.review => 'Review',
+              }} / $selectedCount selected'
+              : '$selectedCount selected',
+      icon: Icons.group_add_outlined,
+      maxWidth: 780,
+      maxHeight: 700,
+      collapsible: true,
+      actions: _buildActions(compact: compact),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
         child: LayoutBuilder(
@@ -474,11 +534,56 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
                 key: const ValueKey('create-group-compact-layout'),
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  groupProfile,
-                  const SizedBox(height: 4),
-                  selectedMembers,
-                  const Divider(height: 12, color: Colors.white12),
-                  Expanded(child: memberBrowser),
+                  ZzzSegmentedControl<_CreateGroupStep>(
+                    key: const ValueKey('create-group-steps'),
+                    value: _step,
+                    items: const [
+                      ZzzSegmentItem(
+                        value: _CreateGroupStep.profile,
+                        tooltip: 'Group profile',
+                        icon: Icons.badge_outlined,
+                      ),
+                      ZzzSegmentItem(
+                        value: _CreateGroupStep.members,
+                        tooltip: 'Choose members',
+                        icon: Icons.group_outlined,
+                      ),
+                      ZzzSegmentItem(
+                        value: _CreateGroupStep.review,
+                        tooltip: 'Review group',
+                        icon: Icons.fact_check_outlined,
+                      ),
+                    ],
+                    onChanged: _setStep,
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ZzzAnimatedSwap(
+                      value: _step,
+                      builder:
+                          (_) => switch (_step) {
+                            _CreateGroupStep.profile => SingleChildScrollView(
+                              key: const ValueKey('create-group-profile-step'),
+                              child: groupProfile,
+                            ),
+                            _CreateGroupStep.members => Column(
+                              key: const ValueKey('create-group-members-step'),
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                selectedMembers,
+                                const Divider(
+                                  height: 12,
+                                  color: Colors.white12,
+                                ),
+                                Expanded(child: memberBrowser),
+                              ],
+                            ),
+                            _CreateGroupStep.review => _buildGroupReview(
+                              selectedUsers,
+                            ),
+                          },
+                    ),
+                  ),
                 ],
               );
             }
@@ -491,8 +596,7 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
                 const VerticalDivider(width: 28, color: Colors.white12),
                 SizedBox(
                   width: 270,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  child: ListView(
                     children: [
                       groupProfile,
                       const SizedBox(height: 8),
@@ -521,7 +625,13 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
       fillColor: Colors.white.withValues(alpha: 0.08),
       foregroundColor: Colors.white,
       onChanged: (_) => setState(() {}),
-      onSubmitted: (_) => _submit(),
+      onSubmitted: (_) {
+        if (MediaQuery.sizeOf(context).width < 688) {
+          if (_hasValidName) _setStep(_CreateGroupStep.members);
+          return;
+        }
+        _submit();
+      },
     );
 
     final profile =
@@ -598,14 +708,16 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
               ],
             );
 
-    return Container(
+    return ZzzExpandablePanel(
       key: const ValueKey('create-group-profile'),
-      padding: EdgeInsets.all(compact ? 4 : 12),
-      decoration: BoxDecoration(
-        color: ZzzColors.yellow.withValues(alpha: compact ? 0.04 : 0.07),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ZzzColors.yellow.withValues(alpha: 0.16)),
-      ),
+      title: 'Group profile',
+      subtitle: _hasValidName ? _nameController.text.trim() : 'Name and avatar',
+      padding:
+          compact
+              ? const EdgeInsets.fromLTRB(12, 2, 12, 2)
+              : const EdgeInsets.all(12),
+      radius: 14,
+      dense: compact,
       child: profile,
     );
   }
@@ -761,6 +873,39 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildGroupReview(List<ImUser> selectedUsers) {
+    final groupName = _nameController.text.trim();
+    return ListView(
+      key: const ValueKey('create-group-review-step'),
+      padding: const EdgeInsets.only(bottom: 4),
+      children: [
+        Align(
+          child: _buildGroupAvatarWithCount(users: selectedUsers, size: 88),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          groupName.isEmpty ? 'Unnamed group' : groupName,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${selectedUsers.length} members selected',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+        const SizedBox(height: 18),
+        _buildSelectedMembers(
+          selectedUsers,
+          initiallyExpanded: true,
+          compact: false,
+        ),
+      ],
     );
   }
 

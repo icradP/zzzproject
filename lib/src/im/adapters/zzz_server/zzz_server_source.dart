@@ -10,6 +10,8 @@ import '../im_message_source.dart';
 import 'im_upload_bytes.dart';
 
 typedef ZzzAvatarResolver = String? Function(String userId);
+typedef ZzzDisplayNameResolver =
+    String Function(String userId, String? nickname);
 
 class ZzzServerConfig {
   const ZzzServerConfig({
@@ -43,15 +45,18 @@ class ZzzServerSource implements ImMessageSource {
     required this.config,
     bool allowReconnect = true,
     ZzzAvatarResolver? avatarResolver,
+    ZzzDisplayNameResolver? displayNameResolver,
     Future<void> Function()? onAuthenticationFailed,
   }) : _onAuthenticationFailed = onAuthenticationFailed,
        _avatarResolver = avatarResolver,
+       _displayNameResolver = displayNameResolver,
        _allowReconnect = allowReconnect,
        _selfId = config.selfId;
 
   final ZzzServerConfig config;
   final bool _allowReconnect;
   final ZzzAvatarResolver? _avatarResolver;
+  final ZzzDisplayNameResolver? _displayNameResolver;
   final Future<void> Function()? _onAuthenticationFailed;
 
   WebSocketChannel? _channel;
@@ -154,6 +159,7 @@ class ZzzServerSource implements ImMessageSource {
       config: config,
       allowReconnect: false,
       avatarResolver: _avatarResolver,
+      displayNameResolver: _displayNameResolver,
     );
     try {
       await probe.connect().timeout(const Duration(seconds: 12));
@@ -170,7 +176,7 @@ class ZzzServerSource implements ImMessageSource {
       _users[_selfId] ??
       ImUser(
         id: _selfId,
-        displayName: _selfId,
+        displayName: _resolveDisplayName(_selfId, null),
         avatarAssetPath: _avatarResolver?.call(_selfId),
         isOnline: true,
       );
@@ -707,7 +713,7 @@ class ZzzServerSource implements ImMessageSource {
       if (userID.isEmpty) continue;
       final user = ImUser(
         id: userID,
-        displayName: '${json['nickname'] ?? userID}',
+        displayName: _resolveDisplayName(userID, json['nickname'] as String?),
         avatarAssetPath: _resolveAvatar(userID, json['avatar_url'] as String?),
         isOnline: json['online'] as bool? ?? false,
       );
@@ -976,7 +982,7 @@ class ZzzServerSource implements ImMessageSource {
       _friendIds.add(id);
       _users[id] = ImUser(
         id: id,
-        displayName: '${json['nickname'] ?? id}',
+        displayName: _resolveDisplayName(id, json['nickname'] as String?),
         isOnline: json['online'] as bool? ?? false,
         avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
         relationship: imRelationshipFromString(json['relationship'] as String?),
@@ -1263,7 +1269,10 @@ class ZzzServerSource implements ImMessageSource {
       final knownSender = _users[senderId];
       _users[senderId] = ImUser(
         id: senderId,
-        displayName: '${sender['nickname'] ?? senderId}',
+        displayName: _resolveDisplayName(
+          senderId,
+          sender['nickname'] as String?,
+        ),
         avatarAssetPath: _resolveAvatar(
           senderId,
           sender['avatar_url'] as String?,
@@ -1520,7 +1529,7 @@ class ZzzServerSource implements ImMessageSource {
     _selfId = '${json['user_id'] ?? config.selfId}';
     _users[_selfId] = ImUser(
       id: _selfId,
-      displayName: '${json['nickname'] ?? _selfId}',
+      displayName: _resolveDisplayName(_selfId, json['nickname'] as String?),
       isOnline: true,
       avatarAssetPath: _resolveAvatar(_selfId, json['avatar_url'] as String?),
     );
@@ -1533,7 +1542,7 @@ class ZzzServerSource implements ImMessageSource {
     final id = '${json['user_id'] ?? json['id'] ?? fallbackId}';
     return ImUser(
       id: id,
-      displayName: '${json['nickname'] ?? id}',
+      displayName: _resolveDisplayName(id, json['nickname'] as String?),
       avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
       isOnline: json['online'] as bool? ?? true,
       relationship: imRelationshipFromString(json['relationship'] as String?),
@@ -1648,6 +1657,13 @@ class ZzzServerSource implements ImMessageSource {
 
   String? _resolveAvatar(String userId, String? value) {
     return _resolveMediaUrl(value) ?? _avatarResolver?.call(userId);
+  }
+
+  String _resolveDisplayName(String userId, String? nickname) {
+    final resolved = _displayNameResolver?.call(userId, nickname);
+    if (resolved != null && resolved.trim().isNotEmpty) return resolved.trim();
+    final supplied = nickname?.trim() ?? '';
+    return supplied.isEmpty ? userId : supplied;
   }
 
   String? _resolveConversationAvatar({

@@ -60,4 +60,19 @@ void main() {
     );
   });
 
+  test('machine smoke labels resolve to friendly stable display names', () {
+    expect(
+      AppAssets.displayNameForAccount('smoke-alice', 'smoke-alice'),
+      'Alice Zhou',
+    );
+    expect(
+      AppAssets.displayNameForAccount('zzz::smoke-bob', 'SMOKE-BOB'),
+      'Bo Chen',
+    );
+    expect(
+      AppAssets.displayNameForAccount('smoke-alice', 'Custom Alice'),
+      'Custom Alice',
+    );
+    expect(AppAssets.displayNameForAccount('ordinary', ''), 'ordinary');
+  });
 }

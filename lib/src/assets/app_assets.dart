@@ -142,13 +142,13 @@ class AppAssets {
   /// These accounts deliberately carry different visual identities instead of
   /// looking like a sequence produced by the generic fallback hash.
   static const Map<String, String> smokeAccountAvatars = {
-    'deployment-check': '${_characters}npcs/Monica.png',
-    'smoke-alice': '${_characters}npcs/Amy.png',
-    'smoke-bob': '${_characters}npcs/Enzo.png',
-    'codex-pwa-probe': '${_characters}npcs/Venus.png',
+    'deployment-check': '${_characters}npcs/Enzo.png',
+    'smoke-alice': '${_characters}npcs/Heddy.png',
+    'smoke-bob': '${_characters}temp/SethLowell.png',
+    'codex-pwa-probe': '${_characters}npcs/Amy.png',
     'alice': '${_characters}temp/GraceHoward.png',
-    'test1': '${_characters}temp/BurniceWhite.png',
-    'xiaodeng': '${_characters}npcs/Asha.png',
+    'test1': '${_characters}temp/CaesarKing.png',
+    'xiaodeng': '${_characters}npcs/Monica.png',
     'smoke-cathy': '${_characters}temp/AlexandrinaSebastiane.png',
     'smoke-diego': '${_characters}temp/CaesarKing.png',
     'smoke-lina': '${_characters}temp/Soukaku.png',
@@ -192,6 +192,28 @@ class AppAssets {
     'user-b': '${_characters}PiperWheel.png',
   };
 
+  /// Friendly labels for deployment-only identities whose stored nickname is
+  /// still the machine-oriented account id.
+  static const Map<String, String> smokeAccountDisplayNames = {
+    'deployment-check': 'Mira Chen',
+    'smoke-alice': 'Alice Zhou',
+    'smoke-bob': 'Bo Chen',
+    'codex-pwa-probe': 'Noah Lin',
+  };
+
+  static String displayNameForAccount(String id, String? nickname) {
+    final normalizedId = id.contains('::') ? id.split('::').last : id;
+    final normalized = normalizedId.toLowerCase();
+    final supplied = nickname?.trim() ?? '';
+    final isMachineLabel =
+        supplied.isEmpty || supplied.toLowerCase() == normalized;
+    if (isMachineLabel) {
+      final friendly = smokeAccountDisplayNames[normalized];
+      if (friendly != null) return friendly;
+    }
+    return supplied.isEmpty ? normalizedId : supplied;
+  }
+
   /// Keeps generated avatars stable across sessions while distributing users.
   static String fallbackAvatarForId(String id) {
     final normalizedId = id.contains('::') ? id.split('::').last : id;
@@ -203,7 +225,8 @@ class AppAssets {
       hash ^= codeUnit;
       hash = (hash * 16777619) & 0x7fffffff;
     }
-    final isSynthetic = normalized.startsWith('smoke') ||
+    final isSynthetic =
+        normalized.startsWith('smoke') ||
         normalized.startsWith('probe') ||
         normalized.startsWith('deployment') ||
         normalized.startsWith('test');

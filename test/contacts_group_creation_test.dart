@@ -58,13 +58,16 @@ void main() {
       matching: find.byType(TextField),
     );
     await tester.enterText(nameInput, 'Weekend plans');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create-group-next')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('create-group-members-step')),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const ValueKey('create-group-member-belle')));
     await tester.pumpAndSettle();
     expect(find.text('1 selected'), findsWidgets);
-    expect(
-      find.byKey(const ValueKey('create-group-avatar-preview')),
-      findsOneWidget,
-    );
     await tester.tap(find.text('Selected members'));
     await tester.pumpAndSettle();
     expect(
@@ -82,7 +85,18 @@ void main() {
     await tester.enterText(memberSearch, '');
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.byKey(const ValueKey('create-group-next')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('create-group-review-step')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('create-group-avatar-preview')),
+      findsOneWidget,
+    );
+    expect(find.text('Weekend plans'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('create-group-submit')));
     await tester.pumpAndSettle();
 
     expect(selectedConversation?.title, 'Weekend plans');
@@ -170,7 +184,7 @@ void main() {
       find.byKey(const ValueKey('create-group-wide-layout')),
       findsOneWidget,
     );
-    expect(find.byType(ZzzExpandablePanel), findsOneWidget);
+    expect(find.byType(ZzzExpandablePanel), findsNWidgets(2));
     expect(
       find.byKey(const ValueKey('create-group-compact-layout')),
       findsNothing,
@@ -191,6 +205,7 @@ void main() {
       find.byKey(const ValueKey('create-group-member-browser')),
       findsNothing,
     );
+    expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

@@ -15,6 +15,8 @@ import 'source_repository.dart';
 import 'zzz_server/zzz_server_source.dart';
 
 typedef ImAvatarResolver = String? Function(String userId);
+typedef ImDisplayNameResolver =
+    String Function(String userId, String? nickname);
 
 class ImClientRuntime {
   const ImClientRuntime({
@@ -38,11 +40,13 @@ class ImSourceRegistry {
   const ImSourceRegistry({
     required this.storageConfig,
     required this.avatarResolver,
+    this.displayNameResolver,
     this.onZzzAuthenticationFailed,
   });
 
   final ImStorageConfig storageConfig;
   final ImAvatarResolver avatarResolver;
+  final ImDisplayNameResolver? displayNameResolver;
   final Future<void> Function()? onZzzAuthenticationFailed;
 
   ImClientRuntime build(ImConnectionProfiles settings) {
@@ -96,6 +100,7 @@ class ImSourceRegistry {
               selfId: config.selfId,
             ),
             avatarResolver: avatarResolver,
+            displayNameResolver: displayNameResolver,
             onAuthenticationFailed: onZzzAuthenticationFailed,
           );
           zzzServerSources[profile.id] = source;

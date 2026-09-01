@@ -120,6 +120,7 @@ class _ZzzAppState extends State<ZzzApp> {
     final runtime = ImSourceRegistry(
       storageConfig: storageConfig,
       avatarResolver: _zzzAvatarResolver,
+      displayNameResolver: AppAssets.displayNameForAccount,
       onZzzAuthenticationFailed: kIsWeb ? _handleInvalidWebSession : null,
     ).build(profiles);
     final repo = runtime.repository;
