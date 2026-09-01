@@ -5,6 +5,7 @@ import '../../src/im/pages/im_contacts_page.dart';
 import '../../src/im/pages/im_home_page.dart';
 import '../../src/im/pages/im_settings_page.dart';
 import '../../src/im/pages/im_profile_page.dart';
+import '../../src/im/widgets/im_release_notes_panel.dart';
 
 /// Centralized route path constants.
 abstract final class AppRoutes {
@@ -22,14 +23,17 @@ final appRouter = GoRouter(
     GoRoute(
       path: AppRoutes.home,
       name: 'home',
-      builder: (_, __) => const ImHomePage(),
+      builder:
+          (_, __) => const ImReleaseNotesGate(child: ImHomePage()),
     ),
     GoRoute(
       path: AppRoutes.chat,
       name: 'chat',
       builder:
-          (_, state) => ImHomePage(
-            initialConversationId: state.pathParameters['conversationId'],
+          (_, state) => ImReleaseNotesGate(
+            child: ImHomePage(
+              initialConversationId: state.pathParameters['conversationId'],
+            ),
           ),
     ),
     GoRoute(

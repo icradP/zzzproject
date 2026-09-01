@@ -297,6 +297,14 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) => _sendMessage(conversationId, [
+    {'type': 'sticker', 'data': sticker.toSegmentData()},
+  ]);
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,
@@ -1505,6 +1513,7 @@ class ZzzServerSource implements ImMessageSource {
       'record' => '[语音]',
       'video' => '${data['name'] ?? '[视频]'}',
       'file' => '${data['name'] ?? '[文件]'}',
+      'sticker' => '[表情]',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',
@@ -1516,6 +1525,7 @@ class ZzzServerSource implements ImMessageSource {
     'record' => ImMessageKind.record,
     'video' => ImMessageKind.video,
     'file' => ImMessageKind.file,
+    'sticker' => ImMessageKind.face,
     'forward' => ImMessageKind.forward,
     'json' => ImMessageKind.json,
     _ => ImMessageKind.text,

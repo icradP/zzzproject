@@ -225,6 +225,14 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) async {
+    throw UnsupportedError('sendStickerMessage is not available on web');
+  }
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,

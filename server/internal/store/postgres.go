@@ -495,6 +495,8 @@ func (s *PostgresStore) StoreMessage(convID, senderID, senderNickname string, se
 			contentType = "video"
 		case "file":
 			contentType = "file"
+		case "sticker":
+			contentType = "sticker"
 		}
 	}
 

@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
+
 import '../../assets/app_assets.dart';
 import '../models/im_models.dart';
 import 'im_repository.dart';
+import 'im_sticker_catalog.dart';
 
 /// In-memory repository with sample ZZZ-themed conversations.
 class MockImRepository implements ImRepository {
@@ -353,6 +356,43 @@ class MockImRepository implements ImRepository {
     }
     _emitConversations();
 
+    return message;
+  }
+
+  @override
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) async {
+    final message = ImMessage(
+      id: 'local_${DateTime.now().microsecondsSinceEpoch}',
+      conversationId: conversationId,
+      senderId: _currentUserId,
+      text: '[表情]',
+      sentAt: DateTime.now(),
+      kind: ImMessageKind.face,
+      isMine: true,
+      status: ImMessageStatus.sent,
+      segments: [
+        OneBotMessageSegment(
+          type: ImStickerCatalog.segmentType,
+          data: sticker.toSegmentData(),
+        ),
+      ],
+    );
+    final list = _messages.putIfAbsent(conversationId, () => []);
+    list.add(message);
+    _emitMessages(conversationId);
+
+    final conversation = _conversations[conversationId];
+    if (conversation != null) {
+      _conversations[conversationId] = conversation.copyWith(
+        subtitle: message.text,
+        updatedAt: message.sentAt,
+        unreadCount: 0,
+      );
+      _emitConversations();
+    }
     return message;
   }
 

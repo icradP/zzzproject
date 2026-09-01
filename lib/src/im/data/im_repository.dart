@@ -36,6 +36,13 @@ abstract class ImRepository {
     String? replyToMessageId,
   });
 
+  /// Send a bundled sticker by stable catalog reference. Sources that do not
+  /// understand ZZZ sticker segments may degrade it to a text placeholder.
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) => sendTextMessage(conversationId: conversationId, text: '[Sticker]');
+
   /// Recall a message remotely when the source and server policy allow it.
   Future<void> recallMessage({
     required String conversationId,

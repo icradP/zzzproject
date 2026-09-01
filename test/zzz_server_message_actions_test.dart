@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
+import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
   test(
@@ -102,6 +103,24 @@ void main() {
               as List<dynamic>;
       expect(sentSegments.first['type'], 'reply');
       expect(sentSegments.first['data']['id'], 'message-2');
+
+      const sticker = ImStickerReference(
+        packId: 'zzz-core',
+        assetId: 'corin-01',
+        version: 1,
+      );
+      final sentSticker = await source.sendStickerMessage(
+        conversationId: 'private_me_bob',
+        sticker: sticker,
+      );
+      final stickerSegments =
+          (sentMessageRequest!['params'] as Map<String, dynamic>)['message']
+              as List<dynamic>;
+      expect(stickerSegments.single['type'], 'sticker');
+      expect(stickerSegments.single['data'], sticker.toSegmentData());
+      expect(sentSticker.kind, ImMessageKind.face);
+      expect(sentSticker.segments?.single.type, 'sticker');
+      expect(sentSticker.text, '[表情]');
 
       final recalledFuture = source
           .watchMessages('private_me_bob')

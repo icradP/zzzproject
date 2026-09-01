@@ -191,6 +191,19 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    final message = await registration.repository.sendStickerMessage(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      sticker: sticker,
+    );
+    return _scopeMessage(registration, message);
+  }
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,

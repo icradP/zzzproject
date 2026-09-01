@@ -16,6 +16,7 @@ import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
 import '../data/im_draft_store.dart';
 import '../data/im_message_display_config.dart';
+import '../data/im_sticker_catalog.dart';
 import '../models/im_models.dart';
 import 'im_chat_widgets.dart';
 
@@ -31,6 +32,7 @@ class ImChatRoomView extends StatefulWidget {
     this.onReply,
     this.onRecall,
     this.onReact,
+    this.onSticker,
     this.onLoadOlder,
     this.onManageGroup,
     this.onBack,
@@ -49,6 +51,7 @@ class ImChatRoomView extends StatefulWidget {
   final Future<void> Function(ImMessage message)? onRecall;
   final Future<void> Function(ImMessage message, String emojiId, bool remove)?
   onReact;
+  final Future<void> Function(ImStickerReference sticker)? onSticker;
   final Future<bool> Function()? onLoadOlder;
   final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
@@ -65,6 +68,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   bool _sending = false;
   bool _showMembers = false;
   bool _showAttach = false;
+  bool _showStickers = false;
   ImMessage? _replyingTo;
   String? _highlightMessageId;
   final _pendingMedia = <ImMediaUpload>[];
@@ -140,6 +144,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       _lastMaxExtent = 0;
       _showMembers = false;
       _showAttach = false;
+      _showStickers = false;
       _replyingTo = null;
       _canLoadOlder = widget.onLoadOlder != null;
     }
@@ -233,12 +238,41 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   void _toggleAttach() {
     if (!_showAttach) {
       _composerFocus.unfocus();
-      if (_showMembers) setState(() => _showMembers = false);
     }
-    setState(() => _showAttach = !_showAttach);
+    setState(() {
+      _showAttach = !_showAttach;
+      _showStickers = false;
+      if (_showAttach) _showMembers = false;
+    });
     Future.delayed(const Duration(milliseconds: 350), () {
       if (mounted) _scrollToBottom();
     });
+  }
+
+  void _toggleStickers() {
+    if (!_showStickers) _composerFocus.unfocus();
+    setState(() {
+      _showStickers = !_showStickers;
+      _showAttach = false;
+      if (_showStickers) _showMembers = false;
+    });
+    Future.delayed(const Duration(milliseconds: 250), () {
+      if (mounted) _scrollToBottom();
+    });
+  }
+
+  Future<void> _sendSticker(ImStickerDefinition sticker) async {
+    final callback = widget.onSticker;
+    if (callback == null || _sending) return;
+    setState(() => _sending = true);
+    try {
+      await callback(sticker.reference);
+      if (mounted) setState(() => _showStickers = false);
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   void _scrollToBottom() {
@@ -532,6 +566,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         setState(() {
           _replyingTo = message;
           _showAttach = false;
+          _showStickers = false;
         });
         _composerFocus.requestFocus();
       case _MessageAction.recall:
@@ -600,7 +635,10 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 
   Future<void> _pickAndStageMedia(String type) async {
-    setState(() => _showAttach = false);
+    setState(() {
+      _showAttach = false;
+      _showStickers = false;
+    });
 
     switch (type) {
       case 'Image':
@@ -689,6 +727,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
             ),
             Expanded(child: _buildMessages()),
             if (_pendingMedia.isNotEmpty) _buildPendingPreview(),
+            if (_showStickers) _buildStickerPanel(),
             if (_showAttach) _buildAttachPanel(),
             _buildComposer(),
           ],
@@ -1018,6 +1057,53 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     );
   }
 
+  Widget _buildStickerPanel() {
+    return Container(
+      key: const ValueKey('sticker-panel'),
+      height: 132,
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: ZzzColors.grayPanel, width: 2),
+      ),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: ImStickerCatalog.stickers.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final sticker = ImStickerCatalog.stickers[index];
+          return Tooltip(
+            message: sticker.label,
+            child: InkWell(
+              key: ValueKey(
+                'sticker-${sticker.reference.packId}-${sticker.reference.assetId}-${sticker.reference.version}',
+              ),
+              borderRadius: BorderRadius.circular(8),
+              onTap: _sending ? null : () => _sendSticker(sticker),
+              child: SizedBox.square(
+                dimension: 108,
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Image.asset(
+                    sticker.assetPath,
+                    fit: BoxFit.contain,
+                    errorBuilder:
+                        (_, __, ___) => const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white38,
+                        ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildComposer() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1065,6 +1151,21 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                 ),
               ),
               const SizedBox(width: 8),
+              SizedBox.square(
+                dimension: 44,
+                child: IconButton(
+                  key: const ValueKey('toggle-sticker-panel'),
+                  tooltip: _showStickers ? 'Close stickers' : 'Stickers',
+                  onPressed: widget.onSticker == null ? null : _toggleStickers,
+                  icon: Icon(
+                    _showStickers
+                        ? Icons.keyboard_rounded
+                        : Icons.emoji_emotions_outlined,
+                    color: _showStickers ? ZzzColors.yellow : Colors.white70,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
               ImCircleButton(onTap: _toggleAttach),
             ],
           ),

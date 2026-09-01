@@ -12,9 +12,11 @@ import '../data/im_image_hosting_config.dart';
 import '../data/im_message_display_config.dart';
 import '../data/im_nsfw_config.dart';
 import '../data/im_push_manager.dart';
+import '../data/im_release_notes.dart';
 import '../data/im_storage_config.dart';
 import '../im_scope.dart';
 import '../adapters/zzz_server/zzz_server_source.dart';
+import '../widgets/im_release_notes_panel.dart';
 
 class ImSettingsPage extends StatefulWidget {
   const ImSettingsPage({super.key});
@@ -546,6 +548,13 @@ class _ImSettingsPageState extends State<ImSettingsPage>
                           initiallyExpanded: false,
                           child: _buildStorageFields(),
                         ),
+                        const SizedBox(height: 12),
+                        ZzzExpandableSection(
+                          title: 'About',
+                          subtitle: 'Version and update history',
+                          initiallyExpanded: false,
+                          child: _buildAboutFields(),
+                        ),
                         const SizedBox(height: 24),
                         _buildSaveButton(),
                       ],
@@ -574,6 +583,17 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
         ),
       ],
+    );
+  }
+
+  Widget _buildAboutFields() {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.new_releases_outlined),
+      title: const Text('Update history'),
+      subtitle: const Text('Version ${ImReleaseNotes.currentVersion}'),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () => showImReleaseNotesPanel(context: context),
     );
   }
 

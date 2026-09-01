@@ -4,6 +4,7 @@ import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
+import 'im_source_badge.dart';
 
 class ContactTile extends StatelessWidget {
   const ContactTile({required this.user, required this.onTap, super.key});
@@ -32,25 +33,25 @@ class ContactTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      user.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (user.sourceLabel != null)
-                      Text(
-                        user.sourceLabel!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: ZzzColors.blue,
-                          fontSize: 11,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            user.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
-                      ),
+                        if (user.sourceLabel != null) ...[
+                          const SizedBox(width: 6),
+                          ImSourceBadge(sourceLabel: user.sourceLabel!),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -119,26 +120,28 @@ class GroupTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      conversation.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (conversation.sourceLabel != null)
-                      Text(
-                        conversation.sourceLabel!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: ZzzColors.blue,
-                          fontSize: 11,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
-                      )
-                    else if (conversation.participantIds.length > 1)
+                        if (conversation.sourceLabel != null) ...[
+                          const SizedBox(width: 6),
+                          ImSourceBadge(
+                            sourceLabel: conversation.sourceLabel!,
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (conversation.participantIds.length > 1)
                       Text(
                         '${conversation.participantIds.length} members',
                         style: const TextStyle(

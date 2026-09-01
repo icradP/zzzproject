@@ -64,6 +64,39 @@ class ImMediaUpload {
   final String? mimeType;
 }
 
+/// Stable reference to an application-bundled sticker asset.
+///
+/// The version is part of the identity so catalog updates can keep rendering
+/// messages sent by older clients without storing or uploading image bytes.
+class ImStickerReference {
+  const ImStickerReference({
+    required this.packId,
+    required this.assetId,
+    required this.version,
+  });
+
+  final String packId;
+  final String assetId;
+  final int version;
+
+  Map<String, dynamic> toSegmentData() => {
+    'pack_id': packId,
+    'asset_id': assetId,
+    'version': version,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ImStickerReference &&
+          packId == other.packId &&
+          assetId == other.assetId &&
+          version == other.version;
+
+  @override
+  int get hashCode => Object.hash(packId, assetId, version);
+}
+
 /// A contact or the signed-in user.
 class ImUser {
   const ImUser({

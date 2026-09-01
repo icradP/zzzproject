@@ -35,6 +35,11 @@ abstract class ImMessageSource {
     String? replyToMessageId,
   });
 
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) => sendTextMessage(conversationId: conversationId, text: '[Sticker]');
+
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,

@@ -4,6 +4,7 @@ import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
+import 'im_source_badge.dart';
 
 class ConversationTile extends StatefulWidget {
   const ConversationTile({
@@ -408,23 +409,14 @@ class _ConversationTileState extends State<ConversationTile>
                     Row(
                       children: [
                         if (widget.conversation.sourceLabel != null) ...[
-                          Flexible(
-                            flex: 0,
-                            child: Text(
-                              widget.conversation.sourceLabel!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color:
-                                    selected
-                                        ? Colors.black.withValues(alpha: 0.62)
-                                        : ZzzColors.blue,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                          ImSourceBadge(
+                            sourceLabel: widget.conversation.sourceLabel!,
+                            color:
+                                selected
+                                    ? Colors.black.withValues(alpha: 0.62)
+                                    : ZzzColors.blue,
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 4),
                         ],
                         Expanded(
                           child: Text(

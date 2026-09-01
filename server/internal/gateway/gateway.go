@@ -902,6 +902,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			g.sendError(client, req.Echo, err.Error())
 			return
 		}
+		if err := validateStickerSegment(segment); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
 		if segment.Type != "reply" {
 			continue
 		}
@@ -1000,6 +1004,41 @@ func validateImageSegmentURL(segment protocol.MessageSegment) error {
 		}
 	}
 	return nil
+}
+
+func validateStickerSegment(segment protocol.MessageSegment) error {
+	if segment.Type != "sticker" {
+		return nil
+	}
+	if len(segment.Data) != 3 {
+		return fmt.Errorf("sticker data is invalid")
+	}
+	packID, packOK := segment.Data["pack_id"].(string)
+	assetID, assetOK := segment.Data["asset_id"].(string)
+	version, versionOK := segment.Data["version"].(float64)
+	if !packOK || !assetOK || !validStickerIdentifier(packID) || !validStickerIdentifier(assetID) {
+		return fmt.Errorf("sticker pack_id and asset_id are invalid")
+	}
+	if !versionOK || version < 1 || version > 1000 || version != float64(int(version)) {
+		return fmt.Errorf("sticker version is invalid")
+	}
+	return nil
+}
+
+func validStickerIdentifier(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-' || character == '_' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (g *Gateway) handleReactMessage(client *Client, req *protocol.Request) {
@@ -2909,6 +2948,8 @@ func pushBody(segments []protocol.MessageSegment) string {
 			text.WriteString("[Video]")
 		case "file":
 			text.WriteString("[File]")
+		case "sticker":
+			text.WriteString("[Sticker]")
 		}
 	}
 	result := strings.TrimSpace(text.String())

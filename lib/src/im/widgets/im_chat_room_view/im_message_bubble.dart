@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../theme/zzz_colors.dart';
 import '../../../widgets/zzz_widgets.dart';
 import '../../models/im_models.dart';
+import '../../data/im_sticker_catalog.dart';
 import 'im_file_card.dart';
 import 'im_forward_bubble.dart';
 import 'im_nsfw_guard.dart';
@@ -237,8 +238,26 @@ class ImMessageBubble extends StatelessWidget {
         (message.text.isEmpty || message.text == '[语音]');
     final isJsonCard = message.kind == ImMessageKind.json;
     final isForward = message.kind == ImMessageKind.forward;
+    final sticker = ImStickerCatalog.resolveMessage(message);
 
     Widget buildBubbleContent() {
+      if (sticker != null) {
+        return Semantics(
+          label: 'Sticker: ${sticker.label}',
+          child: SizedBox.square(
+            dimension: 150,
+            child: Image.asset(
+              sticker.assetPath,
+              fit: BoxFit.contain,
+              errorBuilder:
+                  (_, __, ___) => Text(
+                    message.text,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+            ),
+          ),
+        );
+      }
       if (message.kind == ImMessageKind.forward) {
         return ImForwardBubble(message: message);
       }
@@ -398,7 +417,11 @@ class ImMessageBubble extends StatelessWidget {
               ),
               child: bubbleContent,
             )
-            : isImageOnly || isRecordOnly || isJsonCard || isForward
+            : isImageOnly ||
+                  isRecordOnly ||
+                  isJsonCard ||
+                  isForward ||
+                  sticker != null
             ? Container(
               constraints: const BoxConstraints(maxWidth: 520),
               decoration: BoxDecoration(

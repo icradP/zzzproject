@@ -61,6 +61,15 @@ class SourceBackedRepository implements ImRepository {
   );
 
   @override
+  Future<ImMessage> sendStickerMessage({
+    required String conversationId,
+    required ImStickerReference sticker,
+  }) => _source.sendStickerMessage(
+    conversationId: conversationId,
+    sticker: sticker,
+  );
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,

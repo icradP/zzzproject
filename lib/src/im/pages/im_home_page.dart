@@ -602,6 +602,12 @@ class _ImHomePageState extends State<ImHomePage>
                       replyToMessageId: replyTo.id,
                     );
                   },
+                  onSticker: (sticker) async {
+                    await repository.sendStickerMessage(
+                      conversationId: conv.id,
+                      sticker: sticker,
+                    );
+                  },
                   onRecall: (message) async {
                     await repository.recallMessage(
                       conversationId: conv.id,
