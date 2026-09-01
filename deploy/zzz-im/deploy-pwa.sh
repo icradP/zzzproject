@@ -10,6 +10,7 @@ archive=${1:-}
 release=${2:-}
 site_root=/srv/www/zzz-im
 release_dir=${site_root}/releases/${release}
+base_href=${ZZZ_PWA_BASE_HREF:-/}
 
 if [[ ! -f ${archive} ]]; then
   echo "Usage: $0 <pwa-archive.tar.gz> <release-id>" >&2
@@ -17,6 +18,10 @@ if [[ ! -f ${archive} ]]; then
 fi
 if [[ ! ${release} =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "Release ID may contain only letters, digits, dots, underscores, and hyphens." >&2
+  exit 1
+fi
+if [[ ! ${base_href} =~ ^/[A-Za-z0-9._/-]*$ || ${base_href} != */ ]]; then
+  echo "ZZZ_PWA_BASE_HREF must be an absolute path ending in /." >&2
   exit 1
 fi
 if [[ -e ${release_dir} ]]; then
@@ -39,6 +44,16 @@ if [[ ! -f ${release_dir}/index.html ||
 fi
 if ! grep -Fq 'canvasKitBaseUrl: "canvaskit/"' "${release_dir}/flutter_bootstrap.js"; then
   echo "Flutter PWA is not configured to use local CanvasKit assets." >&2
+  exit 1
+fi
+
+# GitHub Pages artifacts use /zzzproject/, while icrad.ltd serves the same
+# build from /. Keep relative Flutter assets and the service-worker scope on
+# the production deployment path.
+sed -i -E "s#<base href=\"[^\"]*\">#<base href=\"${base_href}\">#" \
+  "${release_dir}/index.html"
+if ! grep -Fq "<base href=\"${base_href}\">" "${release_dir}/index.html"; then
+  echo "Unable to set the PWA base href to ${base_href}." >&2
   exit 1
 fi
 
