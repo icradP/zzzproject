@@ -587,13 +587,16 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   }
 
   Widget _buildAboutFields() {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: const Icon(Icons.new_releases_outlined),
-      title: const Text('Update history'),
-      subtitle: const Text('Version ${ImReleaseNotes.currentVersion}'),
-      trailing: const Icon(Icons.chevron_right_rounded),
-      onTap: () => showImReleaseNotesPanel(context: context),
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.new_releases_outlined),
+        title: const Text('Update history'),
+        subtitle: const Text('Version ${ImReleaseNotes.currentVersion}'),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () => showImReleaseNotesPanel(context: context),
+      ),
     );
   }
 

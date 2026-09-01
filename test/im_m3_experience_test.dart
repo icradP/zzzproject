@@ -69,7 +69,10 @@ void main() {
     ImReleaseNotesGate.resetSession();
     await tester.pumpWidget(
       const MaterialApp(
-        home: ImReleaseNotesGate(child: Scaffold(body: Text('Inbox'))),
+        home: ImReleaseNotesGate(
+          offerDuringTests: true,
+          child: Scaffold(body: Text('Inbox')),
+        ),
       ),
     );
     await tester.pumpAndSettle();

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../data/im_release_notes.dart';
+import '../data/im_test_environment.dart';
 
 Future<bool?> showImReleaseNotesPanel({
   required BuildContext context,
@@ -55,9 +56,14 @@ Future<bool?> showImReleaseNotesPanel({
 }
 
 class ImReleaseNotesGate extends StatefulWidget {
-  const ImReleaseNotesGate({required this.child, super.key});
+  const ImReleaseNotesGate({
+    required this.child,
+    this.offerDuringTests = false,
+    super.key,
+  });
 
   final Widget child;
+  final bool offerDuringTests;
 
   @visibleForTesting
   static void resetSession() => _offeredThisSession = false;
@@ -74,6 +80,7 @@ class _ImReleaseNotesGateState extends State<ImReleaseNotesGate> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (isImFlutterTest && !widget.offerDuringTests) return;
     if (_scheduled || ImReleaseNotesGate._offeredThisSession) return;
     _scheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_offer()));
