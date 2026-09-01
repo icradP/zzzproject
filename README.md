@@ -72,6 +72,7 @@ package `build/web`, and activate it with the versioned deployment script:
 ```bash
 flutter build web --release --base-href / --no-web-resources-cdn \
   --dart-define=ZZZ_SERVER_URL=wss://icrad.ltd/im/ws
+node tool/generate_web_asset_manifest.mjs build/web
 tar -czf /tmp/zzz-pwa.tar.gz -C build/web .
 sudo ./deploy/zzz-im/deploy-pwa.sh /tmp/zzz-pwa.tar.gz <release-id>
 ```
@@ -90,9 +91,20 @@ media deletion removes both metadata and local bytes. Invitation-code changes
 made there last until the server restarts; update `ZZZ_INVITE_CODE` in
 `/etc/zzz-im/server.env` for a persistent change.
 
-The custom Web bootstrap keeps CanvasKit on the application origin and starts
-the versioned `app-sw.js` cache after the first Flutter frame. Web Push remains
-isolated in `push-sw.js` under the narrower `/push/` service-worker scope.
+The custom Web bootstrap keeps CanvasKit on the application origin, shows
+measured startup download progress, and starts the versioned `app-sw.js` cache
+after the first Flutter frame. The generated `startup-assets.json` contains
+content hashes so an app upgrade can retain unchanged cached files and fetch
+only changed shell resources. Web Push remains isolated in `push-sw.js` under
+the narrower `/push/` service-worker scope.
+
+After Flutter becomes interactive, the PWA reports anonymous startup timing,
+resource transfer totals, and an approximate cache-hit count to
+`/im/client-performance`. Reports contain no account or message data. The
+server keeps at most 500 samples in memory, clears them on restart, and exposes
+only cold/warm aggregates in the authenticated admin overview. The targets are
+8 seconds for a cold start and 2 seconds for a cache-backed warm start; compare
+results using a fixed device, browser, network profile, and cache state.
 
 If the target host cannot reach Docker Hub, cross-compile static Linux amd64
 binaries into `dist/` and run `deploy/zzz-im/deploy-native.sh`. The included
@@ -120,6 +132,7 @@ flutter build web --release \
   --base-href /zzzproject/ \
   --no-web-resources-cdn \
   --dart-define=ZZZ_SERVER_URL=wss://im.example.com/ws
+node tool/generate_web_asset_manifest.mjs build/web
 ```
 
 The server endpoint is build-time configuration and is not shown or editable

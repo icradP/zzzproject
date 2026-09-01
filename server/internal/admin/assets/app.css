@@ -207,6 +207,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid #f4c542; outline-offs
   overflow: hidden;
 }
 
+.performance-surface { margin-top: 14px; }
+
 .section-heading {
   min-height: 70px;
   display: flex;

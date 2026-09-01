@@ -94,6 +94,16 @@ function formatDuration(seconds) {
   return parts.length ? parts.join(" ") : `${Math.floor(remaining)}s`;
 }
 
+function formatMilliseconds(milliseconds) {
+  const value = Math.max(0, Number(milliseconds) || 0);
+  if (value < 1000) return `${Math.round(value)} ms`;
+  return `${(value / 1000).toFixed(value >= 10000 ? 1 : 2)} s`;
+}
+
+function formatPercent(value) {
+  return `${Math.max(0, Number(value) || 0).toFixed(1)}%`;
+}
+
 function formatBytes(bytes) {
   let value = Number(bytes) || 0;
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -173,6 +183,34 @@ async function loadOverview() {
     wrapper.append(element("dt", "", term), element("dd", "", description));
     return wrapper;
   }));
+  const performance = payload.performance || {};
+  const cold = performance.cold || {};
+  const warm = performance.warm || {};
+  const totalSamples = Number(performance.total_samples) || 0;
+  const performanceDetails = document.querySelector("#performance-details");
+  const performanceEmpty = document.querySelector("#performance-empty");
+  const sampleCount = document.querySelector("#performance-sample-count");
+  sampleCount.textContent = totalSamples === 1 ? "1 sample" : `${totalSamples} samples`;
+  sampleCount.classList.toggle("enabled", totalSamples > 0);
+  sampleCount.classList.toggle("offline", totalSamples === 0);
+  performanceEmpty.hidden = totalSamples > 0;
+  performanceDetails.hidden = totalSamples === 0;
+  if (totalSamples > 0) {
+    const unavailable = "No samples";
+    appendDetails(performanceDetails, [
+      ["Cold p50", cold.samples ? formatMilliseconds(cold.p50_interactive_ms) : unavailable],
+      ["Cold p95", cold.samples ? formatMilliseconds(cold.p95_interactive_ms) : unavailable],
+      ["Cold <= 8 s", cold.samples ? formatPercent(cold.within_target_percent) : unavailable],
+      ["Warm p50", warm.samples ? formatMilliseconds(warm.p50_interactive_ms) : unavailable],
+      ["Warm p95", warm.samples ? formatMilliseconds(warm.p95_interactive_ms) : unavailable],
+      ["Warm <= 2 s", warm.samples ? formatPercent(warm.within_target_percent) : unavailable],
+      ["Warm cache hits", warm.samples ? formatPercent(warm.resource_cache_hit_percent) : unavailable],
+      ["Average transfer", warm.samples ? formatBytes(warm.average_transfer_bytes) : cold.samples ? formatBytes(cold.average_transfer_bytes) : unavailable],
+      ["Latest sample", formatDate(performance.last_sample_at)],
+    ]);
+  } else {
+    performanceDetails.replaceChildren();
+  }
   document.querySelector("#overview-updated").textContent = `Updated ${formatDate(payload.generated_at)}`;
 }
 

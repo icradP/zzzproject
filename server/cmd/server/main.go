@@ -9,6 +9,7 @@ import (
 	"time"
 
 	adminserver "github.com/icradp/zzz-im-server/internal/admin"
+	"github.com/icradp/zzz-im-server/internal/clientperf"
 	"github.com/icradp/zzz-im-server/internal/gateway"
 	"github.com/icradp/zzz-im-server/internal/media"
 	pushservice "github.com/icradp/zzz-im-server/internal/push"
@@ -91,8 +92,10 @@ func main() {
 	gw.SetMediaUploader(mediaStore)
 
 	// Routes.
+	performanceCollector := clientperf.New(500)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", gw.HandleWebSocket)
+	mux.Handle("/client-performance", performanceCollector)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -103,6 +106,7 @@ func main() {
 			Store:         db,
 			Media:         mediaStore,
 			Registration:  gw,
+			Performance:   performanceCollector,
 			AdminToken:    *adminToken,
 			PublicPath:    *adminPublicPath,
 			StorageDriver: *dbDriver,

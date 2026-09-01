@@ -2,10 +2,12 @@
 {{flutter_build_config}}
 
 const appServiceWorkerVersion = {{flutter_service_worker_version}};
+const loading = window.zzzLoading;
 
 function markFlutterReady() {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      loading?.complete();
       document.documentElement.classList.add("flutter-ready");
       window.setTimeout(() => {
         document.getElementById("app-loading")?.remove();
@@ -27,7 +29,7 @@ function cacheRendererAssets(registration) {
     urls: [`${rendererRoot}canvaskit.js`, `${rendererRoot}canvaskit.wasm`],
   };
   const worker =
-    registration.active || registration.waiting || registration.installing;
+    registration.installing || registration.waiting || registration.active;
   if (!worker) return;
   if (worker.state === "activated") {
     worker.postMessage(message);
@@ -50,14 +52,36 @@ async function registerAppServiceWorker() {
   }
 }
 
-_flutter.loader.load({
-  config: {
-    canvasKitBaseUrl: "canvaskit/",
-  },
-  onEntrypointLoaded: async (engineInitializer) => {
-    const appRunner = await engineInitializer.initializeEngine();
-    await appRunner.runApp();
-    markFlutterReady();
-    void registerAppServiceWorker();
-  },
-});
+async function startApplication() {
+  try {
+    if (loading) {
+      const entrypoint = await loading.prepareEntrypoint("main.dart.js");
+      for (const build of _flutter.buildConfig.builds) {
+        if (build.compileTarget === "dart2js") build.mainJsPath = entrypoint;
+      }
+    }
+    loading?.setStage("Starting renderer", "Preparing graphics resources");
+    await _flutter.loader.load({
+      config: {
+        canvasKitBaseUrl: "canvaskit/",
+      },
+      onEntrypointLoaded: async (engineInitializer) => {
+        try {
+          loading?.setStage("Initializing client", "Opening your workspace");
+          const appRunner = await engineInitializer.initializeEngine();
+          loading?.setStage("Almost ready", "Starting ZZZ IM");
+          await appRunner.runApp();
+          markFlutterReady();
+          void registerAppServiceWorker();
+        } catch (error) {
+          loading?.fail(error);
+          throw error;
+        }
+      },
+    });
+  } catch (error) {
+    loading?.fail(error);
+  }
+}
+
+void startApplication();

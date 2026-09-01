@@ -5,11 +5,14 @@ const version = workerUrl.searchParams.get("v") || "development";
 const cachePrefix = "zzz-im-app-";
 const cacheName = `${cachePrefix}${version}`;
 const scopeUrl = new URL(self.registration.scope);
+const manifestPath = "startup-assets.json";
 const shellResources = [
   "index.html",
+  "loading.js",
   "flutter_bootstrap.js",
   "main.dart.js",
   "manifest.json",
+  manifestPath,
   "push_client.js",
   "assets/AssetManifest.bin",
   "assets/AssetManifest.bin.json",
@@ -23,9 +26,11 @@ const shellResources = [
 ];
 const networkFirstResources = new Set([
   "index.html",
+  "loading.js",
   "flutter_bootstrap.js",
   "main.dart.js",
   "manifest.json",
+  "startup-assets.json",
 ]);
 
 function scopedUrl(path) {
@@ -46,12 +51,77 @@ async function cacheResponse(cache, path) {
   if (response.ok) await cache.put(url, response);
 }
 
+async function readManifest(cache) {
+  const response = await cache.match(scopedUrl(manifestPath));
+  if (!response) return null;
+  try {
+    const manifest = await response.json();
+    return manifest && typeof manifest.resources === "object" ? manifest : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function fetchManifest() {
+  const response = await fetch(
+    new Request(scopedUrl(manifestPath), { cache: "no-cache" }),
+  );
+  if (!response.ok) {
+    throw new Error(`Startup asset manifest unavailable (${response.status})`);
+  }
+  const manifest = await response.clone().json();
+  if (!manifest || typeof manifest.resources !== "object") {
+    throw new Error("Startup asset manifest is invalid");
+  }
+  return { manifest, response };
+}
+
+function sameResource(previousManifest, nextManifest, path) {
+  const previous = previousManifest?.resources?.[path];
+  const next = nextManifest?.resources?.[path];
+  return Boolean(
+    previous &&
+      next &&
+      previous.bytes === next.bytes &&
+      typeof previous.sha256 === "string" &&
+      previous.sha256 === next.sha256,
+  );
+}
+
+async function seedUnchangedResources(cache, nextManifest) {
+  const keys = await caches.keys();
+  const previousKey = keys.find(
+    (key) => key.startsWith(cachePrefix) && key !== cacheName,
+  );
+  if (!previousKey) return;
+  const previous = await caches.open(previousKey);
+  const previousManifest = await readManifest(previous);
+  if (!previousManifest) return;
+  await Promise.allSettled(
+    Object.keys(nextManifest.resources).map(async (path) => {
+      if (!sameResource(previousManifest, nextManifest, path)) return;
+      const url = scopedUrl(path);
+      const cached = await previous.match(url);
+      if (cached) await cache.put(url, cached);
+    }),
+  );
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(cacheName);
+      const { manifest, response } = await fetchManifest();
+      await seedUnchangedResources(cache, manifest);
+      await cache.put(scopedUrl(manifestPath), response);
       await Promise.allSettled(
-        shellResources.map((path) => cacheResponse(cache, path)),
+        shellResources
+          .filter((path) => path !== manifestPath)
+          .map(async (path) => {
+            if (!(await cache.match(scopedUrl(path)))) {
+              await cacheResponse(cache, path);
+            }
+          }),
       );
       await self.skipWaiting();
     })(),
@@ -86,12 +156,14 @@ self.addEventListener("message", (event) => {
   );
 });
 
+function keepWorkerAlive(event, promise) {
+  event.waitUntil(promise.catch(() => {}));
+}
+
 async function networkFirst(request, fallbackPath) {
   const cache = await caches.open(cacheName);
   try {
-    const response = await fetch(request);
-    if (response.ok) await cache.put(request, response.clone());
-    return response;
+    return await fetch(request);
   } catch (_) {
     return (
       (await cache.match(request)) ||
@@ -101,7 +173,7 @@ async function networkFirst(request, fallbackPath) {
   }
 }
 
-async function staleWhileRevalidate(request) {
+async function staleWhileRevalidate(event, request) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   const update = fetch(request)
@@ -110,6 +182,7 @@ async function staleWhileRevalidate(request) {
       return response;
     })
     .catch(() => null);
+  keepWorkerAlive(event, update);
   return cached || (await update) || Response.error();
 }
 
@@ -138,6 +211,6 @@ self.addEventListener("fetch", (event) => {
     path.startsWith("icons/") ||
     /\.(?:js|json|png|svg|wasm|woff2?|ttf|otf)$/.test(path)
   ) {
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(staleWhileRevalidate(event, request));
   }
 });

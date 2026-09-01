@@ -35,8 +35,11 @@ jobs:
       - name: Validate PWA assets
         run: |
           node --check web/app-sw.js
+          node --check web/loading.js
           node --check web/push_client.js
           node --check web/push-sw.js
+          node --check tool/generate_web_asset_manifest.mjs
+          node --test tool/*_test.*
           node -e "JSON.parse(require('fs').readFileSync('web/manifest.json', 'utf8'))"
 
       - name: Build Web release
@@ -48,11 +51,14 @@ jobs:
             build_args+=(--dart-define="ZZZ_SERVER_URL=$ZZZ_SERVER_URL")
           fi
           flutter build web "${build_args[@]}"
+          node tool/generate_web_asset_manifest.mjs build/web
 
       - name: Validate optimized Web release
         run: |
           node --check build/web/app-sw.js
           node --check build/web/flutter_bootstrap.js
+          node --check build/web/loading.js
+          node -e "JSON.parse(require('fs').readFileSync('build/web/startup-assets.json', 'utf8'))"
           grep -Fq 'canvasKitBaseUrl: "canvaskit/"' build/web/flutter_bootstrap.js
           test -f build/web/canvaskit/canvaskit.wasm
 

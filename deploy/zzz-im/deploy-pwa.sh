@@ -31,6 +31,8 @@ tar -xzf "${archive}" -C "${release_dir}" --no-same-owner
 if [[ ! -f ${release_dir}/index.html ||
       ! -f ${release_dir}/manifest.json ||
       ! -f ${release_dir}/app-sw.js ||
+      ! -f ${release_dir}/loading.js ||
+      ! -f ${release_dir}/startup-assets.json ||
       ! -f ${release_dir}/canvaskit/canvaskit.wasm ]]; then
   echo "Archive does not contain a Flutter PWA build." >&2
   exit 1

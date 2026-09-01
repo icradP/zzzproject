@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/icradp/zzz-im-server/internal/clientperf"
 	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -37,9 +38,16 @@ func TestAdminAuthenticationAndOverview(t *testing.T) {
 	database := store.NewMemoryStore()
 	seedAdminStore(t, database)
 	registration := &registrationStub{code: "diaogan"}
+	performance := clientperf.New(10)
+	if err := performance.Record(clientperf.Report{
+		LoadKind: "cold", InteractiveMS: 4200, ResourceCount: 4, CacheHits: 1,
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	handler := New(Config{
 		Store: database, Registration: registration, AdminToken: "secret-admin-token",
-		PublicPath: "/admin", StorageDriver: "memory", PushEnabled: true,
+		Performance: performance,
+		PublicPath:  "/admin", StorageDriver: "memory", PushEnabled: true,
 		StartedAt: time.Now().Add(-time.Hour),
 	})
 
@@ -65,8 +73,9 @@ func TestAdminAuthenticationAndOverview(t *testing.T) {
 		t.Fatalf("overview status = %d body=%s", overview.Code, overview.Body.String())
 	}
 	var payload struct {
-		Stats   store.ServerStats      `json:"stats"`
-		Service map[string]interface{} `json:"service"`
+		Stats       store.ServerStats      `json:"stats"`
+		Service     map[string]interface{} `json:"service"`
+		Performance clientperf.Snapshot    `json:"performance"`
 	}
 	if err := json.Unmarshal(overview.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
@@ -76,6 +85,9 @@ func TestAdminAuthenticationAndOverview(t *testing.T) {
 	}
 	if payload.Service["storage_driver"] != "memory" || payload.Service["registration_enabled"] != true {
 		t.Fatalf("unexpected service state: %#v", payload.Service)
+	}
+	if payload.Performance.TotalSamples != 1 || payload.Performance.Cold.P50InteractiveMS != 4200 {
+		t.Fatalf("unexpected performance snapshot: %#v", payload.Performance)
 	}
 }
 

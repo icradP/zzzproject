@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/icradp/zzz-im-server/internal/clientperf"
 	"github.com/icradp/zzz-im-server/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,11 +45,17 @@ type MediaController interface {
 	Delete(string) (bool, error)
 }
 
+// PerformanceController exposes anonymous, aggregate PWA startup metrics.
+type PerformanceController interface {
+	Snapshot() clientperf.Snapshot
+}
+
 // Config defines the dependencies and non-secret metadata for the console.
 type Config struct {
 	Store         store.Store
 	Media         MediaController
 	Registration  RegistrationController
+	Performance   PerformanceController
 	AdminToken    string
 	PublicPath    string
 	StorageDriver string
@@ -67,6 +74,7 @@ type Server struct {
 	store            store.Store
 	media            MediaController
 	registration     RegistrationController
+	performance      PerformanceController
 	adminTokenDigest [sha256.Size]byte
 	publicPath       string
 	storageDriver    string
@@ -96,6 +104,7 @@ func New(config Config) *Server {
 		store:            config.Store,
 		media:            config.Media,
 		registration:     config.Registration,
+		performance:      config.Performance,
 		adminTokenDigest: sha256.Sum256([]byte(strings.TrimSpace(config.AdminToken))),
 		publicPath:       publicPath,
 		storageDriver:    config.StorageDriver,
@@ -258,8 +267,13 @@ func (s *Server) handleOverview(w http.ResponseWriter) {
 		s.writeError(w, http.StatusInternalServerError, "could not load server statistics")
 		return
 	}
+	performance := clientperf.Snapshot{}
+	if s.performance != nil {
+		performance = s.performance.Snapshot()
+	}
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"stats": stats,
+		"stats":       stats,
+		"performance": performance,
 		"service": map[string]interface{}{
 			"storage_driver":       s.storageDriver,
 			"push_enabled":         s.pushEnabled,
