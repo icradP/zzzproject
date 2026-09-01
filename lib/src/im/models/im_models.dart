@@ -168,6 +168,7 @@ class ImConversation {
     this.updatedAt,
     this.unreadCount = 0,
     this.isPinned = false,
+    this.isMuted = false,
     this.sourceId,
     this.sourceLabel,
   });
@@ -184,6 +185,7 @@ class ImConversation {
   final DateTime? updatedAt;
   final int unreadCount;
   final bool isPinned;
+  final bool isMuted;
   final String? sourceId;
   final String? sourceLabel;
 
@@ -213,6 +215,7 @@ class ImConversation {
     DateTime? updatedAt,
     int? unreadCount,
     bool? isPinned,
+    bool? isMuted,
     List<String>? participantIds,
     String? sourceId,
     String? sourceLabel,
@@ -228,6 +231,7 @@ class ImConversation {
       updatedAt: updatedAt ?? this.updatedAt,
       unreadCount: unreadCount ?? this.unreadCount,
       isPinned: isPinned ?? this.isPinned,
+      isMuted: isMuted ?? this.isMuted,
       sourceId: sourceId ?? this.sourceId,
       sourceLabel: sourceLabel ?? this.sourceLabel,
     );

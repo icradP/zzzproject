@@ -61,6 +61,18 @@ func (s *PostgresStore) initSchema() error {
 		created_at TIMESTAMP DEFAULT NOW()
 	);
 
+	CREATE TABLE IF NOT EXISTS conversation_preferences (
+		conversation_id VARCHAR(32) NOT NULL,
+		user_id VARCHAR(32) NOT NULL,
+		is_pinned BOOLEAN DEFAULT FALSE,
+		is_muted BOOLEAN DEFAULT FALSE,
+		updated_at TIMESTAMP DEFAULT NOW(),
+		PRIMARY KEY (conversation_id, user_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_conversation_preferences_user
+		ON conversation_preferences(user_id, is_pinned, updated_at DESC);
+
 	CREATE TABLE IF NOT EXISTS sessions (
 		token_hash TEXT PRIMARY KEY,
 		user_id VARCHAR(32) NOT NULL,
@@ -400,7 +412,44 @@ func (s *PostgresStore) GetUserConversations(userID string) ([]*Conversation, er
 	return convs, nil
 }
 
+func (s *PostgresStore) GetConversationPreference(conversationID, userID string) (*ConversationPreference, error) {
+	preference := &ConversationPreference{}
+	err := s.db.QueryRow(
+		`SELECT conversation_id, user_id, is_pinned, is_muted, updated_at
+		 FROM conversation_preferences WHERE conversation_id = $1 AND user_id = $2`,
+		conversationID, userID,
+	).Scan(
+		&preference.ConversationID, &preference.UserID, &preference.IsPinned,
+		&preference.IsMuted, &preference.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return preference, nil
+}
+
+func (s *PostgresStore) SetConversationPreference(preference *ConversationPreference) error {
+	_, err := s.db.Exec(`
+		INSERT INTO conversation_preferences
+			(conversation_id, user_id, is_pinned, is_muted, updated_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (conversation_id, user_id) DO UPDATE SET
+			is_pinned = EXCLUDED.is_pinned,
+			is_muted = EXCLUDED.is_muted,
+			updated_at = EXCLUDED.updated_at`,
+		preference.ConversationID, preference.UserID, preference.IsPinned,
+		preference.IsMuted, time.Now(),
+	)
+	return err
+}
+
 func (s *PostgresStore) DeleteConversation(id string) error {
+	if _, err := s.db.Exec("DELETE FROM conversation_preferences WHERE conversation_id = $1", id); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec("DELETE FROM conversation_reads WHERE conversation_id = $1", id); err != nil {
 		return err
 	}
@@ -487,10 +536,20 @@ func (s *PostgresStore) GetMessage(msgID string) (*Message, error) {
 }
 
 func (s *PostgresStore) GetMessages(convID string, limit int) ([]*Message, error) {
-	rows, err := s.db.Query(
-		"SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, created_at FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2",
-		convID, limit,
-	)
+	return s.GetMessagesBefore(convID, "", limit)
+}
+
+func (s *PostgresStore) GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error) {
+	query := "SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, created_at FROM messages WHERE conversation_id = $1"
+	args := []interface{}{convID}
+	if beforeMessageID != "" {
+		query += " AND (created_at, id) < (SELECT created_at, id FROM messages WHERE conversation_id = $2 AND id = $3)"
+		args = append(args, convID, beforeMessageID)
+	}
+	limitPlaceholder := len(args) + 1
+	query += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", limitPlaceholder)
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

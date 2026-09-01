@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -13,6 +14,7 @@ import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
+import '../data/im_draft_store.dart';
 import '../models/im_models.dart';
 import 'im_chat_widgets.dart';
 
@@ -28,6 +30,7 @@ class ImChatRoomView extends StatefulWidget {
     this.onReply,
     this.onRecall,
     this.onReact,
+    this.onLoadOlder,
     this.onManageGroup,
     this.onBack,
     super.key,
@@ -44,7 +47,8 @@ class ImChatRoomView extends StatefulWidget {
   final Future<void> Function(String text, ImMessage replyTo)? onReply;
   final Future<void> Function(ImMessage message)? onRecall;
   final Future<void> Function(ImMessage message, String emojiId, bool remove)?
-      onReact;
+  onReact;
+  final Future<bool> Function()? onLoadOlder;
   final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
 
@@ -64,18 +68,48 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   String? _highlightMessageId;
   final _pendingMedia = <ImMediaUpload>[];
   double _lastMaxExtent = 0;
+  bool _loadingOlder = false;
+  bool _canLoadOlder = true;
+  bool _draftRestoreStarted = false;
+  String? _draftOwnerId;
+  Timer? _draftSaveTimer;
 
   @override
   void initState() {
     super.initState();
     _lastMaxExtent = 0;
+    _canLoadOlder = widget.onLoadOlder != null;
+    _scrollController.addListener(_handleScroll);
+    _composerController.addListener(_scheduleDraftSave);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _scrollToBottom();
     });
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_draftRestoreStarted) {
+      _draftRestoreStarted = true;
+      unawaited(_restoreDraft());
+    }
+  }
+
+  @override
   void dispose() {
+    _draftSaveTimer?.cancel();
+    final ownerId = _draftOwnerId;
+    if (ownerId != null) {
+      unawaited(
+        ImDraftStore.save(
+          ownerId: ownerId,
+          conversationId: widget.conversation.id,
+          text: _composerController.text,
+        ),
+      );
+    }
+    _scrollController.removeListener(_handleScroll);
+    _composerController.removeListener(_scheduleDraftSave);
     _composerController.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
@@ -91,9 +125,92 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       _showMembers = false;
       _showAttach = false;
       _replyingTo = null;
+      _canLoadOlder = widget.onLoadOlder != null;
     }
-    if (convChanged || widget.messages.length != oldWidget.messages.length) {
+    final prepended =
+        !convChanged &&
+        _loadingOlder &&
+        oldWidget.messages.isNotEmpty &&
+        widget.messages.isNotEmpty &&
+        oldWidget.messages.last.id == widget.messages.last.id;
+    if (convChanged ||
+        (widget.messages.length != oldWidget.messages.length && !prepended)) {
       _scrollToBottom();
+    }
+  }
+
+  Future<void> _restoreDraft() async {
+    try {
+      final user = await ImScope.repositoryOf(
+        context,
+      ).getCurrentUser(sourceId: widget.conversation.sourceId);
+      final draft = await ImDraftStore.load(
+        ownerId: user.id,
+        conversationId: widget.conversation.id,
+      );
+      if (!mounted) return;
+      _draftOwnerId = user.id;
+      if (_composerController.text.isEmpty && draft.isNotEmpty) {
+        _composerController.value = TextEditingValue(
+          text: draft,
+          selection: TextSelection.collapsed(offset: draft.length),
+        );
+      }
+    } catch (_) {
+      // Draft persistence must never block the composer.
+    }
+  }
+
+  void _scheduleDraftSave() {
+    final ownerId = _draftOwnerId;
+    if (ownerId == null) return;
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = Timer(const Duration(milliseconds: 350), () {
+      unawaited(
+        ImDraftStore.save(
+          ownerId: ownerId,
+          conversationId: widget.conversation.id,
+          text: _composerController.text,
+        ),
+      );
+    });
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.pixels > 80 ||
+        _loadingOlder ||
+        !_canLoadOlder ||
+        widget.onLoadOlder == null) {
+      return;
+    }
+    unawaited(_loadOlderMessages());
+  }
+
+  Future<void> _loadOlderMessages() async {
+    final callback = widget.onLoadOlder;
+    if (callback == null || _loadingOlder) return;
+    final oldExtent =
+        _scrollController.hasClients
+            ? _scrollController.position.maxScrollExtent
+            : 0.0;
+    final oldOffset =
+        _scrollController.hasClients ? _scrollController.offset : 0.0;
+    setState(() => _loadingOlder = true);
+    try {
+      _canLoadOlder = await callback();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        final addedExtent =
+            _scrollController.position.maxScrollExtent - oldExtent;
+        if (addedExtent > 0) {
+          _scrollController.jumpTo(oldOffset + addedExtent);
+        }
+      });
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _loadingOlder = false);
     }
   }
 
@@ -325,9 +442,10 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
           ),
     );
     if (!mounted || emojiId == null) return;
-    final existing = message.reactions
-        ?.where((reaction) => reaction.emojiId == emojiId)
-        .firstOrNull;
+    final existing =
+        message.reactions
+            ?.where((reaction) => reaction.emojiId == emojiId)
+            .firstOrNull;
     await _applyReaction(
       message,
       emojiId,
@@ -641,84 +759,95 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       );
     }
 
-    return SuperListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.only(bottom: 8),
-      itemCount: widget.messages.length,
-      itemBuilder: (context, index) {
-        final message = widget.messages[index];
-        final prev = index > 0 ? widget.messages[index - 1] : null;
-        final sameSender =
-            prev != null &&
-            prev.senderId == message.senderId &&
-            message.sentAt.difference(prev.sentAt).inSeconds.abs() < 2;
-        final hasNext =
-            index + 1 < widget.messages.length &&
-            widget.messages[index + 1].senderId == message.senderId &&
-            widget.messages[index + 1].sentAt
-                    .difference(message.sentAt)
-                    .inSeconds
-                    .abs() <
-                2;
-        final compact = sameSender;
-        final hideAvatar = sameSender;
-        final hideTimestamp = hasNext;
-        final showName =
-            widget.conversation.isGroup && !message.isMine && !sameSender;
+    return Stack(
+      children: [
+        SuperListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.only(bottom: 8),
+          itemCount: widget.messages.length,
+          itemBuilder: (context, index) {
+            final message = widget.messages[index];
+            final prev = index > 0 ? widget.messages[index - 1] : null;
+            final sameSender =
+                prev != null &&
+                prev.senderId == message.senderId &&
+                message.sentAt.difference(prev.sentAt).inSeconds.abs() < 2;
+            final hasNext =
+                index + 1 < widget.messages.length &&
+                widget.messages[index + 1].senderId == message.senderId &&
+                widget.messages[index + 1].sentAt
+                        .difference(message.sentAt)
+                        .inSeconds
+                        .abs() <
+                    2;
+            final compact = sameSender;
+            final hideAvatar = sameSender;
+            final hideTimestamp = hasNext;
+            final showName =
+                widget.conversation.isGroup && !message.isMine && !sameSender;
 
-        return FutureBuilder<(String, ImageProvider)>(
-          future: Future.wait([
-            widget.resolveUserName(message.senderId),
-            widget.resolveUserAvatar(message.senderId),
-          ]).then(
-            (values) => (values[0] as String, values[1] as ImageProvider),
-          ),
-          builder: (context, snapshot) {
-            final senderName = snapshot.data?.$1 ?? '...';
-            final avatar =
-                snapshot.data?.$2 ??
-                AssetImage(AppAssets.fallbackAvatarForId(message.senderId));
-            _messageKeys.putIfAbsent(message.id, () => GlobalKey());
-            return GestureDetector(
-              key: _messageKeys[message.id],
-              behavior: HitTestBehavior.translucent,
-              onLongPressStart:
-                  (details) =>
-                      _showMessageActions(message, details.globalPosition),
-              onSecondaryTapDown:
-                  (details) =>
-                      _showMessageActions(message, details.globalPosition),
-              child: ImMessageBubble(
-                message: message,
-                senderName: senderName,
-                avatar: avatar,
-                showSenderName: showName,
-                hideAvatar: hideAvatar,
-                compact: compact,
-                hideTimestamp: hideTimestamp,
-                resolveQuote: widget.resolveMessage,
-                onQuoteTap:
-                    message.isReply
-                        ? () => _scrollToMessage(message.replyToMessageId!)
-                        : null,
-                highlighted:
-                    _highlightMessageId != null &&
-                    (message.id == _highlightMessageId ||
-                        message.id.startsWith('${_highlightMessageId}_')),
-                resolveUserName: widget.resolveUserName,
-                onReactionTap:
-                    widget.onReact == null
-                        ? null
-                        : (reaction) => _applyReaction(
-                          message,
-                          reaction.emojiId,
-                          remove: reaction.reactedByMe,
-                        ),
+            return FutureBuilder<(String, ImageProvider)>(
+              future: Future.wait([
+                widget.resolveUserName(message.senderId),
+                widget.resolveUserAvatar(message.senderId),
+              ]).then(
+                (values) => (values[0] as String, values[1] as ImageProvider),
               ),
+              builder: (context, snapshot) {
+                final senderName = snapshot.data?.$1 ?? '...';
+                final avatar =
+                    snapshot.data?.$2 ??
+                    AssetImage(AppAssets.fallbackAvatarForId(message.senderId));
+                _messageKeys.putIfAbsent(message.id, () => GlobalKey());
+                return GestureDetector(
+                  key: _messageKeys[message.id],
+                  behavior: HitTestBehavior.translucent,
+                  onLongPressStart:
+                      (details) =>
+                          _showMessageActions(message, details.globalPosition),
+                  onSecondaryTapDown:
+                      (details) =>
+                          _showMessageActions(message, details.globalPosition),
+                  child: ImMessageBubble(
+                    message: message,
+                    senderName: senderName,
+                    avatar: avatar,
+                    showSenderName: showName,
+                    hideAvatar: hideAvatar,
+                    compact: compact,
+                    hideTimestamp: hideTimestamp,
+                    resolveQuote: widget.resolveMessage,
+                    onQuoteTap:
+                        message.isReply
+                            ? () => _scrollToMessage(message.replyToMessageId!)
+                            : null,
+                    highlighted:
+                        _highlightMessageId != null &&
+                        (message.id == _highlightMessageId ||
+                            message.id.startsWith('${_highlightMessageId}_')),
+                    resolveUserName: widget.resolveUserName,
+                    onReactionTap:
+                        widget.onReact == null
+                            ? null
+                            : (reaction) => _applyReaction(
+                              message,
+                              reaction.emojiId,
+                              remove: reaction.reactedByMe,
+                            ),
+                  ),
+                );
+              },
             );
           },
-        );
-      },
+        ),
+        if (_loadingOlder)
+          const Positioned(
+            top: 0,
+            left: 16,
+            right: 16,
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+      ],
     );
   }
 

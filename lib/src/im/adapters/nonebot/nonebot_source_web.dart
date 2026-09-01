@@ -210,6 +210,9 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<bool> loadOlderMessages(String conversationId) async => false;
+
+  @override
   Future<ImConversation?> getConversation(String conversationId) async => null;
 
   @override
@@ -249,6 +252,17 @@ class NoneBotSource implements ImMessageSource {
 
   @override
   Future<void> markConversationRead(String conversationId) async {}
+
+  @override
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) async {
+    throw UnsupportedError(
+      'Conversation preferences are unavailable on the web stub.',
+    );
+  }
 
   @override
   Future<List<ImConversation>> searchConversations(String query) async => [];

@@ -54,12 +54,14 @@ void main() {
 
   test('insert and read message with media', () async {
     // Seed the conversation first.
-    await store.upsertConversation(ImConversation(
-      id: 'dm_test_002',
-      type: ImConversationType.direct,
-      title: 'Media User',
-      participantIds: ['test_bot', '20001'],
-    ));
+    await store.upsertConversation(
+      ImConversation(
+        id: 'dm_test_002',
+        type: ImConversationType.direct,
+        title: 'Media User',
+        participantIds: ['test_bot', '20001'],
+      ),
+    );
 
     final msg = ImMessage(
       id: 'msg_001',
@@ -73,7 +75,10 @@ void main() {
       segments: [
         OneBotMessageSegment.at('20002'),
         OneBotMessageSegment.plain(' check this '),
-        OneBotMessageSegment.image('abc123.jpg', url: 'https://example.com/a.jpg'),
+        OneBotMessageSegment.image(
+          'abc123.jpg',
+          url: 'https://example.com/a.jpg',
+        ),
       ],
       mediaUrl: 'https://example.com/a.jpg',
       mediaMime: 'image/jpeg',
@@ -114,6 +119,7 @@ void main() {
       participantIds: ['test_bot', '30003'],
       updatedAt: DateTime(2026, 5, 26),
       isPinned: true,
+      isMuted: true,
     );
 
     await store.upsertConversation(older);
@@ -123,59 +129,72 @@ void main() {
     final list = await store.getConversations();
     expect(list.length, 3);
     expect(list[0].title, 'Pinned');
+    expect(list[0].isMuted, isTrue);
     expect(list[1].title, 'Newer');
     expect(list[2].title, 'Older');
   });
 
   test('message insert updates conversation subtitle', () async {
-    await store.upsertConversation(ImConversation(
-      id: 'dm_update',
-      type: ImConversationType.direct,
-      title: 'Update Test',
-      participantIds: ['test_bot', '40001'],
-    ));
+    await store.upsertConversation(
+      ImConversation(
+        id: 'dm_update',
+        type: ImConversationType.direct,
+        title: 'Update Test',
+        participantIds: ['test_bot', '40001'],
+      ),
+    );
 
-    await store.insertMessage(ImMessage(
-      id: 'm1',
-      conversationId: 'dm_update',
-      senderId: '40001',
-      text: 'First message',
-      sentAt: DateTime(2026, 5, 28, 10, 0),
-    ));
-    await store.insertMessage(ImMessage(
-      id: 'm2',
-      conversationId: 'dm_update',
-      senderId: '40001',
-      text: 'Second message',
-      sentAt: DateTime(2026, 5, 28, 10, 1),
-    ));
+    await store.insertMessage(
+      ImMessage(
+        id: 'm1',
+        conversationId: 'dm_update',
+        senderId: '40001',
+        text: 'First message',
+        sentAt: DateTime(2026, 5, 28, 10, 0),
+      ),
+    );
+    await store.insertMessage(
+      ImMessage(
+        id: 'm2',
+        conversationId: 'dm_update',
+        senderId: '40001',
+        text: 'Second message',
+        sentAt: DateTime(2026, 5, 28, 10, 1),
+      ),
+    );
 
     final conv = await store.getConversation('dm_update');
     expect(conv!.subtitle, 'Second message');
   });
 
   test('search messages', () async {
-    await store.upsertConversation(ImConversation(
-      id: 'dm_search',
-      type: ImConversationType.direct,
-      title: 'Search Test',
-      participantIds: ['test_bot', '50001'],
-    ));
+    await store.upsertConversation(
+      ImConversation(
+        id: 'dm_search',
+        type: ImConversationType.direct,
+        title: 'Search Test',
+        participantIds: ['test_bot', '50001'],
+      ),
+    );
 
-    await store.insertMessage(ImMessage(
-      id: 's1',
-      conversationId: 'dm_search',
-      senderId: '50001',
-      text: 'Can you send the report?',
-      sentAt: DateTime(2026, 5, 28, 9, 0),
-    ));
-    await store.insertMessage(ImMessage(
-      id: 's2',
-      conversationId: 'dm_search',
-      senderId: 'test_bot',
-      text: 'I sent it already',
-      sentAt: DateTime(2026, 5, 28, 9, 1),
-    ));
+    await store.insertMessage(
+      ImMessage(
+        id: 's1',
+        conversationId: 'dm_search',
+        senderId: '50001',
+        text: 'Can you send the report?',
+        sentAt: DateTime(2026, 5, 28, 9, 0),
+      ),
+    );
+    await store.insertMessage(
+      ImMessage(
+        id: 's2',
+        conversationId: 'dm_search',
+        senderId: 'test_bot',
+        text: 'I sent it already',
+        sentAt: DateTime(2026, 5, 28, 9, 1),
+      ),
+    );
 
     final results = await store.searchMessages('report');
     expect(results.length, 1);
@@ -183,19 +202,23 @@ void main() {
   });
 
   test('delete message and conversation', () async {
-    await store.upsertConversation(ImConversation(
-      id: 'dm_del',
-      type: ImConversationType.direct,
-      title: 'To Delete',
-      participantIds: ['test_bot', '60001'],
-    ));
-    await store.insertMessage(ImMessage(
-      id: 'd1',
-      conversationId: 'dm_del',
-      senderId: '60001',
-      text: 'Delete me',
-      sentAt: DateTime(2026, 5, 28),
-    ));
+    await store.upsertConversation(
+      ImConversation(
+        id: 'dm_del',
+        type: ImConversationType.direct,
+        title: 'To Delete',
+        participantIds: ['test_bot', '60001'],
+      ),
+    );
+    await store.insertMessage(
+      ImMessage(
+        id: 'd1',
+        conversationId: 'dm_del',
+        senderId: '60001',
+        text: 'Delete me',
+        sentAt: DateTime(2026, 5, 28),
+      ),
+    );
 
     await store.deleteMessage('d1', 'dm_del');
     expect(await store.getMessages('dm_del'), isEmpty);

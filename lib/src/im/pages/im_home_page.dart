@@ -578,6 +578,7 @@ class _ImHomePageState extends State<ImHomePage>
                   resolveUserName: _resolveUserName,
                   resolveUserAvatar: _resolveUserAvatar,
                   resolveMessage: (id) => _findMessage(id, messages),
+                  onLoadOlder: () => repository.loadOlderMessages(conv.id),
                   onManageGroup:
                       conv.isGroup
                           ? () => _openGroupManagement(repository, conv)

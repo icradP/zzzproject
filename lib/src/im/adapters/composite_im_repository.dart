@@ -139,6 +139,14 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<bool> loadOlderMessages(String conversationId) {
+    final registration = _registrationForValue(conversationId);
+    return registration.repository.loadOlderMessages(
+      ImSourceAddress.localIdOf(conversationId),
+    );
+  }
+
+  @override
   Future<ImConversation?> getConversation(String conversationId) async {
     final registration = _registrationForValue(conversationId);
     final conversation = await registration.repository.getConversation(
@@ -233,6 +241,20 @@ class CompositeImRepository implements ImRepository {
     final registration = _registrationForValue(conversationId);
     return registration.repository.markConversationRead(
       ImSourceAddress.localIdOf(conversationId),
+    );
+  }
+
+  @override
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) {
+    final registration = _registrationForValue(conversationId);
+    return registration.repository.setConversationPreferences(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      isPinned: isPinned,
+      isMuted: isMuted,
     );
   }
 
@@ -659,6 +681,7 @@ class CompositeImRepository implements ImRepository {
       updatedAt: conversation.updatedAt,
       unreadCount: conversation.unreadCount,
       isPinned: conversation.isPinned,
+      isMuted: conversation.isMuted,
       sourceId: registration.id,
       sourceLabel: registration.label,
     );
@@ -678,6 +701,7 @@ class CompositeImRepository implements ImRepository {
       updatedAt: conversation.updatedAt,
       unreadCount: conversation.unreadCount,
       isPinned: conversation.isPinned,
+      isMuted: conversation.isMuted,
     );
   }
 

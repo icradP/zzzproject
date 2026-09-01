@@ -17,9 +17,10 @@ type MemoryStore struct {
 	sessions          map[string]*Session // SHA-256 token hash -> session
 	groups            map[string]*Group
 	conversations     map[string]*Conversation
-	messages          map[string][]*Message                     // conversationID -> messages
-	messageReactions  map[string]map[string]map[string]struct{} // messageID -> emojiID -> userID
-	readStates        map[string]map[string]*ReadState          // conversationID -> userID -> cursor
+	preferences       map[string]map[string]*ConversationPreference // conversationID -> userID -> preference
+	messages          map[string][]*Message                         // conversationID -> messages
+	messageReactions  map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
+	readStates        map[string]map[string]*ReadState              // conversationID -> userID -> cursor
 	friendRequests    map[string]*FriendRequest
 	friendships       map[string]map[string]time.Time
 	forwards          map[string]*ForwardMessage
@@ -35,6 +36,7 @@ func NewMemoryStore() *MemoryStore {
 		sessions:          make(map[string]*Session),
 		groups:            make(map[string]*Group),
 		conversations:     make(map[string]*Conversation),
+		preferences:       make(map[string]map[string]*ConversationPreference),
 		messages:          make(map[string][]*Message),
 		messageReactions:  make(map[string]map[string]map[string]struct{}),
 		readStates:        make(map[string]map[string]*ReadState),
@@ -146,6 +148,31 @@ func (s *MemoryStore) GetUserConversations(userID string) ([]*Conversation, erro
 	return result, nil
 }
 
+func (s *MemoryStore) GetConversationPreference(conversationID, userID string) (*ConversationPreference, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	preference := s.preferences[conversationID][userID]
+	if preference == nil {
+		return nil, nil
+	}
+	copy := *preference
+	return &copy, nil
+}
+
+func (s *MemoryStore) SetConversationPreference(preference *ConversationPreference) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byUser := s.preferences[preference.ConversationID]
+	if byUser == nil {
+		byUser = make(map[string]*ConversationPreference)
+		s.preferences[preference.ConversationID] = byUser
+	}
+	copy := *preference
+	copy.UpdatedAt = time.Now()
+	byUser[preference.UserID] = &copy
+	return nil
+}
+
 func (s *MemoryStore) DeleteConversation(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,6 +180,7 @@ func (s *MemoryStore) DeleteConversation(id string) error {
 		delete(s.messageReactions, msg.ID)
 	}
 	delete(s.conversations, id)
+	delete(s.preferences, id)
 	delete(s.messages, id)
 	delete(s.readStates, id)
 	return nil
@@ -192,18 +220,31 @@ func (s *MemoryStore) GetMessage(msgID string) (*Message, error) {
 }
 
 func (s *MemoryStore) GetMessages(convID string, limit int) ([]*Message, error) {
+	return s.GetMessagesBefore(convID, "", limit)
+}
+
+func (s *MemoryStore) GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	msgs := s.messages[convID]
-	if limit <= 0 || limit > len(msgs) {
-		limit = len(msgs)
+	end := len(msgs)
+	if beforeMessageID != "" {
+		for index, message := range msgs {
+			if message.ID == beforeMessageID {
+				end = index
+				break
+			}
+		}
 	}
-	start := len(msgs) - limit
+	if limit <= 0 || limit > end {
+		limit = end
+	}
+	start := end - limit
 	if start < 0 {
 		start = 0
 	}
 	result := make([]*Message, limit)
-	for i, msg := range msgs[start:] {
+	for i, msg := range msgs[start:end] {
 		cloned := *msg
 		cloned.Reactions = s.reactionCountsLocked(msg.ID)
 		result[i] = &cloned

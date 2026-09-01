@@ -289,6 +289,29 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<bool> loadOlderMessages(String conversationId) async {
+    final store = _store;
+    if (store == null) return false;
+    const pageSize = 50;
+    final current = _messages[conversationId] ?? const <ImMessage>[];
+    final page = await store.getMessages(
+      conversationId,
+      limit: pageSize,
+      offset: current.length,
+    );
+    if (page.isNotEmpty) {
+      final merged = <String, ImMessage>{
+        for (final message in current) message.id: message,
+        for (final message in page) message.id: message,
+      };
+      _messages[conversationId] =
+          merged.values.toList()..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+      _emitMessages(conversationId);
+    }
+    return page.length >= pageSize;
+  }
+
+  @override
   Future<ImConversation?> getConversation(String conversationId) async =>
       _conversations[conversationId];
 
@@ -558,6 +581,20 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) async {
+    final conversation = _conversations[conversationId];
+    if (conversation == null) throw StateError('Conversation not found.');
+    final updated = conversation.copyWith(isPinned: isPinned, isMuted: isMuted);
+    _conversations[conversationId] = updated;
+    _saveConv(updated);
+    _emitConversations();
+  }
+
+  @override
   Future<List<ImConversation>> searchConversations(String query) async {
     final normalized = query.trim().toLowerCase();
     if (normalized.isEmpty) return _conversations.values.toList();
@@ -720,6 +757,7 @@ class NoneBotSource implements ImMessageSource {
       updatedAt: existing?.updatedAt,
       unreadCount: existing?.unreadCount ?? 0,
       isPinned: existing?.isPinned ?? false,
+      isMuted: existing?.isMuted ?? false,
     );
     _conversations[groupId] = conversation;
     _emitConversations();

@@ -296,6 +296,9 @@ class MockImRepository implements ImRepository {
   }
 
   @override
+  Future<bool> loadOlderMessages(String conversationId) async => false;
+
+  @override
   Future<ImConversation?> getConversation(String conversationId) async {
     return _conversations[conversationId];
   }
@@ -453,6 +456,21 @@ class MockImRepository implements ImRepository {
     final conversation = _conversations[conversationId];
     if (conversation == null || conversation.unreadCount == 0) return;
     _conversations[conversationId] = conversation.copyWith(unreadCount: 0);
+    _emitConversations();
+  }
+
+  @override
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) async {
+    final conversation = _conversations[conversationId];
+    if (conversation == null) throw StateError('Conversation not found.');
+    _conversations[conversationId] = conversation.copyWith(
+      isPinned: isPinned,
+      isMuted: isMuted,
+    );
     _emitConversations();
   }
 

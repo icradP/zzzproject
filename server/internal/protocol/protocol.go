@@ -100,22 +100,23 @@ type Reaction struct {
 type NoticeType string
 
 const (
-	NoticeTypeFriendAdd       NoticeType = "friend_add"
-	NoticeTypeFriendRemove    NoticeType = "friend_remove"
-	NoticeTypeFriendPresence  NoticeType = "friend_presence"
-	NoticeTypeFriendRecall    NoticeType = "friend_recall"
-	NoticeTypeGroupRecall     NoticeType = "group_recall"
-	NoticeTypeGroupIncrease   NoticeType = "group_increase"
-	NoticeTypeGroupDecrease   NoticeType = "group_decrease"
-	NoticeTypeGroupAdmin      NoticeType = "group_admin"
-	NoticeTypeGroupBan        NoticeType = "group_ban"
-	NoticeTypeGroupUpdate     NoticeType = "group_update"
-	NoticeTypeGroupTransfer   NoticeType = "group_transfer"
-	NoticeTypeGroupDismiss    NoticeType = "group_dismiss"
-	NoticeTypeGroupMuteAll    NoticeType = "group_mute_all"
-	NoticeTypePoke            NoticeType = "poke"
-	NoticeTypeMessageRead     NoticeType = "message_read"
-	NoticeTypeMessageReaction NoticeType = "message_reaction"
+	NoticeTypeFriendAdd               NoticeType = "friend_add"
+	NoticeTypeFriendRemove            NoticeType = "friend_remove"
+	NoticeTypeFriendPresence          NoticeType = "friend_presence"
+	NoticeTypeFriendRecall            NoticeType = "friend_recall"
+	NoticeTypeGroupRecall             NoticeType = "group_recall"
+	NoticeTypeGroupIncrease           NoticeType = "group_increase"
+	NoticeTypeGroupDecrease           NoticeType = "group_decrease"
+	NoticeTypeGroupAdmin              NoticeType = "group_admin"
+	NoticeTypeGroupBan                NoticeType = "group_ban"
+	NoticeTypeGroupUpdate             NoticeType = "group_update"
+	NoticeTypeGroupTransfer           NoticeType = "group_transfer"
+	NoticeTypeGroupDismiss            NoticeType = "group_dismiss"
+	NoticeTypeGroupMuteAll            NoticeType = "group_mute_all"
+	NoticeTypePoke                    NoticeType = "poke"
+	NoticeTypeMessageRead             NoticeType = "message_read"
+	NoticeTypeMessageReaction         NoticeType = "message_reaction"
+	NoticeTypeConversationPreferences NoticeType = "conversation_preferences"
 )
 
 // NoticeEvent is pushed for non-message events (recall, group changes, etc.).
@@ -136,6 +137,8 @@ type NoticeEvent struct {
 	EmojiID           string     `json:"emoji_id,omitempty"`
 	Removed           bool       `json:"removed,omitempty"`
 	Online            *bool      `json:"online,omitempty"`
+	IsPinned          *bool      `json:"is_pinned,omitempty"`
+	IsMuted           *bool      `json:"is_muted,omitempty"`
 	Reactions         []Reaction `json:"reactions,omitempty"`
 }
 
@@ -175,44 +178,45 @@ type Response struct {
 
 // Action types
 const (
-	ActionAuth               = "auth"
-	ActionRegister           = "register"
-	ActionLogout             = "logout"
-	ActionPing               = "ping"
-	ActionSendMessage        = "send_message"
-	ActionEnsureConversation = "ensure_conversation"
-	ActionRecallMessage      = "recall_message"
-	ActionReactMessage       = "react_message"
-	ActionGetConversations   = "get_conversations"
-	ActionGetMessages        = "get_messages"
-	ActionMarkRead           = "mark_read"
-	ActionGetUser            = "get_user"
-	ActionUpdateProfile      = "update_profile"
-	ActionGetUsers           = "get_users"
-	ActionGetFriends         = "get_friends"
-	ActionSearchUsers        = "search_users"
-	ActionGetFriendRequests  = "get_friend_requests"
-	ActionRemoveFriend       = "remove_friend"
-	ActionGetGroupList       = "get_group_list"
-	ActionGetGroupInfo       = "get_group_info"
-	ActionCreateGroup        = "create_group"
-	ActionGroupInvite        = "group_invite"
-	ActionJoinGroup          = "join_group"
-	ActionLeaveGroup         = "leave_group"
-	ActionGroupKick          = "group_kick"
-	ActionGroupBan           = "group_ban"
-	ActionUpdateGroup        = "update_group"
-	ActionSetGroupAdmin      = "set_group_admin"
-	ActionTransferGroup      = "transfer_group"
-	ActionDismissGroup       = "dismiss_group"
-	ActionGroupMuteAll       = "group_mute_all"
-	ActionFriendRequest      = "friend_request"
-	ActionFriendHandle       = "friend_request_handle"
-	ActionUploadFile         = "upload_file"
-	ActionGetForwardMessage  = "get_forward_msg"
-	ActionGetPushConfig      = "get_push_config"
-	ActionRegisterPush       = "register_push"
-	ActionUnregisterPush     = "unregister_push"
+	ActionAuth                       = "auth"
+	ActionRegister                   = "register"
+	ActionLogout                     = "logout"
+	ActionPing                       = "ping"
+	ActionSendMessage                = "send_message"
+	ActionEnsureConversation         = "ensure_conversation"
+	ActionRecallMessage              = "recall_message"
+	ActionReactMessage               = "react_message"
+	ActionGetConversations           = "get_conversations"
+	ActionSetConversationPreferences = "set_conversation_preferences"
+	ActionGetMessages                = "get_messages"
+	ActionMarkRead                   = "mark_read"
+	ActionGetUser                    = "get_user"
+	ActionUpdateProfile              = "update_profile"
+	ActionGetUsers                   = "get_users"
+	ActionGetFriends                 = "get_friends"
+	ActionSearchUsers                = "search_users"
+	ActionGetFriendRequests          = "get_friend_requests"
+	ActionRemoveFriend               = "remove_friend"
+	ActionGetGroupList               = "get_group_list"
+	ActionGetGroupInfo               = "get_group_info"
+	ActionCreateGroup                = "create_group"
+	ActionGroupInvite                = "group_invite"
+	ActionJoinGroup                  = "join_group"
+	ActionLeaveGroup                 = "leave_group"
+	ActionGroupKick                  = "group_kick"
+	ActionGroupBan                   = "group_ban"
+	ActionUpdateGroup                = "update_group"
+	ActionSetGroupAdmin              = "set_group_admin"
+	ActionTransferGroup              = "transfer_group"
+	ActionDismissGroup               = "dismiss_group"
+	ActionGroupMuteAll               = "group_mute_all"
+	ActionFriendRequest              = "friend_request"
+	ActionFriendHandle               = "friend_request_handle"
+	ActionUploadFile                 = "upload_file"
+	ActionGetForwardMessage          = "get_forward_msg"
+	ActionGetPushConfig              = "get_push_config"
+	ActionRegisterPush               = "register_push"
+	ActionUnregisterPush             = "unregister_push"
 )
 
 // AuthParams are the params for the "auth" action.
@@ -252,8 +256,16 @@ type ReactMessageParams struct {
 
 // GetMessagesParams are the params for the "get_messages" action.
 type GetMessagesParams struct {
+	ConversationID  string `json:"conversation_id"`
+	Limit           int    `json:"limit,omitempty"`
+	BeforeMessageID string `json:"before_message_id,omitempty"`
+}
+
+// SetConversationPreferencesParams are the params for per-user inbox settings.
+type SetConversationPreferencesParams struct {
 	ConversationID string `json:"conversation_id"`
-	Limit          int    `json:"limit,omitempty"`
+	IsPinned       bool   `json:"is_pinned"`
+	IsMuted        bool   `json:"is_muted"`
 }
 
 // MarkReadParams are the params for the "mark_read" action.
@@ -401,6 +413,8 @@ type Conversation struct {
 	Title          string   `json:"title"`
 	Avatar         string   `json:"avatar_url,omitempty"`
 	UnreadCount    int      `json:"unread_count"`
+	IsPinned       bool     `json:"is_pinned"`
+	IsMuted        bool     `json:"is_muted"`
 	LastMessage    string   `json:"last_message,omitempty"`
 	LastTimestamp  int64    `json:"last_timestamp"`
 	Participants   []string `json:"participants,omitempty"`

@@ -10,6 +10,8 @@ class ConversationTile extends StatefulWidget {
     required this.conversation,
     required this.selected,
     required this.onTap,
+    this.onTogglePinned,
+    this.onToggleMuted,
     this.onDelete,
     super.key,
   });
@@ -17,6 +19,8 @@ class ConversationTile extends StatefulWidget {
   final ImConversation conversation;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback? onTogglePinned;
+  final VoidCallback? onToggleMuted;
   final VoidCallback? onDelete;
 
   @override
@@ -32,7 +36,8 @@ class _ConversationTileState extends State<ConversationTile>
   late final Animation<double> _exitFade;
   bool _exiting = false;
 
-  static const _btnWidth = 80.0;
+  static const _actionWidth = 56.0;
+  static const _actionsWidth = _actionWidth * 3;
   static const _snapThreshold = 0.4;
 
   @override
@@ -44,7 +49,7 @@ class _ConversationTileState extends State<ConversationTile>
     );
     _slide = Tween<Offset>(
       begin: Offset.zero,
-      end: const Offset(-_btnWidth, 0),
+      end: const Offset(-_actionsWidth, 0),
     ).animate(CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic));
 
     _exitCtrl = AnimationController(
@@ -80,15 +85,86 @@ class _ConversationTileState extends State<ConversationTile>
     _exitCtrl.forward();
   }
 
+  void _runAction(VoidCallback? action) {
+    _close();
+    action?.call();
+  }
+
   void _handleTapDown(TapDownDetails details) {
     if (_exiting) return;
     final w = context.size?.width ?? 0;
-    if (_isOpen && details.localPosition.dx > w - _btnWidth) {
-      _onHideTap();
+    if (_isOpen && details.localPosition.dx > w - _actionsWidth) {
+      final distanceFromRight = w - details.localPosition.dx;
+      if (distanceFromRight < _actionWidth) {
+        _onHideTap();
+      } else if (distanceFromRight < _actionWidth * 2) {
+        _runAction(widget.onToggleMuted);
+      } else {
+        _runAction(widget.onTogglePinned);
+      }
     } else if (_isOpen) {
       _close();
     } else {
       widget.onTap();
+    }
+  }
+
+  Future<void> _showContextMenu(Offset position) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<_ConversationAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(position.dx, position.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+          value: _ConversationAction.pin,
+          child: ListTile(
+            dense: true,
+            leading: Icon(
+              widget.conversation.isPinned
+                  ? Icons.push_pin_outlined
+                  : Icons.push_pin_rounded,
+            ),
+            title: Text(widget.conversation.isPinned ? 'Unpin' : 'Pin'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _ConversationAction.mute,
+          child: ListTile(
+            dense: true,
+            leading: Icon(
+              widget.conversation.isMuted
+                  ? Icons.notifications_active_outlined
+                  : Icons.notifications_off_outlined,
+            ),
+            title: Text(
+              widget.conversation.isMuted
+                  ? 'Enable notifications'
+                  : 'Mute notifications',
+            ),
+          ),
+        ),
+        if (widget.onDelete != null)
+          const PopupMenuItem(
+            value: _ConversationAction.hide,
+            child: ListTile(
+              dense: true,
+              leading: Icon(Icons.close_rounded),
+              title: Text('Hide conversation'),
+            ),
+          ),
+      ],
+    );
+    if (!mounted || selected == null) return;
+    switch (selected) {
+      case _ConversationAction.pin:
+        widget.onTogglePinned?.call();
+      case _ConversationAction.mute:
+        widget.onToggleMuted?.call();
+      case _ConversationAction.hide:
+        _onHideTap();
     }
   }
 
@@ -119,9 +195,11 @@ class _ConversationTileState extends State<ConversationTile>
 
     return GestureDetector(
       onTapDown: _handleTapDown,
+      onLongPressStart: (details) => _showContextMenu(details.globalPosition),
+      onSecondaryTapDown: (details) => _showContextMenu(details.globalPosition),
       onHorizontalDragUpdate: (details) {
         if (_exiting) return;
-        final newValue = (_slideCtrl.value - details.delta.dx / _btnWidth)
+        final newValue = (_slideCtrl.value - details.delta.dx / _actionsWidth)
             .clamp(0.0, 1.0);
         _slideCtrl.value = newValue;
       },
@@ -141,17 +219,42 @@ class _ConversationTileState extends State<ConversationTile>
           children: [
             // Fixed hide button behind the content.
             Positioned.fill(
-              child: Container(
+              child: Align(
                 alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 20),
-                decoration: BoxDecoration(
-                  color: ZzzColors.yellow,
-                  borderRadius: BorderRadius.circular(36),
-                ),
-                child: const Icon(
-                  Icons.close_rounded,
-                  color: Colors.black,
-                  size: 28,
+                child: SizedBox(
+                  width: _actionsWidth,
+                  child: Row(
+                    children: [
+                      _buildSwipeAction(
+                        icon:
+                            widget.conversation.isPinned
+                                ? Icons.push_pin_outlined
+                                : Icons.push_pin_rounded,
+                        tooltip: widget.conversation.isPinned ? 'Unpin' : 'Pin',
+                        color: ZzzColors.blue,
+                        onPressed: widget.onTogglePinned,
+                      ),
+                      _buildSwipeAction(
+                        icon:
+                            widget.conversation.isMuted
+                                ? Icons.notifications_active_outlined
+                                : Icons.notifications_off_outlined,
+                        tooltip:
+                            widget.conversation.isMuted
+                                ? 'Enable notifications'
+                                : 'Mute notifications',
+                        color: Colors.white24,
+                        onPressed: widget.onToggleMuted,
+                      ),
+                      _buildSwipeAction(
+                        icon: Icons.close_rounded,
+                        tooltip: 'Hide conversation',
+                        color: ZzzColors.yellow,
+                        foregroundColor: Colors.black,
+                        onPressed: _onHideTap,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -167,6 +270,27 @@ class _ConversationTileState extends State<ConversationTile>
               child: _buildTileContent(),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSwipeAction({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    required VoidCallback? onPressed,
+    Color foregroundColor = Colors.white,
+  }) {
+    return SizedBox(
+      width: _actionWidth,
+      height: double.infinity,
+      child: Material(
+        color: color,
+        child: IconButton(
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: Icon(icon, color: foregroundColor, size: 22),
         ),
       ),
     );
@@ -249,6 +373,24 @@ class _ConversationTileState extends State<ConversationTile>
                             ),
                           ),
                         ),
+                        if (widget.conversation.isMuted)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(
+                              Icons.notifications_off_outlined,
+                              size: 14,
+                              color: selected ? Colors.black54 : Colors.white38,
+                            ),
+                          ),
+                        if (widget.conversation.isPinned)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(
+                              Icons.push_pin_rounded,
+                              size: 14,
+                              color: selected ? Colors.black54 : Colors.white38,
+                            ),
+                          ),
                         if (timeLabel != null)
                           Text(
                             timeLabel,
@@ -346,3 +488,5 @@ class _ConversationTileState extends State<ConversationTile>
     return '${time.month}/${time.day}';
   }
 }
+
+enum _ConversationAction { pin, mute, hide }

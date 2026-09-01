@@ -25,6 +25,8 @@ abstract class ImMessageSource {
 
   Stream<List<ImMessage>> watchMessages(String conversationId);
 
+  Future<bool> loadOlderMessages(String conversationId) async => false;
+
   Future<ImConversation?> getConversation(String conversationId);
 
   Future<ImMessage> sendTextMessage({
@@ -56,6 +58,16 @@ abstract class ImMessageSource {
   });
 
   Future<void> markConversationRead(String conversationId);
+
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) async {
+    throw UnsupportedError(
+      'Conversation preferences are not supported by this source.',
+    );
+  }
 
   Future<List<ImConversation>> searchConversations(String query);
 

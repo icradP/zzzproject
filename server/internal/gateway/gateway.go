@@ -193,6 +193,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleReactMessage(client, req)
 	case protocol.ActionGetConversations:
 		g.handleGetConversations(client, req)
+	case protocol.ActionSetConversationPreferences:
+		g.handleSetConversationPreferences(client, req)
 	case protocol.ActionGetMessages:
 		g.handleGetMessages(client, req)
 	case protocol.ActionMarkRead:
@@ -1090,12 +1092,19 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 			g.sendError(client, req.Echo, "failed to load unread count")
 			return
 		}
+		preference, err := g.store.GetConversationPreference(conv.ID, client.userID)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to load conversation preferences")
+			return
+		}
 		result[i] = protocol.Conversation{
 			ConversationID: conv.ID,
 			Type:           conv.Type,
 			Title:          conv.Title,
 			Avatar:         conv.Avatar,
 			UnreadCount:    unreadCount,
+			IsPinned:       preference != nil && preference.IsPinned,
+			IsMuted:        preference != nil && preference.IsMuted,
 			LastMessage:    lastMsg,
 			LastTimestamp:  lastTs,
 			Participants:   conv.Participants,
@@ -1107,6 +1116,50 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 		RetCode: 0,
 		Data:    result,
 		Echo:    req.Echo,
+	})
+}
+
+func (g *Gateway) handleSetConversationPreferences(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid params")
+		return
+	}
+	conversationID, _ := params["conversation_id"].(string)
+	isPinned, pinnedOK := params["is_pinned"].(bool)
+	isMuted, mutedOK := params["is_muted"].(bool)
+	if conversationID == "" || !pinnedOK || !mutedOK {
+		g.sendError(client, req.Echo, "conversation_id, is_pinned and is_muted required")
+		return
+	}
+	if !g.canAccessConversation(client.userID, conversationID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
+	preference := &store.ConversationPreference{
+		ConversationID: conversationID,
+		UserID:         client.userID,
+		IsPinned:       isPinned,
+		IsMuted:        isMuted,
+	}
+	if err := g.store.SetConversationPreference(preference); err != nil {
+		g.sendError(client, req.Echo, "failed to save conversation preferences")
+		return
+	}
+	g.sendJSON(client, protocol.Response{
+		Status: "ok", RetCode: 0, Data: preference, Echo: req.Echo,
+	})
+	g.sendToUser(client.userID, protocol.NoticeEvent{
+		PostType:       "notice",
+		NoticeType:     protocol.NoticeTypeConversationPreferences,
+		UserID:         client.userID,
+		ConversationID: conversationID,
+		IsPinned:       &isPinned,
+		IsMuted:        &isMuted,
 	})
 }
 
@@ -1136,8 +1189,14 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 	if l, ok := params["limit"].(float64); ok {
 		limit = int(l)
 	}
+	if limit < 1 {
+		limit = 1
+	} else if limit > 100 {
+		limit = 100
+	}
+	beforeMessageID, _ := params["before_message_id"].(string)
 
-	msgs, err := g.store.GetMessages(convID, limit)
+	msgs, err := g.store.GetMessagesBefore(convID, beforeMessageID, limit)
 	if err != nil {
 		g.sendError(client, req.Echo, "failed to load messages")
 		return
@@ -2545,6 +2604,14 @@ func (g *Gateway) pushToConversation(convID string, message *store.Message, excl
 
 	go func() {
 		for _, userID := range recipients {
+			preference, err := g.store.GetConversationPreference(convID, userID)
+			if err != nil {
+				log.Printf("[push] failed to load conversation preferences for %s: %v", userID, err)
+				continue
+			}
+			if preference != nil && preference.IsMuted {
+				continue
+			}
 			subscriptions, err := g.store.GetPushSubscriptions(userID)
 			if err != nil {
 				log.Printf("[push] failed to load subscriptions for %s: %v", userID, err)

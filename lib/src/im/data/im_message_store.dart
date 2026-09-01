@@ -10,11 +10,7 @@ import 'im_storage_config.dart';
 
 /// SQLite-backed persistent store for IM conversations and messages.
 class ImMessageStore {
-  ImMessageStore({
-    required this.selfId,
-    this.debugDbPath,
-    this.storageConfig,
-  });
+  ImMessageStore({required this.selfId, this.debugDbPath, this.storageConfig});
 
   final String selfId;
   final String? debugDbPath;
@@ -22,7 +18,7 @@ class ImMessageStore {
 
   Database? _db;
 
-  static const _version = 5;
+  static const _version = 6;
 
   static bool _ffiInitialized = false;
 
@@ -82,6 +78,7 @@ class ImMessageStore {
         updated_at      INTEGER,
         unread_count    INTEGER NOT NULL DEFAULT 0,
         is_pinned       INTEGER NOT NULL DEFAULT 0,
+        is_muted        INTEGER NOT NULL DEFAULT 0,
         extra           TEXT NOT NULL DEFAULT '{}'
       )
     ''');
@@ -140,9 +137,7 @@ class ImMessageStore {
       await db.execute(
         "ALTER TABLE conversations ADD COLUMN extra TEXT NOT NULL DEFAULT '{}'",
       );
-      await db.execute(
-        "ALTER TABLE messages ADD COLUMN reactions TEXT",
-      );
+      await db.execute("ALTER TABLE messages ADD COLUMN reactions TEXT");
       await db.execute(
         "ALTER TABLE messages ADD COLUMN extra TEXT NOT NULL DEFAULT '{}'",
       );
@@ -165,6 +160,11 @@ class ImMessageStore {
           fetched_at  INTEGER NOT NULL
         )
       ''');
+    }
+    if (oldV < 6) {
+      await db.execute(
+        'ALTER TABLE conversations ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0',
+      );
     }
   }
 
@@ -208,7 +208,11 @@ class ImMessageStore {
 
   Future<void> deleteConversation(String id) async {
     await _db_.delete('conversations', where: 'id = ?', whereArgs: [id]);
-    await _db_.delete('messages', where: 'conversation_id = ?', whereArgs: [id]);
+    await _db_.delete(
+      'messages',
+      where: 'conversation_id = ?',
+      whereArgs: [id],
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -236,8 +240,11 @@ class ImMessageStore {
     if (db == null) return;
     final batchOp = db.batch();
     for (final m in batch) {
-      batchOp.insert('messages', _msgToRow(m),
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      batchOp.insert(
+        'messages',
+        _msgToRow(m),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
     await batchOp.commit(noResult: true);
   }
@@ -258,9 +265,7 @@ class ImMessageStore {
     return rows.map(_rowToMsg).toList().reversed.toList();
   }
 
-  Future<List<ImMessage>> getLatestMessages({
-    int perConversation = 1,
-  }) async {
+  Future<List<ImMessage>> getLatestMessages({int perConversation = 1}) async {
     final rows = await _db_.rawQuery('''
       SELECT m.* FROM messages m
       INNER JOIN (
@@ -274,16 +279,11 @@ class ImMessageStore {
     return rows.map(_rowToMsg).toList();
   }
 
-  Future<List<ImMessage>> loadAllMessages({
-    int limitPerConv = 30,
-  }) async {
+  Future<List<ImMessage>> loadAllMessages({int limitPerConv = 30}) async {
     final convRows = await _db_.query('conversations');
     final result = <ImMessage>[];
     for (final c in convRows) {
-      final msgs = await getMessages(
-        c['id'] as String,
-        limit: limitPerConv,
-      );
+      final msgs = await getMessages(c['id'] as String, limit: limitPerConv);
       result.addAll(msgs);
     }
     return result;
@@ -314,10 +314,7 @@ class ImMessageStore {
     );
   }
 
-  Future<List<ImMessage>> searchMessages(
-    String query, {
-    int limit = 30,
-  }) async {
+  Future<List<ImMessage>> searchMessages(String query, {int limit = 30}) async {
     final db = _dbOrNull;
     if (db == null) return [];
     final rows = await db.query(
@@ -345,6 +342,7 @@ class ImMessageStore {
     'updated_at': c.updatedAt?.millisecondsSinceEpoch,
     'unread_count': c.unreadCount,
     'is_pinned': c.isPinned ? 1 : 0,
+    'is_muted': c.isMuted ? 1 : 0,
     'extra': '{}',
   };
 
@@ -355,15 +353,11 @@ class ImMessageStore {
   Future<void> saveForwardRaw(String forwardId, String rawJson) async {
     final db = _dbOrNull;
     if (db == null) return;
-    await db.insert(
-      'forward_messages',
-      {
-        'forward_id': forwardId,
-        'messages': rawJson,
-        'fetched_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('forward_messages', {
+      'forward_id': forwardId,
+      'messages': rawJson,
+      'fetched_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<String?> loadForwardRaw(String forwardId) async {
@@ -383,17 +377,19 @@ class ImMessageStore {
     id: r['id'] as String,
     type: ImConversationType.values[(r['type'] as int?) ?? 0],
     title: (r['title'] as String?) ?? '',
-    participantIds: (jsonDecode((r['participant_ids'] as String?) ?? '[]')
-            as List<dynamic>)
-        .cast<String>(),
+    participantIds:
+        (jsonDecode((r['participant_ids'] as String?) ?? '[]') as List<dynamic>)
+            .cast<String>(),
     subtitle: r['subtitle'] as String?,
     avatarAssetPath: r['avatar_path'] as String?,
     avatarLocalPath: r['avatar_local_path'] as String?,
-    updatedAt: (r['updated_at'] as int?) != null
-        ? DateTime.fromMillisecondsSinceEpoch(r['updated_at'] as int)
-        : null,
+    updatedAt:
+        (r['updated_at'] as int?) != null
+            ? DateTime.fromMillisecondsSinceEpoch(r['updated_at'] as int)
+            : null,
     unreadCount: (r['unread_count'] as int?) ?? 0,
     isPinned: (r['is_pinned'] as int?) == 1,
+    isMuted: (r['is_muted'] as int?) == 1,
   );
 
   Map<String, dynamic> _msgToRow(ImMessage m) => {
@@ -412,13 +408,20 @@ class ImMessageStore {
     'media_size': m.mediaSize,
     'thumbnail_path': m.thumbnailPath,
     'media_mime': m.mediaMime,
-    'reactions': m.reactions != null
-        ? jsonEncode(m.reactions!.map((r) => {
-              'emoji_id': r.emojiId,
-              'count': r.count,
-              'reacted_by_me': r.reactedByMe,
-            }).toList())
-        : null,
+    'reactions':
+        m.reactions != null
+            ? jsonEncode(
+              m.reactions!
+                  .map(
+                    (r) => {
+                      'emoji_id': r.emojiId,
+                      'count': r.count,
+                      'reacted_by_me': r.reactedByMe,
+                    },
+                  )
+                  .toList(),
+            )
+            : null,
     'reply_to_message_id': m.replyToMessageId,
     'recalled': m.recalled ? 1 : 0,
     'extra': '{}',
@@ -438,14 +441,20 @@ class ImMessageStore {
     if (rxRaw != null && rxRaw.isNotEmpty) {
       try {
         final list = jsonDecode(rxRaw) as List<dynamic>;
-        reactions = list
-            .map((e) => ImReaction(
-                  emojiId: '${e['emoji_id'] ?? ''}',
-                  count: (e['count'] as num?)?.toInt() ?? 0,
-                  reactedByMe: e['reacted_by_me'] as bool? ?? false,
-                ))
-            .where((reaction) => reaction.emojiId.isNotEmpty && reaction.count > 0)
-            .toList();
+        reactions =
+            list
+                .map(
+                  (e) => ImReaction(
+                    emojiId: '${e['emoji_id'] ?? ''}',
+                    count: (e['count'] as num?)?.toInt() ?? 0,
+                    reactedByMe: e['reacted_by_me'] as bool? ?? false,
+                  ),
+                )
+                .where(
+                  (reaction) =>
+                      reaction.emojiId.isNotEmpty && reaction.count > 0,
+                )
+                .toList();
       } catch (_) {}
     }
 

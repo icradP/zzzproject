@@ -42,6 +42,10 @@ class SourceBackedRepository implements ImRepository {
       _source.watchMessages(conversationId);
 
   @override
+  Future<bool> loadOlderMessages(String conversationId) =>
+      _source.loadOlderMessages(conversationId);
+
+  @override
   Future<ImConversation?> getConversation(String conversationId) =>
       _source.getConversation(conversationId);
 
@@ -88,6 +92,17 @@ class SourceBackedRepository implements ImRepository {
   @override
   Future<void> markConversationRead(String conversationId) =>
       _source.markConversationRead(conversationId);
+
+  @override
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) => _source.setConversationPreferences(
+    conversationId: conversationId,
+    isPinned: isPinned,
+    isMuted: isMuted,
+  );
 
   @override
   Future<List<ImConversation>> searchConversations(String query) =>

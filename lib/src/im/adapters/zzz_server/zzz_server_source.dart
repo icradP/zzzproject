@@ -66,6 +66,7 @@ class ZzzServerSource implements ImMessageSource {
 
   static const _maxReconnectAttempts = 10;
   static const _heartbeatInterval = Duration(seconds: 30);
+  static const _messagePageSize = 50;
 
   final _statusController = StreamController<ConnectionStatus>.broadcast();
   final _usersController = StreamController<List<ImUser>>.broadcast();
@@ -75,6 +76,8 @@ class ZzzServerSource implements ImMessageSource {
 
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
+  final _hasMoreMessages = <String, bool>{};
+  final _loadingMessageHistory = <String>{};
   final _users = <String, ImUser>{};
   final _friendIds = <String>{};
   final _echoCompleters = <String, Completer<Map<String, dynamic>>>{};
@@ -217,6 +220,37 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
+  Future<bool> loadOlderMessages(String conversationId) async {
+    if (_hasMoreMessages[conversationId] == false ||
+        !_loadingMessageHistory.add(conversationId)) {
+      return false;
+    }
+    try {
+      final messages = _messages[conversationId] ?? const <ImMessage>[];
+      if (messages.isEmpty || _status != ConnectionStatus.connected) {
+        return _hasMoreMessages[conversationId] ?? false;
+      }
+      final response = await _request('get_messages', {
+        'conversation_id': conversationId,
+        'limit': _messagePageSize,
+        'before_message_id': messages.first.id,
+      });
+      _requireOk(response, 'Load older messages');
+      final data = response['data'];
+      if (data is! List) {
+        _hasMoreMessages[conversationId] = false;
+        return false;
+      }
+      _mergeMessages(conversationId, data);
+      final hasMore = data.length >= _messagePageSize;
+      _hasMoreMessages[conversationId] = hasMore;
+      return hasMore;
+    } finally {
+      _loadingMessageHistory.remove(conversationId);
+    }
+  }
+
+  @override
   Future<ImConversation?> getConversation(String conversationId) async =>
       _conversations[conversationId];
 
@@ -354,6 +388,33 @@ class ZzzServerSource implements ImMessageSource {
         }
         rethrow;
       }
+    }
+  }
+
+  @override
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) async {
+    final previous = _conversations[conversationId];
+    if (previous == null) throw StateError('Conversation not found.');
+    _conversations[conversationId] = previous.copyWith(
+      isPinned: isPinned,
+      isMuted: isMuted,
+    );
+    _emitConversations();
+    try {
+      final response = await _request('set_conversation_preferences', {
+        'conversation_id': conversationId,
+        'is_pinned': isPinned,
+        'is_muted': isMuted,
+      });
+      _requireOk(response, 'Save conversation preferences');
+    } catch (_) {
+      _conversations[conversationId] = previous;
+      _emitConversations();
+      rethrow;
     }
   }
 
@@ -505,12 +566,19 @@ class ZzzServerSource implements ImMessageSource {
                     .toList();
           }
         } catch (_) {}
+        final existing = _conversations[id];
         final conversation = ImConversation(
           id: id,
           type: ImConversationType.group,
           title: '${json['name'] ?? id}',
           participantIds: participants,
           avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
+          avatarLocalPath: existing?.avatarLocalPath,
+          subtitle: existing?.subtitle,
+          updatedAt: existing?.updatedAt,
+          unreadCount: existing?.unreadCount ?? 0,
+          isPinned: existing?.isPinned ?? false,
+          isMuted: existing?.isMuted ?? false,
         );
         _conversations[id] = conversation;
         groups.add(conversation);
@@ -676,6 +744,7 @@ class ZzzServerSource implements ImMessageSource {
       updatedAt: existing?.updatedAt,
       unreadCount: existing?.unreadCount ?? 0,
       isPinned: existing?.isPinned ?? false,
+      isMuted: existing?.isMuted ?? false,
     );
     _conversations[groupId] = conversation;
     _emitConversations();
@@ -919,12 +988,17 @@ class ZzzServerSource implements ImMessageSource {
   Future<void> _syncMessages(String conversationId) async {
     final response = await _request('get_messages', {
       'conversation_id': conversationId,
-      'limit': 100,
+      'limit': _messagePageSize,
     });
     _requireOk(response, 'Load messages');
     final data = response['data'];
     if (data is! List) return;
 
+    _mergeMessages(conversationId, data);
+    _hasMoreMessages[conversationId] = data.length >= _messagePageSize;
+  }
+
+  void _mergeMessages(String conversationId, List<dynamic> data) {
     final merged = <String, ImMessage>{
       for (final message in _messages[conversationId] ?? const <ImMessage>[])
         message.id: message,
@@ -965,6 +1039,8 @@ class ZzzServerSource implements ImMessageSource {
         value: json['avatar_url'] as String?,
       ),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+      isPinned: json['is_pinned'] as bool? ?? false,
+      isMuted: json['is_muted'] as bool? ?? false,
       updatedAt:
           timestamp > 0
               ? DateTime.fromMillisecondsSinceEpoch(timestamp * 1000)
@@ -1000,6 +1076,18 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   void _handleNoticeEvent(Map<String, dynamic> json) {
+    if (json['notice_type'] == 'conversation_preferences') {
+      final conversationId = '${json['conversation_id'] ?? ''}';
+      final conversation = _conversations[conversationId];
+      if (conversation != null) {
+        _conversations[conversationId] = conversation.copyWith(
+          isPinned: json['is_pinned'] as bool? ?? conversation.isPinned,
+          isMuted: json['is_muted'] as bool? ?? conversation.isMuted,
+        );
+        _emitConversations();
+      }
+      return;
+    }
     if (json['notice_type'] == 'message_read') {
       _handleMessageRead(json);
       return;

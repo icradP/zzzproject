@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../assets/app_assets.dart';
@@ -25,6 +27,28 @@ class _ConversationListViewState extends State<ConversationListView> {
   final _searchController = TextEditingController();
   String _query = '';
   List<ImConversation>? _cachedConversations;
+
+  Future<void> _setPreference(
+    ImConversation conversation, {
+    bool? isPinned,
+    bool? isMuted,
+  }) async {
+    try {
+      await ImScope.repositoryOf(context).setConversationPreferences(
+        conversationId: conversation.id,
+        isPinned: isPinned ?? conversation.isPinned,
+        isMuted: isMuted ?? conversation.isMuted,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
 
   @override
   void dispose() {
@@ -58,16 +82,17 @@ class _ConversationListViewState extends State<ConversationListView> {
             builder: (context, snapshot) {
               final conversations = snapshot.data ?? const <ImConversation>[];
               _cachedConversations = conversations;
-              final filtered = _query.isEmpty
-                  ? conversations
-                  : conversations.where((conversation) {
-                      return conversation.title
-                              .toLowerCase()
-                              .contains(_query) ||
-                          (conversation.subtitle ?? '')
-                              .toLowerCase()
-                              .contains(_query);
-                    }).toList();
+              final filtered =
+                  _query.isEmpty
+                      ? conversations
+                      : conversations.where((conversation) {
+                        return conversation.title.toLowerCase().contains(
+                              _query,
+                            ) ||
+                            (conversation.subtitle ?? '')
+                                .toLowerCase()
+                                .contains(_query);
+                      }).toList();
 
               if (filtered.isEmpty) {
                 return Center(
@@ -102,9 +127,18 @@ class _ConversationListViewState extends State<ConversationListView> {
                       conversation: conv,
                       selected: conv.id == widget.selectedConversationId,
                       onTap: () => widget.onConversationSelected(conv),
+                      onTogglePinned:
+                          () => unawaited(
+                            _setPreference(conv, isPinned: !conv.isPinned),
+                          ),
+                      onToggleMuted:
+                          () => unawaited(
+                            _setPreference(conv, isMuted: !conv.isMuted),
+                          ),
                       onDelete: () {
-                        ImScope.repositoryOf(context)
-                            .deleteConversation(conv.id);
+                        ImScope.repositoryOf(
+                          context,
+                        ).deleteConversation(conv.id);
                       },
                     ),
                   );
@@ -150,10 +184,7 @@ class _AnimatedListItemState extends State<_AnimatedListItem>
     _slide = Tween<Offset>(
       begin: Offset.zero,
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _prevIndex = widget.index;
   }
 
@@ -168,10 +199,9 @@ class _AnimatedListItemState extends State<_AnimatedListItem>
       _slide = Tween<Offset>(
         begin: Offset(0, delta * 0.8),
         end: Offset.zero,
-      ).animate(CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutCubic,
-      ));
+      ).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
+      );
       _controller.forward(from: 0);
     }
     _prevIndex = widget.index;

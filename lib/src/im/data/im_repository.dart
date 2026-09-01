@@ -22,6 +22,10 @@ abstract class ImRepository {
   /// Live messages for a single conversation.
   Stream<List<ImMessage>> watchMessages(String conversationId);
 
+  /// Loads the page immediately before the oldest emitted message. Returns
+  /// whether another older page may still exist.
+  Future<bool> loadOlderMessages(String conversationId) async => false;
+
   /// Fetch a conversation by id.
   Future<ImConversation?> getConversation(String conversationId);
 
@@ -59,6 +63,16 @@ abstract class ImRepository {
 
   /// Mark all messages in a conversation as read.
   Future<void> markConversationRead(String conversationId);
+
+  Future<void> setConversationPreferences({
+    required String conversationId,
+    required bool isPinned,
+    required bool isMuted,
+  }) async {
+    throw UnsupportedError(
+      'Conversation preferences are not supported by this repository.',
+    );
+  }
 
   /// Optional search hook for future inbox filtering.
   Future<List<ImConversation>> searchConversations(String query);

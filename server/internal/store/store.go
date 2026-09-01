@@ -26,12 +26,15 @@ type Store interface {
 	GetConversation(id string) (*Conversation, error)
 	GetConversations() ([]*Conversation, error)
 	GetUserConversations(userID string) ([]*Conversation, error)
+	GetConversationPreference(conversationID, userID string) (*ConversationPreference, error)
+	SetConversationPreference(preference *ConversationPreference) error
 	DeleteConversation(id string) error
 
 	// ---- Message operations ----
 	StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error)
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
+	GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error)
 	ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error)
 	GetMessageReactionIDs(msgID, userID string) ([]string, error)
 	RecallMessage(msgID string) (bool, error)
@@ -112,6 +115,15 @@ type Conversation struct {
 	OwnerID      string    `json:"owner_id,omitempty"`
 	Participants []string  `json:"participants,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ConversationPreference stores per-user inbox behavior for a conversation.
+type ConversationPreference struct {
+	ConversationID string    `json:"conversation_id"`
+	UserID         string    `json:"user_id"`
+	IsPinned       bool      `json:"is_pinned"`
+	IsMuted        bool      `json:"is_muted"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // User represents a user.

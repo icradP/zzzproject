@@ -48,7 +48,7 @@ func (s *SQLiteStore) initSchema() error {
 		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS conversations (
+		CREATE TABLE IF NOT EXISTS conversations (
 		id TEXT PRIMARY KEY,
 		type TEXT NOT NULL, -- "private" or "group"
 		title TEXT NOT NULL,
@@ -56,7 +56,20 @@ func (s *SQLiteStore) initSchema() error {
 		owner_id TEXT DEFAULT '',
 		participants TEXT DEFAULT '[]', -- JSON array of user IDs
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
+		);
+
+		CREATE TABLE IF NOT EXISTS conversation_preferences (
+			conversation_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			is_pinned BOOLEAN DEFAULT FALSE,
+			is_muted BOOLEAN DEFAULT FALSE,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (conversation_id, user_id),
+			FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_conversation_preferences_user
+			ON conversation_preferences(user_id, is_pinned, updated_at);
 
 	CREATE TABLE IF NOT EXISTS sessions (
 		token_hash TEXT PRIMARY KEY,
@@ -383,6 +396,40 @@ func (s *SQLiteStore) GetUserConversations(userID string) ([]*Conversation, erro
 	return append(privateConvs, groupConvs...), nil
 }
 
+func (s *SQLiteStore) GetConversationPreference(conversationID, userID string) (*ConversationPreference, error) {
+	preference := &ConversationPreference{}
+	err := s.db.QueryRow(
+		`SELECT conversation_id, user_id, is_pinned, is_muted, updated_at
+		 FROM conversation_preferences WHERE conversation_id = ? AND user_id = ?`,
+		conversationID, userID,
+	).Scan(
+		&preference.ConversationID, &preference.UserID, &preference.IsPinned,
+		&preference.IsMuted, &preference.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return preference, nil
+}
+
+func (s *SQLiteStore) SetConversationPreference(preference *ConversationPreference) error {
+	_, err := s.db.Exec(`
+		INSERT INTO conversation_preferences
+			(conversation_id, user_id, is_pinned, is_muted, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(conversation_id, user_id) DO UPDATE SET
+			is_pinned = excluded.is_pinned,
+			is_muted = excluded.is_muted,
+			updated_at = excluded.updated_at`,
+		preference.ConversationID, preference.UserID, preference.IsPinned,
+		preference.IsMuted, time.Now(),
+	)
+	return err
+}
+
 func (s *SQLiteStore) getPrivateConversations(userID string) ([]*Conversation, error) {
 	rows, err := s.db.Query(
 		"SELECT id, type, title, avatar_url, owner_id, participants, created_at FROM conversations WHERE type = 'private' AND participants LIKE ?",
@@ -433,6 +480,9 @@ func (s *SQLiteStore) getGroupConversations(userID string) ([]*Conversation, err
 }
 
 func (s *SQLiteStore) DeleteConversation(id string) error {
+	if _, err := s.db.Exec("DELETE FROM conversation_preferences WHERE conversation_id = ?", id); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec("DELETE FROM conversation_reads WHERE conversation_id = ?", id); err != nil {
 		return err
 	}
@@ -497,10 +547,19 @@ func (s *SQLiteStore) GetMessage(msgID string) (*Message, error) {
 }
 
 func (s *SQLiteStore) GetMessages(convID string, limit int) ([]*Message, error) {
-	rows, err := s.db.Query(
-		"SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, timestamp FROM messages WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT ?",
-		convID, limit,
-	)
+	return s.GetMessagesBefore(convID, "", limit)
+}
+
+func (s *SQLiteStore) GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error) {
+	query := "SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, timestamp FROM messages WHERE conversation_id = ?"
+	args := []interface{}{convID}
+	if beforeMessageID != "" {
+		query += " AND (timestamp, id) < (SELECT timestamp, id FROM messages WHERE conversation_id = ? AND id = ?)"
+		args = append(args, convID, beforeMessageID)
+	}
+	query += " ORDER BY timestamp DESC, id DESC LIMIT ?"
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
