@@ -751,7 +751,10 @@ class CompositeImRepository implements ImRepository {
       mediaPath: message.mediaPath,
       mediaUrl: message.mediaUrl,
       mediaSize: message.mediaSize,
+      mediaWidth: message.mediaWidth,
+      mediaHeight: message.mediaHeight,
       thumbnailPath: message.thumbnailPath,
+      thumbnailUrl: message.thumbnailUrl,
       mediaMime: message.mediaMime,
       reactions: message.reactions,
       replyToMessageId:

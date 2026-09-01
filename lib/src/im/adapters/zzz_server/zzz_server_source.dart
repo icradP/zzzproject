@@ -384,6 +384,7 @@ class ZzzServerSource implements ImMessageSource {
     _requireOk(response, 'Upload file');
     final data = response['data'] as Map?;
     final url = data?['url'] as String?;
+    final thumbnailUrl = data?['thumbnail_url'] as String?;
     final fileId = data?['file_id'] as String?;
     if (url == null || url.isEmpty || fileId == null || fileId.isEmpty) {
       throw StateError('Upload file failed: invalid server response');
@@ -394,9 +395,13 @@ class ZzzServerSource implements ImMessageSource {
         'data': {
           'file': fileId,
           'url': url,
+          if (thumbnailUrl != null && thumbnailUrl.isNotEmpty)
+            'thumbnail_url': thumbnailUrl,
           'name': upload.fileName,
           'mime_type': upload.mimeType,
           'size': bytes.length,
+          if (data?['width'] != null) 'width': data?['width'],
+          if (data?['height'] != null) 'height': data?['height'],
         },
       },
     ]);
@@ -1427,6 +1432,7 @@ class ZzzServerSource implements ImMessageSource {
       );
       if (_friendIds.contains(senderId)) _emitUsers();
       final mediaUrl = (data['url'] as String?) ?? (data['file'] as String?);
+      final thumbnailUrl = data['thumbnail_url'] as String?;
       return ImMessage(
         id: '${json['message_id']}',
         conversationId: conversationId,
@@ -1444,6 +1450,9 @@ class ZzzServerSource implements ImMessageSource {
         mediaPath: _resolveMediaUrl(mediaUrl),
         mediaUrl: mediaUrl,
         mediaSize: (data['size'] as num?)?.toInt(),
+        mediaWidth: (data['width'] as num?)?.toInt(),
+        mediaHeight: (data['height'] as num?)?.toInt(),
+        thumbnailUrl: _resolveMediaUrl(thumbnailUrl),
         mediaMime: data['mime_type'] as String?,
         reactions: _parseReactions(
           json['reactions'],
@@ -1577,6 +1586,7 @@ class ZzzServerSource implements ImMessageSource {
     });
     final firstData = first['data'] as Map?;
     final mediaUrl = firstData?['url'] as String?;
+    final thumbnailUrl = firstData?['thumbnail_url'] as String?;
     final message = ImMessage(
       id: '${responseData?['message_id']}',
       conversationId: conversationId,
@@ -1596,6 +1606,9 @@ class ZzzServerSource implements ImMessageSource {
       mediaPath: _resolveMediaUrl(mediaUrl),
       mediaUrl: mediaUrl,
       mediaSize: (firstData?['size'] as num?)?.toInt(),
+      mediaWidth: (firstData?['width'] as num?)?.toInt(),
+      mediaHeight: (firstData?['height'] as num?)?.toInt(),
+      thumbnailUrl: _resolveMediaUrl(thumbnailUrl),
       mediaMime: firstData?['mime_type'] as String?,
     );
     _addMessageToStream(message);

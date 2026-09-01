@@ -979,23 +979,25 @@ func validateImageSegmentURL(segment protocol.MessageSegment) error {
 	if segment.Type != "image" {
 		return nil
 	}
-	rawURL, _ := segment.Data["url"].(string)
-	if rawURL == "" {
-		return nil
-	}
-	if len(rawURL) > 2048 || rawURL != strings.TrimSpace(rawURL) {
-		return fmt.Errorf("image URL is invalid")
-	}
-	if strings.HasPrefix(rawURL, "/files/") {
-		parsed, err := url.ParseRequestURI(rawURL)
-		if err != nil || parsed.IsAbs() || parsed.Host != "" {
+	for _, key := range []string{"url", "thumbnail_url"} {
+		rawURL, _ := segment.Data[key].(string)
+		if rawURL == "" {
+			continue
+		}
+		if len(rawURL) > 2048 || rawURL != strings.TrimSpace(rawURL) {
 			return fmt.Errorf("image URL is invalid")
 		}
-		return nil
-	}
-	parsed, err := url.ParseRequestURI(rawURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return fmt.Errorf("external image URL must use HTTPS")
+		if strings.HasPrefix(rawURL, "/files/") {
+			parsed, err := url.ParseRequestURI(rawURL)
+			if err != nil || parsed.IsAbs() || parsed.Host != "" {
+				return fmt.Errorf("image URL is invalid")
+			}
+			continue
+		}
+		parsed, err := url.ParseRequestURI(rawURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+			return fmt.Errorf("external image URL must use HTTPS")
+		}
 	}
 	return nil
 }
@@ -2551,10 +2553,13 @@ func (g *Gateway) handleUploadFile(client *Client, req *protocol.Request) {
 		Status:  "ok",
 		RetCode: 0,
 		Data: map[string]interface{}{
-			"file_id":   media.ID,
-			"url":       media.URL,
-			"mime_type": media.MimeType,
-			"size":      media.Size,
+			"file_id":       media.ID,
+			"url":           media.URL,
+			"thumbnail_url": media.ThumbnailURL,
+			"mime_type":     media.MimeType,
+			"size":          media.Size,
+			"width":         media.Width,
+			"height":        media.Height,
 		},
 		Echo: req.Echo,
 	})

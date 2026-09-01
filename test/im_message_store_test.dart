@@ -81,6 +81,9 @@ void main() {
         ),
       ],
       mediaUrl: 'https://example.com/a.jpg',
+      mediaWidth: 1920,
+      mediaHeight: 1080,
+      thumbnailUrl: 'https://example.com/a-thumb.jpg',
       mediaMime: 'image/jpeg',
     );
 
@@ -92,6 +95,9 @@ void main() {
     expect(read.text, '@Alice check this [图片]');
     expect(read.kind, ImMessageKind.image);
     expect(read.mediaUrl, 'https://example.com/a.jpg');
+    expect(read.mediaWidth, 1920);
+    expect(read.mediaHeight, 1080);
+    expect(read.thumbnailUrl, 'https://example.com/a-thumb.jpg');
     expect(read.segments, isNotNull);
     expect(read.segments!.length, 3);
     expect(read.segments![2].type, 'image');

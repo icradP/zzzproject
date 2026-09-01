@@ -1,9 +1,15 @@
 package media
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"image"
+	"image/color"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"mime"
 	"net/http"
 	"net/url"
@@ -44,6 +50,7 @@ func (s *LocalStore) Save(
 		contentType == "application/octet-stream" {
 		contentType = http.DetectContentType(data)
 	}
+	thumbnail, width, height := makeThumbnail(data, contentType)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,11 +73,18 @@ func (s *LocalStore) Save(
 		return nil, fmt.Errorf("create media file: %w", err)
 	}
 	temporaryName := temporary.Name()
+	thumbnailTemporaryName := ""
 	committed := false
+	thumbnailCommitted := false
+	finalPath := filepath.Join(s.directory, id)
+	thumbnailPath := filepath.Join(s.directory, id+".thumb")
 	defer func() {
 		_ = temporary.Close()
 		if !committed {
 			_ = os.Remove(temporaryName)
+		}
+		if thumbnailTemporaryName != "" && !thumbnailCommitted {
+			_ = os.Remove(thumbnailTemporaryName)
 		}
 	}()
 	if err := temporary.Chmod(0o640); err != nil {
@@ -82,11 +96,42 @@ func (s *LocalStore) Save(
 	if err := temporary.Close(); err != nil {
 		return nil, err
 	}
-	finalPath := filepath.Join(s.directory, id)
 	if err := os.Rename(temporaryName, finalPath); err != nil {
 		return nil, fmt.Errorf("commit media file: %w", err)
 	}
 	committed = true
+	if len(thumbnail) > 0 {
+		thumbnailTemporary, err := os.CreateTemp(s.directory, ".thumbnail-*")
+		if err != nil {
+			_ = os.Remove(finalPath)
+			committed = false
+			return nil, fmt.Errorf("create thumbnail file: %w", err)
+		}
+		thumbnailTemporaryName = thumbnailTemporary.Name()
+		if err := thumbnailTemporary.Chmod(0o640); err != nil {
+			_ = thumbnailTemporary.Close()
+			_ = os.Remove(finalPath)
+			committed = false
+			return nil, err
+		}
+		if _, err := thumbnailTemporary.Write(thumbnail); err != nil {
+			_ = thumbnailTemporary.Close()
+			_ = os.Remove(finalPath)
+			committed = false
+			return nil, fmt.Errorf("write thumbnail file: %w", err)
+		}
+		if err := thumbnailTemporary.Close(); err != nil {
+			_ = os.Remove(finalPath)
+			committed = false
+			return nil, err
+		}
+		if err := os.Rename(thumbnailTemporaryName, thumbnailPath); err != nil {
+			_ = os.Remove(finalPath)
+			committed = false
+			return nil, fmt.Errorf("commit thumbnail file: %w", err)
+		}
+		thumbnailCommitted = true
+	}
 
 	fileName = safeFileName(fileName)
 	metadata := &store.MediaFile{
@@ -96,11 +141,19 @@ func (s *LocalStore) Save(
 		MimeType:   contentType,
 		Size:       int64(len(data)),
 		URL:        "/files/" + id + "/" + url.PathEscape(fileName),
+		Width:      width,
+		Height:     height,
 		UploaderID: uploaderID,
 		CreatedAt:  time.Now(),
 	}
+	if len(thumbnail) > 0 {
+		metadata.ThumbnailURL = "/files/" + id + "/thumb/" + url.PathEscape(fileName) + ".jpg"
+	}
 	if err := s.metadata.StoreMedia(metadata); err != nil {
 		_ = os.Remove(finalPath)
+		if thumbnailCommitted {
+			_ = os.Remove(thumbnailPath)
+		}
 		return nil, fmt.Errorf("store media metadata: %w", err)
 	}
 	return metadata, nil
@@ -108,6 +161,8 @@ func (s *LocalStore) Save(
 
 // Delete removes both the media bytes and their metadata.
 func (s *LocalStore) Delete(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !validID(id) {
 		return false, nil
 	}
@@ -119,6 +174,7 @@ func (s *LocalStore) Delete(id string) (bool, error) {
 		return false, nil
 	}
 	originalPath := filepath.Join(s.directory, id)
+	thumbnailPath := filepath.Join(s.directory, id+".thumb")
 	tombstonePath := filepath.Join(s.directory, "."+id+".deleting")
 	renamed := false
 	if err := os.Rename(originalPath, tombstonePath); err == nil {
@@ -137,6 +193,9 @@ func (s *LocalStore) Delete(id string) (bool, error) {
 			return false, fmt.Errorf("delete media file: %w", err)
 		}
 	}
+	if err := os.Remove(thumbnailPath); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("delete media thumbnail: %w", err)
+	}
 	return true, nil
 }
 
@@ -145,7 +204,12 @@ func (s *LocalStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	id := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/files/"), "/", 2)[0]
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/files/"), "/")
+	if len(parts) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	id := parts[0]
 	if !validID(id) {
 		http.NotFound(w, r)
 		return
@@ -155,7 +219,19 @@ func (s *LocalStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	file, err := os.Open(filepath.Join(s.directory, id))
+	isThumbnail := len(parts) > 1 && parts[1] == "thumb"
+	path := filepath.Join(s.directory, id)
+	contentType := metadata.MimeType
+	fileName := metadata.FileName
+	if isThumbnail {
+		thumbnailPath := filepath.Join(s.directory, id+".thumb")
+		if _, err := os.Stat(thumbnailPath); err == nil {
+			path = thumbnailPath
+			contentType = "image/jpeg"
+			fileName = "thumb-" + metadata.FileName
+		}
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -169,19 +245,83 @@ func (s *LocalStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Type", metadata.MimeType)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	disposition := "attachment"
-	if (strings.HasPrefix(metadata.MimeType, "image/") &&
-		metadata.MimeType != "image/svg+xml") ||
-		strings.HasPrefix(metadata.MimeType, "audio/") ||
-		strings.HasPrefix(metadata.MimeType, "video/") {
+	if (strings.HasPrefix(contentType, "image/") &&
+		contentType != "image/svg+xml") ||
+		strings.HasPrefix(contentType, "audio/") ||
+		strings.HasPrefix(contentType, "video/") {
 		disposition = "inline"
 	}
 	w.Header().Set(
 		"Content-Disposition",
-		mime.FormatMediaType(disposition, map[string]string{"filename": metadata.FileName}),
+		mime.FormatMediaType(disposition, map[string]string{"filename": fileName}),
 	)
-	http.ServeContent(w, r, metadata.FileName, info.ModTime(), file)
+	http.ServeContent(w, r, fileName, info.ModTime(), file)
+}
+
+const maxThumbnailEdge = 640
+const maxDecodedImagePixels int64 = 64 * 1024 * 1024
+
+// makeThumbnail returns a JPEG preview and the original image dimensions. A
+// malformed image or unsupported format simply has no preview; the original
+// upload remains valid and available.
+func makeThumbnail(data []byte, contentType string) ([]byte, int, int) {
+	if !strings.HasPrefix(contentType, "image/") || contentType == "image/svg+xml" {
+		return nil, 0, 0
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, 0, 0
+	}
+	width, height := config.Width, config.Height
+	if width <= 0 || height <= 0 {
+		return nil, 0, 0
+	}
+	if int64(width) > maxDecodedImagePixels/int64(height) {
+		return nil, width, height
+	}
+	imageData, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, width, height
+	}
+	bounds := imageData.Bounds()
+	dstWidth, dstHeight := width, height
+	if width > maxThumbnailEdge || height > maxThumbnailEdge {
+		scale := float64(maxThumbnailEdge) / float64(width)
+		if height > width {
+			scale = float64(maxThumbnailEdge) / float64(height)
+		}
+		dstWidth = max(1, int(float64(width)*scale))
+		dstHeight = max(1, int(float64(height)*scale))
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
+	for y := 0; y < dstHeight; y++ {
+		sourceY := bounds.Min.Y + y*height/dstHeight
+		for x := 0; x < dstWidth; x++ {
+			sourceX := bounds.Min.X + x*width/dstWidth
+			converted := color.NRGBAModel.Convert(imageData.At(sourceX, sourceY)).(color.NRGBA)
+			alpha := uint32(converted.A)
+			// Composite transparent pixels against white for predictable JPEG previews.
+			r := uint8((uint32(converted.R)*alpha + 255*(255-alpha)) / 255)
+			g := uint8((uint32(converted.G)*alpha + 255*(255-alpha)) / 255)
+			b := uint8((uint32(converted.B)*alpha + 255*(255-alpha)) / 255)
+			dst.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, dst, &jpeg.Options{Quality: 82}); err != nil {
+		return nil, width, height
+	}
+	return encoded.Bytes(), width, height
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func contentID(uploaderID string, data []byte) string {

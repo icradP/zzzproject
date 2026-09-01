@@ -12,6 +12,12 @@ import 'im_reaction_chips.dart';
 import 'im_reply_quote_bar.dart';
 import 'im_voice_bubble.dart';
 
+String? _previewLocationFor(ImMessage message) =>
+    message.thumbnailPath ??
+    message.thumbnailUrl ??
+    message.mediaPath ??
+    message.mediaUrl;
+
 /// Collapsible recalled-message banner — system-message style.
 class _RecalledBanner extends StatefulWidget {
   const _RecalledBanner({required this.message, required this.senderName});
@@ -79,12 +85,13 @@ class _RecalledContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (message.hasMedia && message.mediaPath != null) {
+    final previewLocation = _previewLocationFor(message);
+    if (message.hasMedia && previewLocation != null) {
       if (message.kind == ImMessageKind.image) {
         return ClipRRect(
           borderRadius: BorderRadius.circular(10),
           child: platformImageWidget(
-            message.mediaPath!,
+            previewLocation,
             width: 200,
             fit: BoxFit.cover,
           ),
@@ -275,6 +282,8 @@ class ImMessageBubble extends StatelessWidget {
       }
       // Mini-program card
       if (isJsonCard) {
+        final previewLocation = _previewLocationFor(message);
+        if (previewLocation == null) return const SizedBox.shrink();
         return ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 250),
           child: Column(
@@ -283,13 +292,13 @@ class ImMessageBubble extends StatelessWidget {
             children: [
               ImNsfwGuard(
                 messageId: message.id,
-                mediaPath: message.mediaPath!,
+                mediaPath: previewLocation,
                 child: ClipRRect(
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(14),
                   ),
                   child: platformImageWidget(
-                    message.mediaPath!,
+                    previewLocation,
                     fit: BoxFit.scaleDown,
                     errorBuilder: (context, error, stack) {
                       return const SizedBox.shrink();
@@ -336,15 +345,26 @@ class ImMessageBubble extends StatelessWidget {
         );
       }
       // Plain image
+      final previewLocation = _previewLocationFor(message);
+      if (previewLocation == null) {
+        return Text(
+          message.text,
+          style: TextStyle(
+            color: isMine ? Colors.white : Colors.black87,
+            fontSize: 15,
+            height: 1.35,
+          ),
+        );
+      }
       return ImNsfwGuard(
         messageId: message.id,
-        mediaPath: message.mediaPath!,
+        mediaPath: previewLocation,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(isImageOnly ? 18 : 12),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 250, maxHeight: 400),
             child: platformImageWidget(
-              message.mediaPath!,
+              previewLocation,
               fit: BoxFit.scaleDown,
               errorBuilder: (context, error, stack) {
                 return Text(

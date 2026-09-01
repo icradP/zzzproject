@@ -202,14 +202,17 @@ type ForwardMessage struct {
 
 // MediaFile represents a stored media file.
 type MediaFile struct {
-	ID         string    `json:"id"`
-	FileName   string    `json:"file_name"`
-	FileType   string    `json:"file_type"` // "image", "voice", "video", "file"
-	MimeType   string    `json:"mime_type"`
-	Size       int64     `json:"size"`
-	URL        string    `json:"url"`
-	UploaderID string    `json:"uploader_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	FileName     string    `json:"file_name"`
+	FileType     string    `json:"file_type"` // "image", "voice", "video", "file"
+	MimeType     string    `json:"mime_type"`
+	Size         int64     `json:"size"`
+	URL          string    `json:"url"`
+	ThumbnailURL string    `json:"thumbnail_url,omitempty"`
+	Width        int       `json:"width,omitempty"`
+	Height       int       `json:"height,omitempty"`
+	UploaderID   string    `json:"uploader_id"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // PushSubscription contains the browser keys required for Web Push delivery.

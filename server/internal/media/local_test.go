@@ -1,17 +1,38 @@
 package media
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/icradp/zzz-im-server/internal/store"
 )
+
+func testPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: uint8(x % 255), G: uint8(y % 255), B: 80, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	return encoded.Bytes()
+}
 
 func TestLocalStoreSaveAndServe(t *testing.T) {
 	database := store.NewMemoryStore()
@@ -42,6 +63,63 @@ func TestLocalStoreSaveAndServe(t *testing.T) {
 	if response.Header.Get("Content-Type") != "image/png" ||
 		response.Header.Get("Accept-Ranges") != "bytes" {
 		t.Fatalf("unexpected media headers: %#v", response.Header)
+	}
+}
+
+func TestLocalStoreGeneratesImageThumbnail(t *testing.T) {
+	database := store.NewMemoryStore()
+	media, err := NewLocalStore(t.TempDir(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := media.Save("large.png", "image", "image/png", testPNG(t, 1200, 800), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.ThumbnailURL == "" || file.Width != 1200 || file.Height != 800 {
+		t.Fatalf("unexpected image metadata: %#v", file)
+	}
+	server := httptest.NewServer(media)
+	t.Cleanup(server.Close)
+	response, err := http.Get(server.URL + file.ThumbnailURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	thumbnail, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(thumbnail))
+	if err != nil || format != "jpeg" {
+		t.Fatalf("thumbnail is not JPEG: format=%q err=%v", format, err)
+	}
+	if config.Width != 640 || config.Height != 426 {
+		t.Fatalf("unexpected thumbnail dimensions: %dx%d", config.Width, config.Height)
+	}
+	if response.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("unexpected thumbnail content type: %q", response.Header.Get("Content-Type"))
+	}
+	if deleted, err := media.Delete(file.ID); err != nil || !deleted {
+		t.Fatalf("delete result=%v err=%v", deleted, err)
+	}
+	if _, err := os.Stat(filepath.Join(media.directory, file.ID+".thumb")); !os.IsNotExist(err) {
+		t.Fatalf("thumbnail still exists after delete, err=%v", err)
+	}
+}
+
+func TestLocalStoreLeavesSVGWithoutThumbnail(t *testing.T) {
+	database := store.NewMemoryStore()
+	media, err := NewLocalStore(t.TempDir(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := media.Save("vector.svg", "image", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.ThumbnailURL != "" || file.Width != 0 || file.Height != 0 {
+		t.Fatalf("SVG unexpectedly has thumbnail metadata: %#v", file)
 	}
 }
 

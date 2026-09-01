@@ -18,7 +18,7 @@ class ImMessageStore {
 
   Database? _db;
 
-  static const _version = 6;
+  static const _version = 8;
 
   static bool _ffiInitialized = false;
 
@@ -97,7 +97,10 @@ class ImMessageStore {
         media_path      TEXT,
         media_url       TEXT,
         media_size      INTEGER,
+        media_width     INTEGER,
+        media_height    INTEGER,
         thumbnail_path  TEXT,
+        thumbnail_url   TEXT,
         media_mime      TEXT,
         reactions       TEXT,
         reply_to_message_id TEXT,
@@ -165,6 +168,13 @@ class ImMessageStore {
       await db.execute(
         'ALTER TABLE conversations ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0',
       );
+    }
+    if (oldV < 7) {
+      await db.execute('ALTER TABLE messages ADD COLUMN thumbnail_url TEXT');
+    }
+    if (oldV < 8) {
+      await db.execute('ALTER TABLE messages ADD COLUMN media_width INTEGER');
+      await db.execute('ALTER TABLE messages ADD COLUMN media_height INTEGER');
     }
   }
 
@@ -406,7 +416,10 @@ class ImMessageStore {
     'media_path': m.mediaPath,
     'media_url': m.mediaUrl,
     'media_size': m.mediaSize,
+    'media_width': m.mediaWidth,
+    'media_height': m.mediaHeight,
     'thumbnail_path': m.thumbnailPath,
+    'thumbnail_url': m.thumbnailUrl,
     'media_mime': m.mediaMime,
     'reactions':
         m.reactions != null
@@ -477,7 +490,10 @@ class ImMessageStore {
       mediaPath: r['media_path'] as String?,
       mediaUrl: r['media_url'] as String?,
       mediaSize: r['media_size'] as int?,
+      mediaWidth: r['media_width'] as int?,
+      mediaHeight: r['media_height'] as int?,
       thumbnailPath: r['thumbnail_path'] as String?,
+      thumbnailUrl: r['thumbnail_url'] as String?,
       mediaMime: r['media_mime'] as String?,
       reactions: reactions,
       replyToMessageId: r['reply_to_message_id'] as String?,

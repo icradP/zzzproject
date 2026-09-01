@@ -173,6 +173,9 @@ func (s *SQLiteStore) initSchema() error {
 		mime_type TEXT DEFAULT '',
 		size INTEGER DEFAULT 0,
 		url TEXT NOT NULL,
+		thumbnail_url TEXT DEFAULT '',
+		width INTEGER DEFAULT 0,
+		height INTEGER DEFAULT 0,
 		uploader_id TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -202,6 +205,9 @@ func (s *SQLiteStore) initSchema() error {
 		"ALTER TABLE groups ADD COLUMN announcement TEXT DEFAULT ''",
 		"ALTER TABLE groups ADD COLUMN mute_all BOOLEAN DEFAULT FALSE",
 		"ALTER TABLE group_members ADD COLUMN muted_until DATETIME",
+		"ALTER TABLE media_files ADD COLUMN thumbnail_url TEXT DEFAULT ''",
+		"ALTER TABLE media_files ADD COLUMN width INTEGER DEFAULT 0",
+		"ALTER TABLE media_files ADD COLUMN height INTEGER DEFAULT 0",
 	} {
 		if _, err := s.db.Exec(statement); err != nil &&
 			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -1222,8 +1228,8 @@ func (s *SQLiteStore) GetForward(id string) (*ForwardMessage, error) {
 
 func (s *SQLiteStore) StoreMedia(file *MediaFile) error {
 	_, err := s.db.Exec(
-		"INSERT INTO media_files (id, file_name, file_type, mime_type, size, url, uploader_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		file.ID, file.FileName, file.FileType, file.MimeType, file.Size, file.URL, file.UploaderID,
+		"INSERT INTO media_files (id, file_name, file_type, mime_type, size, url, thumbnail_url, width, height, uploader_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		file.ID, file.FileName, file.FileType, file.MimeType, file.Size, file.URL, file.ThumbnailURL, file.Width, file.Height, file.UploaderID,
 	)
 	return err
 }
@@ -1231,9 +1237,9 @@ func (s *SQLiteStore) StoreMedia(file *MediaFile) error {
 func (s *SQLiteStore) GetMedia(id string) (*MediaFile, error) {
 	file := &MediaFile{}
 	err := s.db.QueryRow(
-		"SELECT id, file_name, file_type, mime_type, size, url, uploader_id, created_at FROM media_files WHERE id = ?",
+		"SELECT id, file_name, file_type, mime_type, size, url, thumbnail_url, width, height, uploader_id, created_at FROM media_files WHERE id = ?",
 		id,
-	).Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.UploaderID, &file.CreatedAt)
+	).Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.ThumbnailURL, &file.Width, &file.Height, &file.UploaderID, &file.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1248,7 +1254,7 @@ func (s *SQLiteStore) GetMediaFiles(limit int) ([]*MediaFile, error) {
 		limit = 200
 	}
 	rows, err := s.db.Query(
-		"SELECT id, file_name, file_type, mime_type, size, url, uploader_id, created_at FROM media_files ORDER BY created_at DESC, id DESC LIMIT ?",
+		"SELECT id, file_name, file_type, mime_type, size, url, thumbnail_url, width, height, uploader_id, created_at FROM media_files ORDER BY created_at DESC, id DESC LIMIT ?",
 		limit,
 	)
 	if err != nil {
@@ -1258,7 +1264,7 @@ func (s *SQLiteStore) GetMediaFiles(limit int) ([]*MediaFile, error) {
 	var files []*MediaFile
 	for rows.Next() {
 		file := &MediaFile{}
-		if err := rows.Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.UploaderID, &file.CreatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.ThumbnailURL, &file.Width, &file.Height, &file.UploaderID, &file.CreatedAt); err != nil {
 			return nil, err
 		}
 		files = append(files, file)

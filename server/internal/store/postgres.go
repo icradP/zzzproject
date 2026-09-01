@@ -172,6 +172,9 @@ func (s *PostgresStore) initSchema() error {
 		mime_type VARCHAR(64) DEFAULT '',
 		size BIGINT DEFAULT 0,
 		url TEXT NOT NULL,
+		thumbnail_url TEXT DEFAULT '',
+		width INTEGER DEFAULT 0,
+		height INTEGER DEFAULT 0,
 		uploader_id VARCHAR(32) NOT NULL,
 		created_at TIMESTAMP DEFAULT NOW()
 	);
@@ -200,6 +203,9 @@ func (s *PostgresStore) initSchema() error {
 		"ALTER TABLE groups ADD COLUMN IF NOT EXISTS announcement TEXT DEFAULT ''",
 		"ALTER TABLE groups ADD COLUMN IF NOT EXISTS mute_all BOOLEAN DEFAULT FALSE",
 		"ALTER TABLE group_members ADD COLUMN IF NOT EXISTS muted_until TIMESTAMP",
+		"ALTER TABLE media_files ADD COLUMN IF NOT EXISTS thumbnail_url TEXT DEFAULT ''",
+		"ALTER TABLE media_files ADD COLUMN IF NOT EXISTS width INTEGER DEFAULT 0",
+		"ALTER TABLE media_files ADD COLUMN IF NOT EXISTS height INTEGER DEFAULT 0",
 	} {
 		if _, err = s.db.Exec(statement); err != nil {
 			return err
@@ -1209,10 +1215,10 @@ func (s *PostgresStore) GetForward(id string) (*ForwardMessage, error) {
 
 func (s *PostgresStore) StoreMedia(file *MediaFile) error {
 	_, err := s.db.Exec(
-		`INSERT INTO media_files (id, file_name, file_type, mime_type, size, url, uploader_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (id) DO UPDATE SET file_name = $2, url = $6`,
-		file.ID, file.FileName, file.FileType, file.MimeType, file.Size, file.URL, file.UploaderID,
+		`INSERT INTO media_files (id, file_name, file_type, mime_type, size, url, thumbnail_url, width, height, uploader_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 ON CONFLICT (id) DO UPDATE SET file_name = $2, url = $6, thumbnail_url = $7, width = $8, height = $9`,
+		file.ID, file.FileName, file.FileType, file.MimeType, file.Size, file.URL, file.ThumbnailURL, file.Width, file.Height, file.UploaderID,
 	)
 	return err
 }
@@ -1220,9 +1226,9 @@ func (s *PostgresStore) StoreMedia(file *MediaFile) error {
 func (s *PostgresStore) GetMedia(id string) (*MediaFile, error) {
 	file := &MediaFile{}
 	err := s.db.QueryRow(
-		"SELECT id, file_name, file_type, mime_type, size, url, uploader_id, created_at FROM media_files WHERE id = $1",
+		"SELECT id, file_name, file_type, mime_type, size, url, thumbnail_url, width, height, uploader_id, created_at FROM media_files WHERE id = $1",
 		id,
-	).Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.UploaderID, &file.CreatedAt)
+	).Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.ThumbnailURL, &file.Width, &file.Height, &file.UploaderID, &file.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1237,7 +1243,7 @@ func (s *PostgresStore) GetMediaFiles(limit int) ([]*MediaFile, error) {
 		limit = 200
 	}
 	rows, err := s.db.Query(
-		"SELECT id, file_name, file_type, mime_type, size, url, uploader_id, created_at FROM media_files ORDER BY created_at DESC, id DESC LIMIT $1",
+		"SELECT id, file_name, file_type, mime_type, size, url, thumbnail_url, width, height, uploader_id, created_at FROM media_files ORDER BY created_at DESC, id DESC LIMIT $1",
 		limit,
 	)
 	if err != nil {
@@ -1247,7 +1253,7 @@ func (s *PostgresStore) GetMediaFiles(limit int) ([]*MediaFile, error) {
 	var files []*MediaFile
 	for rows.Next() {
 		file := &MediaFile{}
-		if err := rows.Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.UploaderID, &file.CreatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.ThumbnailURL, &file.Width, &file.Height, &file.UploaderID, &file.CreatedAt); err != nil {
 			return nil, err
 		}
 		files = append(files, file)
