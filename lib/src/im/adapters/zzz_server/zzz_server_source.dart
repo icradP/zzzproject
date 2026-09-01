@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../models/im_models.dart';
 import '../../models/im_source_address.dart';
 import '../../data/im_image_hosting_uploader.dart';
+import '../../data/im_profile_background.dart';
 import '../im_message_source.dart';
 import 'im_upload_bytes.dart';
 
@@ -214,6 +215,26 @@ class ZzzServerSource implements ImMessageSource {
     } catch (_) {
       return null;
     }
+  }
+
+  @override
+  Future<ImUser?> getProfileCard(String userId, {String? groupId}) async {
+    final localId = ImSourceAddress.localIdOf(userId);
+    if (_status != ConnectionStatus.connected) return _users[localId];
+    final response = await _request('get_user', {
+      'user_id': localId,
+      if (groupId != null && groupId.isNotEmpty)
+        'group_id': ImSourceAddress.localIdOf(groupId),
+    });
+    _requireOk(response, 'Load profile card');
+    final data = response['data'];
+    if (data is! Map) return null;
+    final user = _userFromJson(
+      Map<String, dynamic>.from(data),
+      fallbackId: localId,
+    );
+    _users[user.id] = user;
+    return user;
   }
 
   @override
@@ -760,6 +781,11 @@ class ZzzServerSource implements ImMessageSource {
     String? nickname,
     ImMediaUpload? avatar,
     String? avatarAssetPath,
+    String? bio,
+    ImMediaUpload? cardBackground,
+    String? cardBackgroundUrl,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
   }) async {
     String? avatarUrl;
     if (avatar != null && avatarAssetPath == null) {
@@ -776,12 +802,39 @@ class ZzzServerSource implements ImMessageSource {
       _requireOk(upload, 'Upload avatar');
       avatarUrl = (upload['data'] as Map?)?['url'] as String?;
     }
+    var effectiveBackgroundUrl = cardBackgroundUrl;
+    if (cardBackground != null) {
+      final uploader = _imageHostingUploader;
+      if (uploader == null) {
+        throw StateError(
+          'Configure custom image hosting in Settings before uploading a card background.',
+        );
+      }
+      final rawBytes = await readUploadBytes(cardBackground);
+      final prepared = await prepareImProfileBackground(rawBytes);
+      final hosted = await uploader.upload(
+        bytes: prepared.bytes,
+        fileName: prepared.fileName,
+        mimeType: prepared.mimeType,
+      );
+      effectiveBackgroundUrl = hosted.url;
+    }
     final params = <String, dynamic>{};
     if (nickname != null) params['nickname'] = nickname.trim();
     if (avatarAssetPath != null && avatarAssetPath.isNotEmpty) {
       params['avatar_url'] = avatarAssetPath;
     } else if (avatarUrl != null && avatarUrl.isNotEmpty) {
       params['avatar_url'] = avatarUrl;
+    }
+    if (bio != null) params['bio'] = bio.trim();
+    if (effectiveBackgroundUrl != null) {
+      params['card_background_url'] = effectiveBackgroundUrl.trim();
+    }
+    if (cardBackgroundSensitive != null) {
+      params['card_background_sensitive'] = cardBackgroundSensitive;
+    }
+    if (showMutualGroups != null) {
+      params['show_mutual_groups'] = showMutualGroups;
     }
     if (params.isEmpty) return getCurrentUser();
     final response = await _request('update_profile', params);
@@ -792,6 +845,75 @@ class ZzzServerSource implements ImMessageSource {
     final user = _userFromJson(data, fallbackId: _selfId);
     _users[_selfId] = user;
     return user;
+  }
+
+  @override
+  Future<ImUserTitle> grantGroupTitle({
+    required String groupId,
+    required String userId,
+    required String text,
+    required String style,
+    DateTime? expiresAt,
+  }) async {
+    final response = await _request('grant_user_title', {
+      'group_id': ImSourceAddress.localIdOf(groupId),
+      'user_id': ImSourceAddress.localIdOf(userId),
+      'text': text.trim(),
+      'style': style,
+      if (expiresAt != null) 'expires_at': expiresAt.toUtc().toIso8601String(),
+    });
+    _requireOk(response, 'Grant group title');
+    return _titleFromJson(
+      Map<String, dynamic>.from(response['data'] as Map? ?? const {}),
+    );
+  }
+
+  @override
+  Future<void> revokeGroupTitle({
+    required String groupId,
+    required String userId,
+    required String titleId,
+  }) async {
+    final response = await _request('revoke_user_title', {
+      'group_id': ImSourceAddress.localIdOf(groupId),
+      'user_id': ImSourceAddress.localIdOf(userId),
+      'title_id': titleId,
+    });
+    _requireOk(response, 'Revoke group title');
+  }
+
+  @override
+  Future<void> setUserBlocked({
+    required String userId,
+    required bool blocked,
+  }) async {
+    final localId = ImSourceAddress.localIdOf(userId);
+    final response = await _request('set_user_blocked', {
+      'user_id': localId,
+      'blocked': blocked,
+    });
+    _requireOk(response, blocked ? 'Block user' : 'Unblock user');
+    final existing = _users[localId];
+    if (existing != null) {
+      _users[localId] = existing.copyWith(
+        relationship: blocked ? ImRelationship.blocked : ImRelationship.none,
+      );
+      _emitUsers();
+    }
+  }
+
+  @override
+  Future<void> reportUser({
+    required String userId,
+    required String reason,
+    String details = '',
+  }) async {
+    final response = await _request('report_user', {
+      'user_id': ImSourceAddress.localIdOf(userId),
+      'reason': reason,
+      'details': details.trim(),
+    });
+    _requireOk(response, 'Report user');
   }
 
   @override
@@ -1927,12 +2049,10 @@ class ZzzServerSource implements ImMessageSource {
     if (data is! Map) return;
     final json = Map<String, dynamic>.from(data);
     _selfId = '${json['user_id'] ?? config.selfId}';
-    _users[_selfId] = ImUser(
-      id: _selfId,
-      displayName: _resolveDisplayName(_selfId, json['nickname'] as String?),
-      isOnline: true,
-      avatarAssetPath: _resolveAvatar(_selfId, json['avatar_url'] as String?),
-    );
+    _users[_selfId] = _userFromJson(
+      json,
+      fallbackId: _selfId,
+    ).copyWith(isOnline: true);
   }
 
   ImUser _userFromJson(
@@ -1949,6 +2069,62 @@ class ZzzServerSource implements ImMessageSource {
       ),
       isOnline: json['online'] as bool? ?? true,
       relationship: imRelationshipFromString(json['relationship'] as String?),
+      bio: '${json['bio'] ?? ''}',
+      cardBackgroundUrl:
+          '${json['card_background_url'] ?? ''}'.trim().isEmpty
+              ? null
+              : '${json['card_background_url']}',
+      cardBackgroundSensitive:
+          json['card_background_sensitive'] as bool? ?? false,
+      showMutualGroups: json['show_mutual_groups'] as bool? ?? true,
+      titles: (json['titles'] as List? ?? const [])
+          .whereType<Map>()
+          .map((value) => _titleFromJson(Map<String, dynamic>.from(value)))
+          .toList(growable: false),
+      mutualGroups: (json['mutual_groups'] as List? ?? const [])
+          .whereType<Map>()
+          .map((value) {
+            final group = Map<String, dynamic>.from(value);
+            return ImMutualGroup(
+              id: '${group['group_id'] ?? group['id'] ?? ''}',
+              name: '${group['name'] ?? ''}',
+              avatarUrl:
+                  '${group['avatar_url'] ?? ''}'.isEmpty
+                      ? null
+                      : '${group['avatar_url']}',
+              memberCount: (group['member_count'] as num?)?.toInt() ?? 0,
+            );
+          })
+          .where((group) => group.id.isNotEmpty)
+          .toList(growable: false),
+    );
+  }
+
+  ImUserTitle _titleFromJson(Map<String, dynamic> json) {
+    final expiresAt = (json['expires_at'] as num?)?.toInt() ?? 0;
+    final createdAt = (json['created_at'] as num?)?.toInt() ?? 0;
+    return ImUserTitle(
+      id: '${json['title_id'] ?? ''}',
+      text: '${json['text'] ?? ''}',
+      style: '${json['style'] ?? 'yellow'}',
+      scopeType: '${json['scope_type'] ?? 'system'}',
+      scopeId:
+          '${json['scope_id'] ?? ''}'.isEmpty ? null : '${json['scope_id']}',
+      grantedBy: '${json['granted_by'] ?? ''}',
+      expiresAt:
+          expiresAt <= 0
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(
+                expiresAt * 1000,
+                isUtc: true,
+              ),
+      createdAt:
+          createdAt <= 0
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(
+                createdAt * 1000,
+                isUtc: true,
+              ),
     );
   }
 

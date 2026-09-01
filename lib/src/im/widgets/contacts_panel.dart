@@ -13,6 +13,7 @@ import '../models/im_models.dart';
 import '../models/im_source_address.dart';
 import 'contact_tile.dart';
 import 'friend_center_panel.dart';
+import 'im_profile_card_panel.dart';
 
 class ContactsPanel extends StatefulWidget {
   const ContactsPanel({required this.onConversationSelected, super.key});
@@ -126,7 +127,19 @@ class _ContactsPanelState extends State<ContactsPanel> {
         .toList();
   }
 
-  void _onUserTap(ImUser user) async {
+  Future<void> _onUserTap(ImUser user) async {
+    await showZzzModalPanel<void>(
+      context: context,
+      builder:
+          (_) => ImProfileCardPanel(
+            userId: user.id,
+            repository: ImScope.repositoryOf(context),
+            onMessage: _openConversationWithUser,
+          ),
+    );
+  }
+
+  Future<void> _openConversationWithUser(ImUser user) async {
     final self = await ImScope.repositoryOf(
       context,
     ).getCurrentUser(sourceId: user.sourceId);

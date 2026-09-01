@@ -10,6 +10,7 @@ import '../../widgets/zzz_widgets.dart';
 import '../data/im_repository.dart';
 import '../models/im_models.dart';
 import '../models/im_source_address.dart';
+import 'im_profile_card_panel.dart';
 
 class ImGroupDetailsPanel extends StatefulWidget {
   const ImGroupDetailsPanel({
@@ -1071,8 +1072,31 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
         unawaited(_transferOwnership(member));
       case 'remove':
         unawaited(_removeMember(member));
+      case 'title':
+        unawaited(_manageTitles(member));
     }
   }
+
+  Future<void> _openMemberProfile(ImGroupMember member) =>
+      showZzzModalPanel<void>(
+        context: context,
+        builder:
+            (_) => ImProfileCardPanel(
+              userId: member.user.id,
+              groupId: widget.conversation.id,
+              repository: widget.repository,
+            ),
+      );
+
+  Future<void> _manageTitles(ImGroupMember member) => showZzzModalPanel<void>(
+    context: context,
+    builder:
+        (_) => _GroupTitlePanel(
+          repository: widget.repository,
+          groupId: widget.conversation.id,
+          user: member.user,
+        ),
+  );
 
   Widget? _buildMemberActions(ImGroupDetails details, ImGroupMember member) {
     final canSetAdmin = details.canSetAdministrator(member);
@@ -1082,7 +1106,14 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
         member.user.id != details.currentUserId &&
         member.role != ImGroupRole.owner;
     final canRemove = details.canRemoveMember(member);
-    if (!canSetAdmin && !canMute && !canTransfer && !canRemove) return null;
+    final canManageTitles = details.currentUserIsManager;
+    if (!canSetAdmin &&
+        !canMute &&
+        !canTransfer &&
+        !canRemove &&
+        !canManageTitles) {
+      return null;
+    }
     return PopupMenuButton<String>(
       key: ValueKey('group-member-actions-${member.user.id}'),
       tooltip: 'Manage ${member.user.displayName}',
@@ -1090,6 +1121,15 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
       onSelected: (action) => _handleMemberAction(action, member),
       itemBuilder:
           (context) => [
+            if (canManageTitles)
+              const PopupMenuItem(
+                value: 'title',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.workspace_premium_outlined),
+                  title: Text('Manage titles'),
+                ),
+              ),
             if (canSetAdmin)
               PopupMenuItem(
                 value: member.role == ImGroupRole.admin ? 'demote' : 'promote',
@@ -1162,6 +1202,7 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
           user: member.user,
           role: member.role,
           mutedUntil: member.mutedUntil,
+          onTap: () => _openMemberProfile(member),
           trailing: _buildMemberActions(details, member),
         );
       },
@@ -1316,6 +1357,245 @@ class _GroupPersonRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _GroupTitlePanel extends StatefulWidget {
+  const _GroupTitlePanel({
+    required this.repository,
+    required this.groupId,
+    required this.user,
+  });
+
+  final ImRepository repository;
+  final String groupId;
+  final ImUser user;
+
+  @override
+  State<_GroupTitlePanel> createState() => _GroupTitlePanelState();
+}
+
+class _GroupTitlePanelState extends State<_GroupTitlePanel> {
+  final _textController = TextEditingController();
+  ImUser? _profile;
+  String _style = 'yellow';
+  int _expiryDays = 0;
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+
+  List<ImUserTitle> get _titles =>
+      _profile?.titles
+          .where(
+            (title) => title.isGroupScoped && title.scopeId == widget.groupId,
+          )
+          .toList(growable: false) ??
+      const [];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final profile = await widget.repository.getProfileCard(
+        widget.user.id,
+        groupId: widget.groupId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _loading = false;
+        _error = profile == null ? 'Profile is unavailable.' : null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '$error';
+      });
+    }
+  }
+
+  Future<void> _grant() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty || text.characters.length > 24) {
+      setState(() => _error = 'Title must be 1-24 characters.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.grantGroupTitle(
+        groupId: widget.groupId,
+        userId: widget.user.id,
+        text: text,
+        style: _style,
+        expiresAt:
+            _expiryDays == 0
+                ? null
+                : DateTime.now().toUtc().add(Duration(days: _expiryDays)),
+      );
+      _textController.clear();
+      await _load();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _revoke(ImUserTitle title) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.revokeGroupTitle(
+        groupId: widget.groupId,
+        userId: widget.user.id,
+        titleId: title.id,
+      );
+      await _load();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ZzzModalPanel(
+      title: 'Group titles',
+      subtitle: widget.user.displayName,
+      icon: Icons.workspace_premium_outlined,
+      maxWidth: 520,
+      maxHeight: 680,
+      actions: [
+        TextButton.icon(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+          label: const Text('Close'),
+        ),
+      ],
+      child:
+          _loading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  const Text(
+                    'Active titles',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_titles.isEmpty)
+                    const Text(
+                      'No active group titles.',
+                      style: TextStyle(color: Colors.white38),
+                    )
+                  else
+                    ..._titles.map(
+                      (title) => Material(
+                        color: Colors.transparent,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Align(
+                            alignment: Alignment.centerLeft,
+                            child: ImTitleBadge(title: title),
+                          ),
+                          subtitle: Text(
+                            title.expiresAt == null
+                                ? 'No expiry'
+                                : 'Expires ${MaterialLocalizations.of(context).formatShortDate(title.expiresAt!.toLocal())}',
+                          ),
+                          trailing: IconButton(
+                            tooltip: 'Revoke title',
+                            onPressed: _busy ? null : () => _revoke(title),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ),
+                      ),
+                    ),
+                  const Divider(height: 32, color: Colors.white12),
+                  ZzzTextInput(
+                    controller: _textController,
+                    hintText: 'New title',
+                    maxLength: 24,
+                    prefixIcon: const Icon(Icons.badge_outlined),
+                    fillColor: Colors.white.withValues(alpha: 0.08),
+                    foregroundColor: Colors.white,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _style,
+                    decoration: const InputDecoration(labelText: 'Style'),
+                    items: const [
+                      DropdownMenuItem(value: 'gold', child: Text('Gold')),
+                      DropdownMenuItem(value: 'red', child: Text('Red')),
+                      DropdownMenuItem(value: 'yellow', child: Text('Yellow')),
+                      DropdownMenuItem(value: 'aurora', child: Text('Aurora')),
+                      DropdownMenuItem(value: 'ember', child: Text('Ember')),
+                    ],
+                    onChanged:
+                        _busy
+                            ? null
+                            : (value) {
+                              if (value != null) setState(() => _style = value);
+                            },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: _expiryDays,
+                    decoration: const InputDecoration(labelText: 'Expiry'),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('No expiry')),
+                      DropdownMenuItem(value: 7, child: Text('7 days')),
+                      DropdownMenuItem(value: 30, child: Text('30 days')),
+                      DropdownMenuItem(value: 90, child: Text('90 days')),
+                    ],
+                    onChanged:
+                        _busy
+                            ? null
+                            : (value) {
+                              if (value != null) {
+                                setState(() => _expiryDays = value);
+                              }
+                            },
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _grant,
+                    icon:
+                        _busy
+                            ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : const Icon(Icons.add_rounded),
+                    label: const Text('Grant title'),
+                  ),
+                ],
+              ),
     );
   }
 }

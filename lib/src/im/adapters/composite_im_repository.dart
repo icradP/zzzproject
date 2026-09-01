@@ -127,6 +127,19 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<ImUser?> getProfileCard(String userId, {String? groupId}) async {
+    final registration = _registrationForValue(userId);
+    if (groupId != null) {
+      _requireMatchingSource(registration, groupId, 'Profile group');
+    }
+    final user = await registration.repository.getProfileCard(
+      ImSourceAddress.localIdOf(userId),
+      groupId: groupId == null ? null : ImSourceAddress.localIdOf(groupId),
+    );
+    return user == null ? null : _scopeUser(registration, user);
+  }
+
+  @override
   Stream<List<ImUser>> watchUsers() {
     Future.microtask(_emitUsers);
     return _usersController.stream;
@@ -522,14 +535,81 @@ class CompositeImRepository implements ImRepository {
     String? nickname,
     ImMediaUpload? avatar,
     String? avatarAssetPath,
+    String? bio,
+    ImMediaUpload? cardBackground,
+    String? cardBackgroundUrl,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
   }) async {
     final registration = _registrationForValue('', sourceId: _primarySourceId);
     final user = await registration.repository.updateProfile(
       nickname: nickname,
       avatar: avatar,
       avatarAssetPath: avatarAssetPath,
+      bio: bio,
+      cardBackground: cardBackground,
+      cardBackgroundUrl: cardBackgroundUrl,
+      cardBackgroundSensitive: cardBackgroundSensitive,
+      showMutualGroups: showMutualGroups,
     );
     return _scopeUser(registration, user);
+  }
+
+  @override
+  Future<ImUserTitle> grantGroupTitle({
+    required String groupId,
+    required String userId,
+    required String text,
+    required String style,
+    DateTime? expiresAt,
+  }) {
+    final registration = _registrationForValue(groupId);
+    _requireMatchingSource(registration, userId, 'Title recipient');
+    return registration.repository.grantGroupTitle(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userId: ImSourceAddress.localIdOf(userId),
+      text: text,
+      style: style,
+      expiresAt: expiresAt,
+    );
+  }
+
+  @override
+  Future<void> revokeGroupTitle({
+    required String groupId,
+    required String userId,
+    required String titleId,
+  }) {
+    final registration = _registrationForValue(groupId);
+    _requireMatchingSource(registration, userId, 'Title recipient');
+    return registration.repository.revokeGroupTitle(
+      groupId: ImSourceAddress.localIdOf(groupId),
+      userId: ImSourceAddress.localIdOf(userId),
+      titleId: titleId,
+    );
+  }
+
+  @override
+  Future<void> setUserBlocked({required String userId, required bool blocked}) {
+    final registration = _registrationForValue(userId);
+    return registration.repository.setUserBlocked(
+      userId: ImSourceAddress.localIdOf(userId),
+      blocked: blocked,
+    );
+  }
+
+  @override
+  Future<void> reportUser({
+    required String userId,
+    required String reason,
+    String details = '',
+  }) {
+    final registration = _registrationForValue(userId);
+    return registration.repository.reportUser(
+      userId: ImSourceAddress.localIdOf(userId),
+      reason: reason,
+      details: details,
+    );
   }
 
   @override
@@ -829,6 +909,21 @@ class CompositeImRepository implements ImRepository {
       avatarLocalPath: user.avatarLocalPath,
       isOnline: user.isOnline,
       relationship: user.relationship,
+      bio: user.bio,
+      cardBackgroundUrl: user.cardBackgroundUrl,
+      cardBackgroundSensitive: user.cardBackgroundSensitive,
+      showMutualGroups: user.showMutualGroups,
+      titles: user.titles,
+      mutualGroups: user.mutualGroups
+          .map(
+            (group) => ImMutualGroup(
+              id: ImSourceAddress.scope(registration.id, group.id),
+              name: group.name,
+              avatarUrl: group.avatarUrl,
+              memberCount: group.memberCount,
+            ),
+          )
+          .toList(growable: false),
       sourceId: registration.id,
       sourceLabel: registration.label,
     );

@@ -3,6 +3,8 @@
 const state = {
   activeView: "dashboard",
   users: [],
+  reports: [],
+  selectedUserTitles: [],
   groups: [],
   conversations: [],
   messages: [],
@@ -242,7 +244,7 @@ function renderUsers() {
   document.querySelector("#users-empty").hidden = rows.length !== 0;
 }
 
-function openUserEditor(user) {
+async function openUserEditor(user) {
   const dialog = document.querySelector("#edit-user-dialog");
   document.querySelector("#edit-user-id").textContent = user.id;
   document.querySelector("#edit-user-nickname").value = user.nickname || user.id;
@@ -252,6 +254,65 @@ function openUserEditor(user) {
   document.querySelector("#reset-password-error").textContent = "";
   dialog.dataset.userId = user.id;
   dialog.showModal();
+  await loadUserTitles(user.id);
+}
+
+async function loadUserTitles(userId) {
+  const payload = await api(`titles?user_id=${encodeURIComponent(userId)}`);
+  state.selectedUserTitles = payload.titles || [];
+  renderUserTitles();
+}
+
+function renderUserTitles() {
+  const target = document.querySelector("#user-title-list");
+  if (!state.selectedUserTitles.length) {
+    target.replaceChildren(element("p", "empty-state", "No active system titles."));
+    return;
+  }
+  const items = state.selectedUserTitles.map((title) => {
+    const item = element("div", "title-item");
+    item.append(element("strong", "", title.text), element("span", "title-style", title.style));
+    const remove = element("button", "table-button", "Revoke");
+    remove.type = "button";
+    remove.addEventListener("click", () => revokeTitle(title));
+    item.append(remove);
+    return item;
+  });
+  target.replaceChildren(...items);
+}
+
+async function revokeTitle(title) {
+  try {
+    await api("titles", { method: "DELETE", body: JSON.stringify({ title_id: title.title_id }) });
+    showToast("Title revoked");
+    await loadUserTitles(document.querySelector("#edit-user-dialog").dataset.userId);
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function loadReports() {
+  const payload = await api("reports");
+  state.reports = payload.reports || [];
+  renderReports();
+}
+
+function renderReports() {
+  const query = document.querySelector("#report-search").value.trim().toLowerCase();
+  const reports = state.reports.filter((report) => `${report.target_id} ${report.reporter_id} ${report.reason} ${report.details || ""}`.toLowerCase().includes(query));
+  const rows = reports.map((report) => {
+    const row = document.createElement("tr");
+    row.append(
+      element("td", "mono", report.target_id),
+      element("td", "mono", report.reporter_id),
+      element("td", "", report.reason),
+      element("td", "message-preview", report.details || "-"),
+      element("td", "", formatDate(report.created_at)),
+    );
+    return row;
+  });
+  document.querySelector("#reports-body").replaceChildren(...rows);
+  document.querySelector("#reports-empty").hidden = rows.length !== 0;
 }
 
 async function loadGroups() {
@@ -492,6 +553,7 @@ async function refreshActiveView() {
   const loaders = {
     dashboard: loadOverview,
     users: loadUsers,
+    reports: loadReports,
     groups: loadGroups,
     conversations: loadConversations,
     messages: loadMessages,
@@ -541,6 +603,7 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
 document.querySelector("#refresh-button").addEventListener("click", refreshActiveView);
 document.querySelectorAll(".nav-button").forEach((button) => button.addEventListener("click", () => setActiveView(button.dataset.view)));
 document.querySelector("#user-search").addEventListener("input", renderUsers);
+document.querySelector("#report-search").addEventListener("input", renderReports);
 document.querySelector("#group-search").addEventListener("input", renderGroups);
 document.querySelector("#conversation-search").addEventListener("input", renderConversations);
 document.querySelector("#message-search").addEventListener("input", renderMessages);
@@ -560,6 +623,29 @@ document.querySelector("#edit-user-form").addEventListener("submit", async (even
     });
     showToast("User updated");
     await loadUsers();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+document.querySelector("#grant-title-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const dialog = document.querySelector("#edit-user-dialog");
+  const expiry = document.querySelector("#grant-title-expiry").value;
+  try {
+    await api("titles", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: dialog.dataset.userId,
+        text: document.querySelector("#grant-title-text").value,
+        style: document.querySelector("#grant-title-style").value,
+        expires_at: expiry ? new Date(expiry).toISOString() : "",
+      }),
+    });
+    document.querySelector("#grant-title-text").value = "";
+    document.querySelector("#grant-title-expiry").value = "";
+    showToast("Title granted");
+    await loadUserTitles(dialog.dataset.userId);
   } catch (error) {
     showToast(error.message, true);
   }

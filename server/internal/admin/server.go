@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -186,6 +187,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleUpdateUser(w, r)
 	case path == "/users/password" && r.Method == http.MethodPatch:
 		s.handleResetPassword(w, r)
+	case path == "/titles" && r.Method == http.MethodGet:
+		s.handleTitles(w, r)
+	case path == "/titles" && r.Method == http.MethodPost:
+		s.handleGrantTitle(w, r)
+	case path == "/titles" && r.Method == http.MethodDelete:
+		s.handleRevokeTitle(w, r)
+	case path == "/reports" && r.Method == http.MethodGet:
+		s.handleReports(w)
 	case path == "/groups" && r.Method == http.MethodGet:
 		s.handleGroups(w)
 	case path == "/groups" && r.Method == http.MethodDelete:
@@ -376,6 +385,102 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user_id": user.ID, "sessions_revoked": revokeSessions,
 	})
+}
+
+func (s *Server) handleTitles(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" {
+		s.writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if user, _ := s.store.GetUser(userID); user == nil {
+		s.writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	titles, err := s.store.GetUserTitles(userID, "")
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not load titles")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{"titles": titles})
+}
+
+func (s *Server) handleGrantTitle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserID    string `json:"user_id"`
+		Text      string `json:"text"`
+		Style     string `json:"style"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.UserID = strings.TrimSpace(body.UserID)
+	body.Text = strings.TrimSpace(body.Text)
+	body.Style = strings.TrimSpace(body.Style)
+	styles := map[string]bool{"gold": true, "red": true, "yellow": true, "aurora": true, "ember": true}
+	if body.UserID == "" || len([]rune(body.Text)) == 0 || len([]rune(body.Text)) > 24 || !styles[body.Style] {
+		s.writeError(w, http.StatusBadRequest, "user_id, a 1-24 character title, and a supported style are required")
+		return
+	}
+	if user, _ := s.store.GetUser(body.UserID); user == nil {
+		s.writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	var expiresAt *time.Time
+	if strings.TrimSpace(body.ExpiresAt) != "" {
+		parsed, err := time.Parse(time.RFC3339, body.ExpiresAt)
+		if err != nil || !parsed.After(time.Now()) {
+			s.writeError(w, http.StatusBadRequest, "expires_at must be a future RFC3339 time")
+			return
+		}
+		expiresAt = &parsed
+	}
+	title := &store.UserTitle{
+		ID: fmt.Sprintf("title_%d", time.Now().UnixNano()), UserID: body.UserID,
+		ScopeType: "system", Text: body.Text, Style: body.Style,
+		GrantedBy: "system-admin", ExpiresAt: expiresAt, CreatedAt: time.Now(),
+	}
+	if err := s.store.GrantUserTitle(title); err != nil {
+		if errors.Is(err, store.ErrActiveTitleLimit) {
+			s.writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		log.Printf("[admin] title grant failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "could not grant title")
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, map[string]interface{}{"title": title})
+}
+
+func (s *Server) handleRevokeTitle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TitleID string `json:"title_id"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	deleted, err := s.store.DeleteUserTitle(strings.TrimSpace(body.TitleID))
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not revoke title")
+		return
+	}
+	if !deleted {
+		s.writeError(w, http.StatusNotFound, "title not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleReports(w http.ResponseWriter) {
+	reports, err := s.store.GetUserReports(500)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not load reports")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{"reports": reports})
 }
 
 func (s *Server) handleGroups(w http.ResponseWriter) {
@@ -652,6 +757,10 @@ func (s *Server) allowedMethods(path string) string {
 		return "GET, PATCH"
 	case "/users/password":
 		return "PATCH"
+	case "/titles":
+		return "GET, POST, DELETE"
+	case "/reports":
+		return "GET"
 	case "/groups", "/conversations", "/messages", "/media":
 		return "GET, DELETE"
 	case "/overview":

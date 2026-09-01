@@ -587,6 +587,11 @@ class MockImRepository extends ImRepository {
     String? nickname,
     ImMediaUpload? avatar,
     String? avatarAssetPath,
+    String? bio,
+    ImMediaUpload? cardBackground,
+    String? cardBackgroundUrl,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
   }) async {
     final current = _users[_currentUserId]!;
     final updated = ImUser(
@@ -604,6 +609,16 @@ class MockImRepository extends ImRepository {
               ? avatar?.filePath ?? current.avatarLocalPath
               : null,
       isOnline: true,
+      relationship: current.relationship,
+      bio: bio ?? current.bio,
+      cardBackgroundUrl: cardBackgroundUrl ?? current.cardBackgroundUrl,
+      cardBackgroundSensitive:
+          cardBackgroundSensitive ?? current.cardBackgroundSensitive,
+      showMutualGroups: showMutualGroups ?? current.showMutualGroups,
+      titles: current.titles,
+      mutualGroups: current.mutualGroups,
+      sourceId: current.sourceId,
+      sourceLabel: current.sourceLabel,
     );
     _users[_currentUserId] = updated;
     _emitUsers();

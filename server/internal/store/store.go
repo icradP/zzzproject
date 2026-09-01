@@ -15,6 +15,13 @@ type Store interface {
 	GetUsers() ([]*User, error)
 	SetUserOnline(id string, online bool) error
 	GetServerStats() (*ServerStats, error)
+	GetUserTitles(userID, groupID string) ([]*UserTitle, error)
+	GrantUserTitle(title *UserTitle) error
+	DeleteUserTitle(titleID string) (bool, error)
+	SetUserBlocked(blockerID, blockedID string, blocked bool) error
+	IsUserBlocked(blockerID, blockedID string) (bool, error)
+	CreateUserReport(report *UserReport) error
+	GetUserReports(limit int) ([]*UserReport, error)
 
 	// ---- Account session operations ----
 	UpsertSession(session *Session) error
@@ -171,12 +178,39 @@ func NormalizeNotificationLevel(level string, legacyMuted bool) string {
 
 // User represents a user.
 type User struct {
-	ID           string    `json:"id"`
-	Nickname     string    `json:"nickname"`
-	Avatar       string    `json:"avatar_url,omitempty"`
-	Online       bool      `json:"online"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID                      string    `json:"id"`
+	Nickname                string    `json:"nickname"`
+	Avatar                  string    `json:"avatar_url,omitempty"`
+	Bio                     string    `json:"bio,omitempty"`
+	CardBackgroundURL       string    `json:"card_background_url,omitempty"`
+	CardBackgroundSensitive bool      `json:"card_background_sensitive"`
+	ShowMutualGroups        bool      `json:"show_mutual_groups"`
+	Online                  bool      `json:"online"`
+	PasswordHash            string    `json:"-"`
+	CreatedAt               time.Time `json:"created_at"`
+}
+
+// UserTitle is a server-controlled badge shown globally or in one group.
+type UserTitle struct {
+	ID        string     `json:"title_id"`
+	UserID    string     `json:"user_id"`
+	ScopeType string     `json:"scope_type"` // "system" or "group"
+	ScopeID   string     `json:"scope_id,omitempty"`
+	Text      string     `json:"text"`
+	Style     string     `json:"style"`
+	GrantedBy string     `json:"granted_by"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// UserReport is an immutable moderation report created by a client.
+type UserReport struct {
+	ID         string    `json:"report_id"`
+	ReporterID string    `json:"reporter_id"`
+	TargetID   string    `json:"target_id"`
+	Reason     string    `json:"reason"`
+	Details    string    `json:"details,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Session is a persisted account login. TokenHash is a SHA-256 digest; the

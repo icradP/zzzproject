@@ -43,12 +43,14 @@ ImGroupRole imGroupRoleFromString(String? value) => switch (value) {
 enum ImMessageStatus { sending, sent, delivered, read, failed }
 
 /// Relationship between the signed-in user and another account.
-enum ImRelationship { none, friend, incoming, outgoing }
+enum ImRelationship { none, friend, incoming, outgoing, blocked, blockedBy }
 
 ImRelationship imRelationshipFromString(String? value) => switch (value) {
   'friend' => ImRelationship.friend,
   'incoming' => ImRelationship.incoming,
   'outgoing' => ImRelationship.outgoing,
+  'blocked' => ImRelationship.blocked,
+  'blocked_by' => ImRelationship.blockedBy,
   _ => ImRelationship.none,
 };
 
@@ -167,6 +169,12 @@ class ImUser {
     this.avatarLocalPath,
     this.isOnline = false,
     this.relationship = ImRelationship.none,
+    this.bio = '',
+    this.cardBackgroundUrl,
+    this.cardBackgroundSensitive = false,
+    this.showMutualGroups = true,
+    this.titles = const [],
+    this.mutualGroups = const [],
     this.sourceId,
     this.sourceLabel,
   });
@@ -180,6 +188,12 @@ class ImUser {
   final String? avatarLocalPath;
   final bool isOnline;
   final ImRelationship relationship;
+  final String bio;
+  final String? cardBackgroundUrl;
+  final bool cardBackgroundSensitive;
+  final bool showMutualGroups;
+  final List<ImUserTitle> titles;
+  final List<ImMutualGroup> mutualGroups;
   final String? sourceId;
   final String? sourceLabel;
 
@@ -206,6 +220,13 @@ class ImUser {
     String? avatarLocalPath,
     bool? isOnline,
     ImRelationship? relationship,
+    String? bio,
+    String? cardBackgroundUrl,
+    bool clearCardBackground = false,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
+    List<ImUserTitle>? titles,
+    List<ImMutualGroup>? mutualGroups,
     String? sourceId,
     String? sourceLabel,
   }) {
@@ -217,10 +238,59 @@ class ImUser {
       avatarLocalPath: avatarLocalPath ?? this.avatarLocalPath,
       isOnline: isOnline ?? this.isOnline,
       relationship: relationship ?? this.relationship,
+      bio: bio ?? this.bio,
+      cardBackgroundUrl:
+          clearCardBackground
+              ? null
+              : (cardBackgroundUrl ?? this.cardBackgroundUrl),
+      cardBackgroundSensitive:
+          cardBackgroundSensitive ?? this.cardBackgroundSensitive,
+      showMutualGroups: showMutualGroups ?? this.showMutualGroups,
+      titles: titles ?? this.titles,
+      mutualGroups: mutualGroups ?? this.mutualGroups,
       sourceId: sourceId ?? this.sourceId,
       sourceLabel: sourceLabel ?? this.sourceLabel,
     );
   }
+}
+
+class ImUserTitle {
+  const ImUserTitle({
+    required this.id,
+    required this.text,
+    required this.style,
+    required this.scopeType,
+    this.scopeId,
+    required this.grantedBy,
+    this.expiresAt,
+    this.createdAt,
+  });
+
+  final String id;
+  final String text;
+  final String style;
+  final String scopeType;
+  final String? scopeId;
+  final String grantedBy;
+  final DateTime? expiresAt;
+  final DateTime? createdAt;
+
+  bool get isAnimated => style == 'aurora' || style == 'ember';
+  bool get isGroupScoped => scopeType == 'group';
+}
+
+class ImMutualGroup {
+  const ImMutualGroup({
+    required this.id,
+    required this.name,
+    this.avatarUrl,
+    this.memberCount = 0,
+  });
+
+  final String id;
+  final String name;
+  final String? avatarUrl;
+  final int memberCount;
 }
 
 /// A pending incoming or outgoing friend request.

@@ -14,12 +14,21 @@ class ImReleaseNote {
 
 /// Versioned product updates shown on first launch and from Settings.
 abstract final class ImReleaseNotes {
-  static const currentVersion = '1.3.0';
+  static const currentVersion = '1.4.0';
   static const _dismissedVersionKey = 'im.release_notes.dismissed_version';
 
   static const releases = <ImReleaseNote>[
     ImReleaseNote(
       version: currentVersion,
+      title: 'Titles and profile cards',
+      items: [
+        'Open responsive profile cards with bios, mutual groups, and scoped titles.',
+        'Upload compressed card backgrounds directly to your configured image host.',
+        'Message, add, block, or report people from their profile card.',
+      ],
+    ),
+    ImReleaseNote(
+      version: '1.3.0',
       title: 'Group governance',
       items: [
         'Publish, edit, pin, read, and remove announcements from group history.',

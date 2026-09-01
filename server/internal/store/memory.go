@@ -25,6 +25,9 @@ type MemoryStore struct {
 	readStates          map[string]map[string]*ReadState              // conversationID -> userID -> cursor
 	friendRequests      map[string]*FriendRequest
 	friendships         map[string]map[string]time.Time
+	userTitles          map[string]*UserTitle
+	userBlocks          map[string]map[string]time.Time
+	userReports         []*UserReport
 	forwards            map[string]*ForwardMessage
 	mediaFiles          map[string]*MediaFile
 	pushSubscriptions   map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
@@ -47,6 +50,9 @@ func NewMemoryStore() *MemoryStore {
 		readStates:         make(map[string]map[string]*ReadState),
 		friendRequests:     make(map[string]*FriendRequest),
 		friendships:        make(map[string]map[string]time.Time),
+		userTitles:         make(map[string]*UserTitle),
+		userBlocks:         make(map[string]map[string]time.Time),
+		userReports:        make([]*UserReport, 0),
 		forwards:           make(map[string]*ForwardMessage),
 		mediaFiles:         make(map[string]*MediaFile),
 		pushSubscriptions:  make(map[string]map[string]*PushSubscription),

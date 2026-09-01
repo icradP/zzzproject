@@ -31,6 +31,10 @@ class SourceBackedRepository implements ImRepository {
   Future<ImUser?> getUser(String userId) => _source.getUser(userId);
 
   @override
+  Future<ImUser?> getProfileCard(String userId, {String? groupId}) =>
+      _source.getProfileCard(userId, groupId: groupId);
+
+  @override
   Stream<List<ImUser>> watchUsers() => _source.watchUsers();
 
   @override
@@ -191,11 +195,60 @@ class SourceBackedRepository implements ImRepository {
     String? nickname,
     ImMediaUpload? avatar,
     String? avatarAssetPath,
+    String? bio,
+    ImMediaUpload? cardBackground,
+    String? cardBackgroundUrl,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
   }) => _source.updateProfile(
     nickname: nickname,
     avatar: avatar,
     avatarAssetPath: avatarAssetPath,
+    bio: bio,
+    cardBackground: cardBackground,
+    cardBackgroundUrl: cardBackgroundUrl,
+    cardBackgroundSensitive: cardBackgroundSensitive,
+    showMutualGroups: showMutualGroups,
   );
+
+  @override
+  Future<ImUserTitle> grantGroupTitle({
+    required String groupId,
+    required String userId,
+    required String text,
+    required String style,
+    DateTime? expiresAt,
+  }) => _source.grantGroupTitle(
+    groupId: groupId,
+    userId: userId,
+    text: text,
+    style: style,
+    expiresAt: expiresAt,
+  );
+
+  @override
+  Future<void> revokeGroupTitle({
+    required String groupId,
+    required String userId,
+    required String titleId,
+  }) => _source.revokeGroupTitle(
+    groupId: groupId,
+    userId: userId,
+    titleId: titleId,
+  );
+
+  @override
+  Future<void> setUserBlocked({
+    required String userId,
+    required bool blocked,
+  }) => _source.setUserBlocked(userId: userId, blocked: blocked);
+
+  @override
+  Future<void> reportUser({
+    required String userId,
+    required String reason,
+    String details = '',
+  }) => _source.reportUser(userId: userId, reason: reason, details: details);
 
   @override
   Future<ImConversation> createGroup({

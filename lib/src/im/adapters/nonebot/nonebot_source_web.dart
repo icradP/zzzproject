@@ -98,6 +98,11 @@ class NoneBotSource extends ImMessageSource {
     String? nickname,
     ImMediaUpload? avatar,
     String? avatarAssetPath,
+    String? bio,
+    ImMediaUpload? cardBackground,
+    String? cardBackgroundUrl,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
   }) async {
     throw UnsupportedError('NoneBot does not own the user profile.');
   }

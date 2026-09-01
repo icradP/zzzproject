@@ -19,6 +19,9 @@ abstract class ImMessageSource {
 
   Future<ImUser?> getUser(String userId);
 
+  Future<ImUser?> getProfileCard(String userId, {String? groupId}) =>
+      getUser(userId);
+
   Stream<List<ImUser>> watchUsers();
 
   Stream<List<ImConversation>> watchConversations();
@@ -165,8 +168,46 @@ abstract class ImMessageSource {
     String? nickname,
     ImMediaUpload? avatar,
     String? avatarAssetPath,
+    String? bio,
+    ImMediaUpload? cardBackground,
+    String? cardBackgroundUrl,
+    bool? cardBackgroundSensitive,
+    bool? showMutualGroups,
   }) async {
     throw UnsupportedError('Profile editing is not supported by this source.');
+  }
+
+  Future<ImUserTitle> grantGroupTitle({
+    required String groupId,
+    required String userId,
+    required String text,
+    required String style,
+    DateTime? expiresAt,
+  }) async {
+    throw UnsupportedError('Group titles are not supported by this source.');
+  }
+
+  Future<void> revokeGroupTitle({
+    required String groupId,
+    required String userId,
+    required String titleId,
+  }) async {
+    throw UnsupportedError('Group titles are not supported by this source.');
+  }
+
+  Future<void> setUserBlocked({
+    required String userId,
+    required bool blocked,
+  }) async {
+    throw UnsupportedError('User blocking is not supported by this source.');
+  }
+
+  Future<void> reportUser({
+    required String userId,
+    required String reason,
+    String details = '',
+  }) async {
+    throw UnsupportedError('User reporting is not supported by this source.');
   }
 
   Future<ImConversation> createGroup({

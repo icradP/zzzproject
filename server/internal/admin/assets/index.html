@@ -35,6 +35,7 @@
       <nav class="navigation" aria-label="Admin sections">
         <button class="nav-button active" type="button" data-view="dashboard">Overview</button>
         <button class="nav-button" type="button" data-view="users">Users</button>
+        <button class="nav-button" type="button" data-view="reports">Reports</button>
         <button class="nav-button" type="button" data-view="groups">Groups</button>
         <button class="nav-button" type="button" data-view="conversations">Conversations</button>
         <button class="nav-button" type="button" data-view="messages">Messages</button>
@@ -125,6 +126,28 @@
             </table>
           </div>
           <p id="groups-empty" class="empty-state" hidden>No groups found.</p>
+        </section>
+      </section>
+
+      <section id="view-reports" class="view" data-section="reports" hidden>
+        <section class="surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">MODERATION</p>
+              <h3>User reports</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="report-search" type="search" placeholder="Reporter, target, or reason">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Target</th><th>Reporter</th><th>Reason</th><th>Details</th><th>Submitted</th></tr></thead>
+              <tbody id="reports-body"></tbody>
+            </table>
+          </div>
+          <p id="reports-empty" class="empty-state" hidden>No reports found.</p>
         </section>
       </section>
 
@@ -240,6 +263,30 @@
         <button class="primary-button compact" type="submit">Save nickname</button>
       </div>
     </form>
+    <section class="form-section divided">
+      <div class="section-heading compact-heading">
+        <div>
+          <p class="eyebrow">IDENTITY</p>
+          <h3>System titles</h3>
+        </div>
+      </div>
+      <div id="user-title-list" class="title-list"></div>
+      <form id="grant-title-form" class="settings-form">
+        <label for="grant-title-text">Title</label>
+        <input id="grant-title-text" maxlength="24" required placeholder="e.g. Founding member">
+        <label for="grant-title-style">Style</label>
+        <select id="grant-title-style">
+          <option value="gold">Gold</option>
+          <option value="red">Red</option>
+          <option value="yellow">Yellow</option>
+          <option value="aurora">Aurora</option>
+          <option value="ember">Ember</option>
+        </select>
+        <label for="grant-title-expiry">Expiry (optional)</label>
+        <input id="grant-title-expiry" type="datetime-local">
+        <button class="primary-button compact" type="submit">Grant title</button>
+      </form>
+    </section>
     <form id="reset-password-form" class="form-section divided">
       <label for="reset-password">New password</label>
       <input id="reset-password" type="password" minlength="8" maxlength="72" required autocomplete="new-password">

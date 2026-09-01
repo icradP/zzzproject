@@ -396,6 +396,14 @@ class _FriendResultTile extends StatelessWidget {
         icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
         label: busy ? const Text('Sending…') : const Text('Add'),
       ),
+      ImRelationship.blocked => const Text(
+        'Blocked',
+        style: TextStyle(color: Colors.white38),
+      ),
+      ImRelationship.blockedBy => const Text(
+        'Unavailable',
+        style: TextStyle(color: Colors.white38),
+      ),
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),

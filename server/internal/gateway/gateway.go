@@ -225,6 +225,14 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleGetUser(client, req)
 	case protocol.ActionUpdateProfile:
 		g.handleUpdateProfile(client, req)
+	case protocol.ActionGrantUserTitle:
+		g.handleGrantUserTitle(client, req)
+	case protocol.ActionRevokeUserTitle:
+		g.handleRevokeUserTitle(client, req)
+	case protocol.ActionSetUserBlocked:
+		g.handleSetUserBlocked(client, req)
+	case protocol.ActionReportUser:
+		g.handleReportUser(client, req)
 	case protocol.ActionGetUsers:
 		g.handleGetUsers(client, req)
 	case protocol.ActionGetFriends:
@@ -355,6 +363,10 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 				g.sendError(client, req.Echo, "direct messages require a friend relationship")
 				return
 			}
+			if g.isEitherBlocked(client.userID, otherUserID) {
+				g.sendError(client, req.Echo, "direct messages are blocked")
+				return
+			}
 		}
 	}
 	conversation := &store.Conversation{
@@ -436,9 +448,10 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 			return
 		}
 		user = &store.User{
-			ID:       userID,
-			Nickname: userID,
-			Online:   false,
+			ID:               userID,
+			Nickname:         userID,
+			ShowMutualGroups: true,
+			Online:           false,
 		}
 		if err := g.store.SetUser(user); err != nil {
 			g.sendError(client, req.Echo, "failed to load account")
@@ -461,9 +474,10 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 
 	// Send success response.
 	responseData := map[string]interface{}{
-		"user_id":    user.ID,
-		"nickname":   user.Nickname,
-		"avatar_url": user.Avatar,
+		"user_id": user.ID, "nickname": user.Nickname, "avatar_url": user.Avatar,
+		"bio": user.Bio, "card_background_url": user.CardBackgroundURL,
+		"card_background_sensitive": user.CardBackgroundSensitive,
+		"show_mutual_groups":        user.ShowMutualGroups,
 	}
 	if password != "" {
 		if session, err := g.issueSession(userID); err == nil {
@@ -581,7 +595,7 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 	}
 	user := &store.User{
 		ID: userID, Nickname: nickname, Avatar: avatarURL,
-		PasswordHash: string(hash), Online: true, CreatedAt: time.Now(),
+		ShowMutualGroups: true, PasswordHash: string(hash), Online: true, CreatedAt: time.Now(),
 	}
 	if err := g.store.SetUser(user); err != nil {
 		g.sendError(client, req.Echo, "failed to create account")
@@ -629,14 +643,47 @@ func (g *Gateway) handleUpdateProfile(client *Client, req *protocol.Request) {
 		}
 		user.Avatar = value
 	}
+	if bio, exists := params["bio"]; exists {
+		value, ok := bio.(string)
+		value = strings.TrimSpace(value)
+		if !ok || len([]rune(value)) > 280 {
+			g.sendError(client, req.Echo, "bio must not exceed 280 characters")
+			return
+		}
+		user.Bio = value
+	}
+	if background, exists := params["card_background_url"]; exists {
+		value, ok := background.(string)
+		value = strings.TrimSpace(value)
+		if !ok || !validProfileBackgroundURL(value) {
+			g.sendError(client, req.Echo, "card background must be a public HTTPS image URL")
+			return
+		}
+		user.CardBackgroundURL = value
+	}
+	if sensitive, exists := params["card_background_sensitive"]; exists {
+		value, ok := sensitive.(bool)
+		if !ok {
+			g.sendError(client, req.Echo, "card background sensitivity is invalid")
+			return
+		}
+		user.CardBackgroundSensitive = value
+	}
+	if visible, exists := params["show_mutual_groups"]; exists {
+		value, ok := visible.(bool)
+		if !ok {
+			g.sendError(client, req.Echo, "mutual group privacy is invalid")
+			return
+		}
+		user.ShowMutualGroups = value
+	}
 	if err := g.store.SetUser(user); err != nil {
 		g.sendError(client, req.Echo, "failed to update profile")
 		return
 	}
 	g.notifyProfileUpdate(user, client)
-	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
-		"user_id": user.ID, "nickname": user.Nickname, "avatar_url": user.Avatar,
-	}})
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo,
+		Data: g.profileUser(client.userID, user, "")})
 }
 
 const sessionTTL = 90 * 24 * time.Hour
@@ -888,6 +935,16 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	if !g.canAccessConversation(client.userID, convID) {
 		g.sendError(client, req.Echo, "conversation access denied")
 		return
+	}
+	if convType == "private" {
+		if conversation, _ := g.store.GetConversation(convID); conversation != nil {
+			for _, participantID := range conversation.Participants {
+				if participantID != client.userID && g.isEitherBlocked(client.userID, participantID) {
+					g.sendError(client, req.Echo, "direct messages are blocked")
+					return
+				}
+			}
+		}
 	}
 	if convType == "group" {
 		group, groupErr := g.store.GetGroup(convID)
@@ -1647,17 +1704,16 @@ func (g *Gateway) handleGetUser(client *Client, req *protocol.Request) {
 		return
 	}
 
-	g.sendJSON(client, protocol.Response{
-		Status:  "ok",
-		RetCode: 0,
-		Data: protocol.User{
-			UserID:   user.ID,
-			Nickname: user.Nickname,
-			Avatar:   user.Avatar,
-			Online:   user.Online,
-		},
-		Echo: req.Echo,
-	})
+	groupID, _ := params["group_id"].(string)
+	if groupID != "" {
+		viewerMember, _ := g.store.IsGroupMember(groupID, client.userID)
+		targetMember, _ := g.store.IsGroupMember(groupID, userID)
+		if !viewerMember || !targetMember {
+			groupID = ""
+		}
+	}
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0,
+		Data: g.profileUser(client.userID, user, groupID), Echo: req.Echo})
 }
 
 func (g *Gateway) handleGetUsers(client *Client, req *protocol.Request) {
@@ -2525,6 +2581,10 @@ func (g *Gateway) handleFriendRequest(client *Client, req *protocol.Request) {
 	}
 	if target, _ := g.store.GetUser(targetID); target == nil {
 		g.sendError(client, req.Echo, "user not found")
+		return
+	}
+	if g.isEitherBlocked(client.userID, targetID) {
+		g.sendError(client, req.Echo, "friend requests are blocked")
 		return
 	}
 	if friends, _ := g.store.AreFriends(client.userID, targetID); friends {

@@ -253,6 +253,40 @@ func TestAdminContentAndPasswordManagement(t *testing.T) {
 	if session, err := database.GetSession("expired"); err != nil || session == nil {
 		t.Fatalf("other account session changed: session=%#v err=%v", session, err)
 	}
+
+	granted := performRequest(handler, http.MethodPost, "/admin/api/titles", map[string]interface{}{
+		"user_id": "alice", "text": "Founder", "style": "gold",
+	}, cookie, true)
+	if granted.Code != http.StatusCreated {
+		t.Fatalf("title grant status=%d body=%s", granted.Code, granted.Body.String())
+	}
+	titles := performRequest(handler, http.MethodGet, "/admin/api/titles?user_id=alice", nil, cookie, false)
+	if titles.Code != http.StatusOK || !strings.Contains(titles.Body.String(), "Founder") {
+		t.Fatalf("titles status=%d body=%s", titles.Code, titles.Body.String())
+	}
+	var titlePayload struct {
+		Title store.UserTitle `json:"title"`
+	}
+	if err := json.Unmarshal(granted.Body.Bytes(), &titlePayload); err != nil {
+		t.Fatal(err)
+	}
+	revoked := performRequest(handler, http.MethodDelete, "/admin/api/titles", map[string]interface{}{
+		"title_id": titlePayload.Title.ID,
+	}, cookie, true)
+	if revoked.Code != http.StatusNoContent {
+		t.Fatalf("title revoke status=%d body=%s", revoked.Code, revoked.Body.String())
+	}
+
+	if err := database.CreateUserReport(&store.UserReport{
+		ID: "report-one", ReporterID: "bob", TargetID: "alice",
+		Reason: "spam", Details: "Repeated links", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reports := performRequest(handler, http.MethodGet, "/admin/api/reports", nil, cookie, false)
+	if reports.Code != http.StatusOK || !strings.Contains(reports.Body.String(), "Repeated links") {
+		t.Fatalf("reports status=%d body=%s", reports.Code, reports.Body.String())
+	}
 }
 
 func seedAdminStore(t *testing.T, database *store.MemoryStore) {

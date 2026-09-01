@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image/image.dart' as image;
 import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
 import 'package:zzzproject/src/im/data/im_image_hosting_config.dart';
 import 'package:zzzproject/src/im/data/im_image_hosting_uploader.dart';
@@ -18,6 +19,7 @@ void main() {
       final sockets = <WebSocket>[];
       final actions = <String>[];
       Map<String, dynamic>? sentMessage;
+      Map<String, dynamic>? updatedProfile;
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
         sockets.add(socket);
@@ -26,6 +28,7 @@ void main() {
           final action = requestJson['action'] as String;
           actions.add(action);
           if (action == 'send_message') sentMessage = requestJson;
+          if (action == 'update_profile') updatedProfile = requestJson;
           final data = switch (action) {
             'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
             'get_friends' => [
@@ -42,6 +45,13 @@ void main() {
             ],
             'get_messages' => <Object?>[],
             'send_message' => {'message_id': 'message-image'},
+            'update_profile' => {
+              'user_id': 'me',
+              'nickname': 'Me',
+              'avatar_url': '',
+              'card_background_url':
+                  (requestJson['params'] as Map)['card_background_url'],
+            },
             _ => <String, Object?>{},
           };
           socket.add(
@@ -104,6 +114,23 @@ void main() {
       expect(data['url'], 'https://cdn.example.test/photo.png');
       expect(data['file'], isNull);
       expect(data['sha256'], hasLength(64));
+
+      final background = image.Image(width: 2400, height: 1200);
+      image.fill(background, color: image.ColorRgb8(24, 32, 48));
+      await source.updateProfile(
+        cardBackground: ImMediaUpload(
+          kind: ImMessageKind.image,
+          fileName: 'background.png',
+          bytes: Uint8List.fromList(image.encodePng(background)),
+          mimeType: 'image/png',
+        ),
+      );
+
+      expect(actions, isNot(contains('upload_file')));
+      expect(
+        (updatedProfile!['params'] as Map)['card_background_url'],
+        'https://cdn.example.test/photo.png',
+      );
     },
   );
 }

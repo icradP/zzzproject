@@ -39,6 +39,10 @@ func (s *SQLiteStore) initSchema() error {
 		nickname TEXT NOT NULL,
 		avatar_url TEXT DEFAULT '',
 		password_hash TEXT DEFAULT '',
+		bio TEXT DEFAULT '',
+		card_background_url TEXT DEFAULT '',
+		card_background_sensitive BOOLEAN DEFAULT FALSE,
+		show_mutual_groups BOOLEAN DEFAULT TRUE,
 		online BOOLEAN DEFAULT FALSE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -215,6 +219,37 @@ func (s *SQLiteStore) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+	CREATE TABLE IF NOT EXISTS user_titles (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		scope_type TEXT NOT NULL,
+		scope_id TEXT DEFAULT '',
+		text TEXT NOT NULL,
+		style TEXT NOT NULL,
+		granted_by TEXT NOT NULL,
+		expires_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_user_titles_user_scope
+		ON user_titles(user_id, scope_type, scope_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS user_blocks (
+		blocker_id TEXT NOT NULL,
+		blocked_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (blocker_id, blocked_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS user_reports (
+		id TEXT PRIMARY KEY,
+		reporter_id TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		reason TEXT NOT NULL,
+		details TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_user_reports_created ON user_reports(created_at);
 	`
 
 	if _, err := s.db.Exec(schema); err != nil {
@@ -226,6 +261,10 @@ func (s *SQLiteStore) initSchema() error {
 		return err
 	}
 	for _, statement := range []string{
+		"ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''",
+		"ALTER TABLE users ADD COLUMN card_background_url TEXT DEFAULT ''",
+		"ALTER TABLE users ADD COLUMN card_background_sensitive BOOLEAN DEFAULT FALSE",
+		"ALTER TABLE users ADD COLUMN show_mutual_groups BOOLEAN DEFAULT TRUE",
 		"ALTER TABLE conversation_preferences ADD COLUMN notification_level TEXT DEFAULT 'normal'",
 		"ALTER TABLE groups ADD COLUMN announcement TEXT DEFAULT ''",
 		"ALTER TABLE groups ADD COLUMN mute_all BOOLEAN DEFAULT FALSE",
@@ -302,9 +341,9 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) GetUser(id string) (*User, error) {
 	user := &User{}
 	err := s.db.QueryRow(
-		"SELECT id, nickname, avatar_url, online, password_hash, created_at FROM users WHERE id = ?",
+		"SELECT id, nickname, avatar_url, bio, card_background_url, card_background_sensitive, show_mutual_groups, online, password_hash, created_at FROM users WHERE id = ?",
 		id,
-	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt)
+	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.Online, &user.PasswordHash, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -316,14 +355,14 @@ func (s *SQLiteStore) GetUser(id string) (*User, error) {
 
 func (s *SQLiteStore) SetUser(user *User) error {
 	_, err := s.db.Exec(
-		"INSERT INTO users (id, nickname, avatar_url, online, password_hash) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET nickname=excluded.nickname, avatar_url=excluded.avatar_url, online=excluded.online, password_hash=excluded.password_hash",
-		user.ID, user.Nickname, user.Avatar, user.Online, user.PasswordHash,
+		"INSERT INTO users (id, nickname, avatar_url, bio, card_background_url, card_background_sensitive, show_mutual_groups, online, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET nickname=excluded.nickname, avatar_url=excluded.avatar_url, bio=excluded.bio, card_background_url=excluded.card_background_url, card_background_sensitive=excluded.card_background_sensitive, show_mutual_groups=excluded.show_mutual_groups, online=excluded.online, password_hash=excluded.password_hash",
+		user.ID, user.Nickname, user.Avatar, user.Bio, user.CardBackgroundURL, user.CardBackgroundSensitive, user.ShowMutualGroups, user.Online, user.PasswordHash,
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetUsers() ([]*User, error) {
-	rows, err := s.db.Query("SELECT id, nickname, avatar_url, online, password_hash, created_at FROM users")
+	rows, err := s.db.Query("SELECT id, nickname, avatar_url, bio, card_background_url, card_background_sensitive, show_mutual_groups, online, password_hash, created_at FROM users")
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +371,7 @@ func (s *SQLiteStore) GetUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		user := &User{}
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -1066,7 +1105,7 @@ func (s *SQLiteStore) GetGroupMembers(groupID string) ([]*GroupMember, error) {
 
 func (s *SQLiteStore) GetFriends(userID string) ([]*User, error) {
 	rows, err := s.db.Query(`
-		SELECT u.id, u.nickname, u.avatar_url, u.online, u.password_hash, u.created_at
+		SELECT u.id, u.nickname, u.avatar_url, u.bio, u.card_background_url, u.card_background_sensitive, u.show_mutual_groups, u.online, u.password_hash, u.created_at
 		FROM friendships f
 		JOIN users u ON u.id = f.friend_id
 		WHERE f.user_id = ?
@@ -1078,7 +1117,7 @@ func (s *SQLiteStore) GetFriends(userID string) ([]*User, error) {
 	users := make([]*User, 0)
 	for rows.Next() {
 		user := &User{}
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)

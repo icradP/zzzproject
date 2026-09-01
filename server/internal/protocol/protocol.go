@@ -201,6 +201,10 @@ const (
 	ActionMarkRead                   = "mark_read"
 	ActionGetUser                    = "get_user"
 	ActionUpdateProfile              = "update_profile"
+	ActionGrantUserTitle             = "grant_user_title"
+	ActionRevokeUserTitle            = "revoke_user_title"
+	ActionSetUserBlocked             = "set_user_blocked"
+	ActionReportUser                 = "report_user"
 	ActionGetUsers                   = "get_users"
 	ActionGetFriends                 = "get_friends"
 	ActionSearchUsers                = "search_users"
@@ -404,17 +408,39 @@ type CreateForwardParams struct {
 
 // UpdateProfileParams are the params for the "update_profile" action.
 type UpdateProfileParams struct {
-	Nickname string `json:"nickname,omitempty"`
-	Avatar   string `json:"avatar_url,omitempty"`
+	Nickname                string `json:"nickname,omitempty"`
+	Avatar                  string `json:"avatar_url,omitempty"`
+	Bio                     string `json:"bio,omitempty"`
+	CardBackgroundURL       string `json:"card_background_url,omitempty"`
+	CardBackgroundSensitive bool   `json:"card_background_sensitive,omitempty"`
+	ShowMutualGroups        bool   `json:"show_mutual_groups,omitempty"`
 }
 
 // User represents a user in API responses.
 type User struct {
-	UserID       string `json:"user_id"`
-	Nickname     string `json:"nickname"`
-	Avatar       string `json:"avatar_url,omitempty"`
-	Online       bool   `json:"online"`
-	Relationship string `json:"relationship,omitempty"`
+	UserID                  string      `json:"user_id"`
+	Nickname                string      `json:"nickname"`
+	Avatar                  string      `json:"avatar_url,omitempty"`
+	Bio                     string      `json:"bio,omitempty"`
+	CardBackgroundURL       string      `json:"card_background_url,omitempty"`
+	CardBackgroundSensitive bool        `json:"card_background_sensitive"`
+	ShowMutualGroups        bool        `json:"show_mutual_groups"`
+	Online                  bool        `json:"online"`
+	Relationship            string      `json:"relationship,omitempty"`
+	Titles                  []UserTitle `json:"titles,omitempty"`
+	MutualGroups            []Group     `json:"mutual_groups,omitempty"`
+}
+
+// UserTitle is a fixed-style title granted by the system or group managers.
+type UserTitle struct {
+	TitleID   string `json:"title_id"`
+	ScopeType string `json:"scope_type"`
+	ScopeID   string `json:"scope_id,omitempty"`
+	Text      string `json:"text"`
+	Style     string `json:"style"`
+	GrantedBy string `json:"granted_by"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
+	CreatedAt int64  `json:"created_at"`
 }
 
 // Group represents a group in API responses.

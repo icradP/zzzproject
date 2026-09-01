@@ -8,6 +8,7 @@ import '../../assets/app_assets.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
+import '../widgets/im_profile_card_panel.dart';
 
 class ImProfilePage extends StatefulWidget {
   const ImProfilePage({super.key});
@@ -22,7 +23,14 @@ class _ImProfilePageState extends State<ImProfilePage> {
   String? _avatarName;
   String? _avatarMime;
   String? _selectedAvatarAsset;
+  Uint8List? _backgroundBytes;
+  String? _backgroundName;
+  String? _backgroundMime;
   late final TextEditingController _nicknameController;
+  late final TextEditingController _bioController;
+  late final TextEditingController _backgroundController;
+  bool _backgroundSensitive = false;
+  bool _showMutualGroups = true;
   bool _loading = true;
   bool _saving = false;
   bool _signingOut = false;
@@ -32,22 +40,32 @@ class _ImProfilePageState extends State<ImProfilePage> {
   void initState() {
     super.initState();
     _nicknameController = TextEditingController();
+    _bioController = TextEditingController();
+    _backgroundController = TextEditingController();
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   @override
   void dispose() {
     _nicknameController.dispose();
+    _bioController.dispose();
+    _backgroundController.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     try {
-      final user = await ImScope.repositoryOf(context).getCurrentUser();
+      final repository = ImScope.repositoryOf(context);
+      final current = await repository.getCurrentUser();
+      final user = await repository.getProfileCard(current.id) ?? current;
       if (!mounted) return;
       setState(() {
         _user = user;
         _nicknameController.text = user.displayName;
+        _bioController.text = user.bio;
+        _backgroundController.text = user.cardBackgroundUrl ?? '';
+        _backgroundSensitive = user.cardBackgroundSensitive;
+        _showMutualGroups = user.showMutualGroups;
         _selectedAvatarAsset =
             AppAssets.avatarPool.contains(user.avatarAssetPath)
                 ? user.avatarAssetPath
@@ -95,10 +113,53 @@ class _ImProfilePageState extends State<ImProfilePage> {
     });
   }
 
+  Future<void> _pickBackground() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+      allowMultiple: false,
+    );
+    final file = result?.files.single;
+    if (file == null || file.bytes == null) return;
+    if (file.bytes!.length > 20 * 1024 * 1024) {
+      setState(() => _error = 'Card background must be 20 MB or smaller.');
+      return;
+    }
+    setState(() {
+      _backgroundBytes = file.bytes;
+      _backgroundName = file.name;
+      _backgroundMime =
+          file.extension == null
+              ? null
+              : 'image/${file.extension!.toLowerCase()}';
+      _error = null;
+    });
+  }
+
+  void _clearSelectedBackground() {
+    setState(() {
+      _backgroundBytes = null;
+      _backgroundName = null;
+      _backgroundMime = null;
+    });
+  }
+
   Future<void> _save() async {
     final nickname = _nicknameController.text.trim();
     if (nickname.isEmpty || nickname.length > 64) {
       setState(() => _error = 'Nickname must be 1-64 characters.');
+      return;
+    }
+    final background = _backgroundController.text.trim();
+    final backgroundUri = background.isEmpty ? null : Uri.tryParse(background);
+    if (_backgroundBytes == null &&
+        backgroundUri != null &&
+        (backgroundUri.scheme != 'https' || backgroundUri.host.isEmpty)) {
+      setState(() => _error = 'Card background must be an HTTPS image URL.');
+      return;
+    }
+    if (_bioController.text.trim().characters.length > 280) {
+      setState(() => _error = 'Bio must not exceed 280 characters.');
       return;
     }
     setState(() {
@@ -118,6 +179,19 @@ class _ImProfilePageState extends State<ImProfilePage> {
                   mimeType: _avatarMime,
                 ),
         avatarAssetPath: _selectedAvatarAsset,
+        bio: _bioController.text.trim(),
+        cardBackground:
+            _backgroundBytes == null
+                ? null
+                : ImMediaUpload(
+                  kind: ImMessageKind.image,
+                  fileName: _backgroundName ?? 'card-background.jpg',
+                  bytes: _backgroundBytes,
+                  mimeType: _backgroundMime,
+                ),
+        cardBackgroundUrl: background,
+        cardBackgroundSensitive: _backgroundSensitive,
+        showMutualGroups: _showMutualGroups,
       );
       if (!mounted) return;
       setState(() {
@@ -125,6 +199,10 @@ class _ImProfilePageState extends State<ImProfilePage> {
         _avatarBytes = null;
         _avatarName = null;
         _avatarMime = null;
+        _backgroundBytes = null;
+        _backgroundName = null;
+        _backgroundMime = null;
+        _backgroundController.text = user.cardBackgroundUrl ?? '';
         _selectedAvatarAsset =
             AppAssets.avatarPool.contains(user.avatarAssetPath)
                 ? user.avatarAssetPath
@@ -179,7 +257,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
                 padding: const EdgeInsets.all(20),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 520),
+                    constraints: const BoxConstraints(maxWidth: 680),
                     child: ZzzPanel(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -300,6 +378,110 @@ class _ImProfilePageState extends State<ImProfilePage> {
                             foregroundColor: Colors.white,
                           ),
                           const SizedBox(height: 12),
+                          ZzzTextInput(
+                            controller: _bioController,
+                            hintText: 'Bio',
+                            minLines: 3,
+                            maxLines: 5,
+                            maxLength: 280,
+                            prefixIcon: const Icon(Icons.notes_rounded),
+                            fillColor: Colors.white.withValues(alpha: 0.06),
+                            foregroundColor: Colors.white,
+                          ),
+                          const SizedBox(height: 12),
+                          ZzzTextInput(
+                            controller: _backgroundController,
+                            hintText: 'Card background HTTPS URL',
+                            prefixIcon: const Icon(Icons.image_outlined),
+                            fillColor: Colors.white.withValues(alpha: 0.06),
+                            foregroundColor: Colors.white,
+                            onChanged: (_) {
+                              if (_backgroundBytes != null) {
+                                _backgroundBytes = null;
+                                _backgroundName = null;
+                                _backgroundMime = null;
+                              }
+                              setState(() {});
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  key: const Key('upload-card-background'),
+                                  onPressed: _saving ? null : _pickBackground,
+                                  icon: const Icon(Icons.cloud_upload_outlined),
+                                  label: Text(
+                                    _backgroundName ??
+                                        'Upload with configured image host',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              if (_backgroundBytes != null) ...[
+                                const SizedBox(width: 6),
+                                IconButton(
+                                  tooltip: 'Cancel selected background',
+                                  onPressed:
+                                      _saving ? null : _clearSelectedBackground,
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          _buildBackgroundPreview(),
+                          const SizedBox(height: 6),
+                          Material(
+                            color: Colors.transparent,
+                            child: SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: _backgroundSensitive,
+                              onChanged:
+                                  _saving
+                                      ? null
+                                      : (value) => setState(
+                                        () => _backgroundSensitive = value,
+                                      ),
+                              secondary: const Icon(
+                                Icons.visibility_off_outlined,
+                              ),
+                              title: const Text('Sensitive background'),
+                            ),
+                          ),
+                          Material(
+                            color: Colors.transparent,
+                            child: SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: _showMutualGroups,
+                              onChanged:
+                                  _saving
+                                      ? null
+                                      : (value) => setState(
+                                        () => _showMutualGroups = value,
+                                      ),
+                              secondary: const Icon(Icons.groups_outlined),
+                              title: const Text('Show mutual groups'),
+                            ),
+                          ),
+                          if (user?.titles.isNotEmpty ?? false) ...[
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Titles',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: user!.titles
+                                  .map((title) => ImTitleBadge(title: title))
+                                  .toList(growable: false),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
                           if (user != null)
                             Text(
                               'Account ID  ${user.id}',
@@ -351,4 +533,34 @@ class _ImProfilePageState extends State<ImProfilePage> {
               ),
     );
   }
+
+  Widget _buildBackgroundPreview() {
+    final selectedBytes = _backgroundBytes;
+    final raw = _backgroundController.text.trim();
+    final uri = Uri.tryParse(raw);
+    final valid = uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
+    return AspectRatio(
+      aspectRatio: 16 / 6,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child:
+            selectedBytes != null
+                ? Image.memory(selectedBytes, fit: BoxFit.cover)
+                : valid
+                ? Image.network(
+                  raw,
+                  fit: BoxFit.cover,
+                  errorBuilder:
+                      (_, __, ___) =>
+                          _backgroundPlaceholder(Icons.broken_image_outlined),
+                )
+                : _backgroundPlaceholder(Icons.image_outlined),
+      ),
+    );
+  }
+
+  Widget _backgroundPlaceholder(IconData icon) => ColoredBox(
+    color: Colors.white.withValues(alpha: 0.04),
+    child: Center(child: Icon(icon, color: Colors.white30, size: 34)),
+  );
 }
