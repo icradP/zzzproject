@@ -37,7 +37,9 @@ import '../im/pages/im_web_setup_page.dart';
 import '../theme/zzz_colors.dart';
 
 class ZzzApp extends StatefulWidget {
-  const ZzzApp({super.key});
+  const ZzzApp({this.nsfwCheckerFactory = OnnxNsfwChecker.new, super.key});
+
+  final ImNsfwChecker Function() nsfwCheckerFactory;
 
   @override
   State<ZzzApp> createState() => _ZzzAppState();
@@ -89,7 +91,7 @@ class _ZzzAppState extends State<ZzzApp> {
     await ImAnimationConfig.load();
     await ImBackdropConfig.load();
     await ImMessageDisplayConfig.load();
-    await ImNsfwConfig.load();
+    final nsfwConfig = await ImNsfwConfig.load();
     final hasWebServer = profiles.enabledProfiles.any((profile) {
       final config = profile.config;
       if (!config.isZzzServer ||
@@ -116,7 +118,7 @@ class _ZzzAppState extends State<ZzzApp> {
       }
       return;
     }
-    if (ImNsfwConfig.instance.persistReveal) {
+    if (nsfwConfig.persistReveal) {
       await _nsfwStateCache.loadRevealed();
     }
     final runtime = ImSourceRegistry(
@@ -153,12 +155,14 @@ class _ZzzAppState extends State<ZzzApp> {
       _needsWebSetup = false;
     });
     oldRepository?.dispose();
-    unawaited(_initializeNsfwChecker(fallbackNsfw));
+    if (nsfwConfig.enabled) {
+      unawaited(_initializeNsfwChecker(fallbackNsfw));
+    }
   }
 
   Future<void> _initializeNsfwChecker(ImNsfwChecker fallback) async {
     ImLogger.nsfwInitStart();
-    final nsfw = OnnxNsfwChecker();
+    final nsfw = widget.nsfwCheckerFactory();
     await nsfw.initialize();
     if (!mounted || !identical(_nsfwChecker, fallback)) {
       nsfw.dispose();
