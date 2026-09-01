@@ -20,6 +20,7 @@ type Store interface {
 	UpsertSession(session *Session) error
 	GetSession(tokenHash string) (*Session, error)
 	DeleteSession(tokenHash string) error
+	DeleteSessionsForUser(userID string) error
 
 	// ---- Conversation operations ----
 	GetOrCreateConversation(id, convType, title string) (*Conversation, error)
@@ -36,6 +37,8 @@ type Store interface {
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
 	GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error)
+	GetRecentMessages(limit int) ([]*Message, error)
+	DeleteMessage(msgID string) (bool, error)
 	ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error)
 	GetMessageReactionIDs(msgID, userID string) ([]string, error)
 	RecallMessage(msgID string) (bool, error)
@@ -76,6 +79,7 @@ type Store interface {
 	// ---- Media operations ----
 	StoreMedia(file *MediaFile) error
 	GetMedia(id string) (*MediaFile, error)
+	GetMediaFiles(limit int) ([]*MediaFile, error)
 	DeleteMedia(id string) error
 
 	// ---- Web Push operations ----

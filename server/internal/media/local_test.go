@@ -79,3 +79,33 @@ func TestLocalStoreServesSVGAsAttachment(t *testing.T) {
 		t.Fatalf("expected attachment disposition, got %q", disposition)
 	}
 }
+
+func TestLocalStoreDeleteRemovesBytesAndMetadata(t *testing.T) {
+	database := store.NewMemoryStore()
+	media, err := NewLocalStore(t.TempDir(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := media.Save("delete-me.txt", "file", "text/plain", []byte("temporary"), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := media.Delete(file.ID)
+	if err != nil || !deleted {
+		t.Fatalf("delete result=%v err=%v", deleted, err)
+	}
+	metadata, err := database.GetMedia(file.ID)
+	if err != nil || metadata != nil {
+		t.Fatalf("metadata after delete=%#v err=%v", metadata, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, file.URL, nil)
+	response := httptest.NewRecorder()
+	media.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("deleted media status=%d", response.Code)
+	}
+	deleted, err = media.Delete(file.ID)
+	if err != nil || deleted {
+		t.Fatalf("second delete result=%v err=%v", deleted, err)
+	}
+}

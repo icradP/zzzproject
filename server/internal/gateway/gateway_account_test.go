@@ -123,6 +123,17 @@ func TestRegistrationRequiresConfiguredInviteCode(t *testing.T) {
 	if user, _ := database.GetUser("invite-test"); user != nil {
 		t.Fatal("invalid invitation created an account")
 	}
+	tooLong := request(t, client, "register", map[string]interface{}{
+		"user_id":     "long-password",
+		"password":    strings.Repeat("x", 73),
+		"invite_code": "diaogan",
+	})
+	if tooLong["status"] == "ok" {
+		t.Fatalf("registration accepted a password beyond bcrypt limits: %#v", tooLong)
+	}
+	if user, _ := database.GetUser("long-password"); user != nil {
+		t.Fatal("invalid password created an account")
+	}
 
 	registered := request(t, client, "register", map[string]interface{}{
 		"user_id":     "invite-test",

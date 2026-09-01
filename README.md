@@ -83,10 +83,12 @@ not needed for ordinary PWA updates.
 The server admin console is available at `/im/admin/` when
 `ZZZ_ADMIN_TOKEN` is configured. The token is exchanged for a 12-hour,
 HttpOnly admin session and is never stored by the page. The console exposes
-service statistics, user profiles, groups, conversations, and runtime
-registration controls. Invitation-code changes made there last until the
-server restarts; update `ZZZ_INVITE_CODE` in `/etc/zzz-im/server.env` for a
-persistent change.
+service statistics, user and password management, groups, conversations,
+message moderation, uploaded-media preview and deletion, and runtime
+registration controls. Password resets can revoke stored account sessions;
+media deletion removes both metadata and local bytes. Invitation-code changes
+made there last until the server restarts; update `ZZZ_INVITE_CODE` in
+`/etc/zzz-im/server.env` for a persistent change.
 
 The custom Web bootstrap keeps CanvasKit on the application origin and starts
 the versioned `app-sw.js` cache after the first Flutter frame. Web Push remains

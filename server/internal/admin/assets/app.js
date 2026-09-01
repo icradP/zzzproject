@@ -5,7 +5,11 @@ const state = {
   users: [],
   groups: [],
   conversations: [],
+  messages: [],
+  media: [],
   selectedGroup: null,
+  selectedMessage: null,
+  selectedMedia: null,
   toastTimer: null,
 };
 
@@ -106,6 +110,35 @@ function statusBadge(text, enabled) {
   return badge;
 }
 
+function messageSummary(message) {
+  if (message.recalled) return "Recalled message";
+  const parts = (message.segments || []).map((segment) => {
+    const data = segment.data || {};
+    if (segment.type === "text") return String(data.text || "").trim();
+    if (segment.type === "at") return `@${data.qq || data.user_id || "user"}`;
+    const label = segment.type ? segment.type[0].toUpperCase() + segment.type.slice(1) : "Segment";
+    return `[${label}] ${data.file || data.name || data.id || ""}`.trim();
+  }).filter(Boolean);
+  return parts.join(" ") || "Empty message";
+}
+
+function appendDetails(target, details) {
+  target.replaceChildren(...details.map(([term, description, mono = false]) => {
+    const wrapper = document.createElement("div");
+    wrapper.append(element("dt", "", term), element("dd", mono ? "mono" : "", String(description)));
+    return wrapper;
+  }));
+}
+
+function safeMediaURL(file) {
+  try {
+    const resolved = new URL(file.url, window.location.href);
+    return resolved.origin === window.location.origin ? resolved.href : "";
+  } catch (_) {
+    return "";
+  }
+}
+
 async function loadOverview() {
   const payload = await api("overview");
   const stats = payload.stats;
@@ -160,7 +193,7 @@ function renderUsers() {
     status.append(statusBadge(user.online ? "Online" : "Offline", user.online));
     const created = element("td", "", formatDate(user.created_at));
     const actions = document.createElement("td");
-    const edit = element("button", "table-button", "Edit");
+    const edit = element("button", "table-button", "Manage");
     edit.type = "button";
     edit.addEventListener("click", () => openUserEditor(user));
     actions.append(edit);
@@ -175,6 +208,10 @@ function openUserEditor(user) {
   const dialog = document.querySelector("#edit-user-dialog");
   document.querySelector("#edit-user-id").textContent = user.id;
   document.querySelector("#edit-user-nickname").value = user.nickname || user.id;
+  document.querySelector("#reset-password").value = "";
+  document.querySelector("#reset-password-confirm").value = "";
+  document.querySelector("#revoke-user-sessions").checked = true;
+  document.querySelector("#reset-password-error").textContent = "";
   dialog.dataset.userId = user.id;
   dialog.showModal();
 }
@@ -266,6 +303,132 @@ function renderConversations() {
   document.querySelector("#conversations-empty").hidden = rows.length !== 0;
 }
 
+async function loadMessages() {
+  const payload = await api("messages");
+  state.messages = payload.messages || [];
+  renderMessages();
+}
+
+function renderMessages() {
+  const query = document.querySelector("#message-search").value.trim().toLowerCase();
+  const messages = state.messages.filter((message) => {
+    return `${message.id} ${message.conversation_id} ${message.sender_id} ${message.sender_nickname} ${messageSummary(message)}`.toLowerCase().includes(query);
+  });
+  const rows = messages.map((message) => {
+    const row = document.createElement("tr");
+    const content = document.createElement("td");
+    content.append(element("span", "cell-title message-preview", messageSummary(message)), element("span", "cell-subtitle mono", message.id));
+    const sender = document.createElement("td");
+    sender.append(element("span", "cell-title", message.sender_nickname || message.sender_id), element("span", "cell-subtitle mono", message.sender_id));
+    const conversation = element("td", "mono", message.conversation_id);
+    const sent = element("td", "", formatDate(message.timestamp));
+    const actions = document.createElement("td");
+    const inspect = element("button", "table-button", "Open");
+    inspect.type = "button";
+    inspect.addEventListener("click", () => openMessage(message));
+    actions.append(inspect);
+    row.append(content, sender, conversation, sent, actions);
+    return row;
+  });
+  document.querySelector("#messages-body").replaceChildren(...rows);
+  document.querySelector("#messages-empty").hidden = rows.length !== 0;
+}
+
+function openMessage(message) {
+  state.selectedMessage = message;
+  document.querySelector("#message-dialog-title").textContent = message.sender_nickname || message.sender_id;
+  appendDetails(document.querySelector("#message-details"), [
+    ["Message ID", message.id, true],
+    ["Conversation", message.conversation_id, true],
+    ["Sender", message.sender_id, true],
+    ["Sent", formatDate(message.timestamp)],
+    ["Status", message.recalled ? "Recalled" : "Stored"],
+    ["Segments", (message.segments || []).length],
+  ]);
+  const segments = (message.segments || []).map((segment) => {
+    const item = element("div", "segment-item");
+    item.append(element("strong", "", segment.type || "unknown"), element("pre", "", JSON.stringify(segment.data || {}, null, 2)));
+    return item;
+  });
+  document.querySelector("#message-segments").replaceChildren(...segments);
+  document.querySelector("#message-dialog").showModal();
+}
+
+async function loadMedia() {
+  const payload = await api("media");
+  state.media = payload.media || [];
+  renderMedia();
+}
+
+function renderMedia() {
+  const query = document.querySelector("#media-search").value.trim().toLowerCase();
+  const files = state.media.filter((file) => `${file.id} ${file.file_name} ${file.file_type} ${file.mime_type} ${file.uploader_id}`.toLowerCase().includes(query));
+  const rows = files.map((file) => {
+    const row = document.createElement("tr");
+    const fileCell = document.createElement("td");
+    const identity = element("div", "media-identity");
+    const preview = element("span", "media-thumbnail", String(file.file_type || "file").slice(0, 1).toUpperCase());
+    const url = safeMediaURL(file);
+    if (url && String(file.mime_type).startsWith("image/") && file.mime_type !== "image/svg+xml") {
+      const image = document.createElement("img");
+      image.src = url;
+      image.alt = "";
+      preview.replaceChildren(image);
+    }
+    const labels = element("span", "");
+    labels.append(element("span", "cell-title", file.file_name), element("span", "cell-subtitle mono", file.id));
+    identity.append(preview, labels);
+    fileCell.append(identity);
+    const uploader = element("td", "mono", file.uploader_id);
+    const type = document.createElement("td");
+    type.append(element("span", "cell-title", file.file_type || "file"), element("span", "cell-subtitle", `${file.mime_type || "unknown"} / ${formatBytes(file.size)}`));
+    const uploaded = element("td", "", formatDate(file.created_at));
+    const actions = document.createElement("td");
+    const inspect = element("button", "table-button", "Open");
+    inspect.type = "button";
+    inspect.addEventListener("click", () => openMedia(file));
+    actions.append(inspect);
+    row.append(fileCell, uploader, type, uploaded, actions);
+    return row;
+  });
+  document.querySelector("#media-body").replaceChildren(...rows);
+  document.querySelector("#media-empty").hidden = rows.length !== 0;
+}
+
+function openMedia(file) {
+  state.selectedMedia = file;
+  document.querySelector("#media-dialog-title").textContent = file.file_name;
+  appendDetails(document.querySelector("#media-details"), [
+    ["File ID", file.id, true],
+    ["Uploader", file.uploader_id, true],
+    ["Type", file.file_type || "file"],
+    ["MIME", file.mime_type || "unknown", true],
+    ["Size", formatBytes(file.size)],
+    ["Uploaded", formatDate(file.created_at)],
+  ]);
+  const viewer = document.querySelector("#media-viewer");
+  const url = safeMediaURL(file);
+  let content = element("div", "file-placeholder", String(file.file_type || "file").toUpperCase());
+  if (url && String(file.mime_type).startsWith("image/") && file.mime_type !== "image/svg+xml") {
+    content = document.createElement("img");
+    content.src = url;
+    content.alt = file.file_name;
+  } else if (url && String(file.mime_type).startsWith("video/")) {
+    content = document.createElement("video");
+    content.src = url;
+    content.controls = true;
+  } else if (url && String(file.mime_type).startsWith("audio/")) {
+    content = document.createElement("audio");
+    content.src = url;
+    content.controls = true;
+  }
+  viewer.replaceChildren(content);
+  const link = document.querySelector("#open-media-link");
+  link.href = url || "#";
+  link.hidden = !url;
+  document.querySelector("#media-dialog").showModal();
+}
+
 async function loadRegistration() {
   const payload = await api("settings/registration");
   const enabled = Boolean(payload.enabled);
@@ -293,6 +456,8 @@ async function refreshActiveView() {
     users: loadUsers,
     groups: loadGroups,
     conversations: loadConversations,
+    messages: loadMessages,
+    media: loadMedia,
     settings: loadRegistration,
   };
   try {
@@ -340,6 +505,8 @@ document.querySelectorAll(".nav-button").forEach((button) => button.addEventList
 document.querySelector("#user-search").addEventListener("input", renderUsers);
 document.querySelector("#group-search").addEventListener("input", renderGroups);
 document.querySelector("#conversation-search").addEventListener("input", renderConversations);
+document.querySelector("#message-search").addEventListener("input", renderMessages);
+document.querySelector("#media-search").addEventListener("input", renderMedia);
 
 document.querySelectorAll("[data-close-dialog]").forEach((button) => {
   button.addEventListener("click", () => document.querySelector(`#${button.dataset.closeDialog}`).close());
@@ -353,9 +520,63 @@ document.querySelector("#edit-user-form").addEventListener("submit", async (even
       method: "PATCH",
       body: JSON.stringify({ user_id: dialog.dataset.userId, nickname: document.querySelector("#edit-user-nickname").value }),
     });
-    dialog.close();
     showToast("User updated");
     await loadUsers();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+document.querySelector("#reset-password-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const dialog = document.querySelector("#edit-user-dialog");
+  const password = document.querySelector("#reset-password");
+  const confirmation = document.querySelector("#reset-password-confirm");
+  const error = document.querySelector("#reset-password-error");
+  error.textContent = "";
+  if (password.value !== confirmation.value) {
+    error.textContent = "Passwords do not match";
+    return;
+  }
+  try {
+    await api("users/password", {
+      method: "PATCH",
+      body: JSON.stringify({
+        user_id: dialog.dataset.userId,
+        password: password.value,
+        revoke_sessions: document.querySelector("#revoke-user-sessions").checked,
+      }),
+    });
+    password.value = "";
+    confirmation.value = "";
+    dialog.close();
+    showToast("Password reset");
+  } catch (requestError) {
+    error.textContent = requestError.message;
+  }
+});
+
+document.querySelector("#delete-message-button").addEventListener("click", async () => {
+  const message = state.selectedMessage;
+  if (!message || !window.confirm(`Delete message ${message.id}?`)) return;
+  try {
+    await api("messages", { method: "DELETE", body: JSON.stringify({ message_id: message.id }) });
+    document.querySelector("#message-dialog").close();
+    showToast("Message deleted");
+    await loadMessages();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+document.querySelector("#delete-media-button").addEventListener("click", async () => {
+  const file = state.selectedMedia;
+  if (!file || !window.confirm(`Permanently delete ${file.file_name}? Messages that reference it will no longer load the file.`)) return;
+  try {
+    await api("media", { method: "DELETE", body: JSON.stringify({ media_id: file.id }) });
+    document.querySelector("#media-dialog").close();
+    showToast("File deleted");
+    await loadMedia();
   } catch (error) {
     showToast(error.message, true);
   }

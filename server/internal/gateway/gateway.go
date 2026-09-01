@@ -494,8 +494,8 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "user_id must be 3-32 characters")
 		return
 	}
-	if len(password) < 8 || len(password) > 128 {
-		g.sendError(client, req.Echo, "password must be 8-128 characters")
+	if len(password) < 8 || len(password) > 72 {
+		g.sendError(client, req.Echo, "password must be 8-72 characters")
 		return
 	}
 	if nickname == "" {

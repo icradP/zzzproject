@@ -252,6 +252,45 @@ func (s *MemoryStore) GetMessagesBefore(convID, beforeMessageID string, limit in
 	return result, nil
 }
 
+func (s *MemoryStore) GetRecentMessages(limit int) ([]*Message, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*Message, 0)
+	for _, messages := range s.messages {
+		for _, message := range messages {
+			copy := *message
+			copy.Reactions = s.reactionCountsLocked(message.ID)
+			result = append(result, &copy)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Timestamp.Equal(result[j].Timestamp) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].Timestamp.After(result[j].Timestamp)
+	})
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (s *MemoryStore) DeleteMessage(msgID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for conversationID, messages := range s.messages {
+		for index, message := range messages {
+			if message.ID != msgID {
+				continue
+			}
+			s.messages[conversationID] = append(messages[:index], messages[index+1:]...)
+			delete(s.messageReactions, msgID)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *MemoryStore) ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -688,6 +727,26 @@ func (s *MemoryStore) GetMedia(id string) (*MediaFile, error) {
 	}
 	copy := *file
 	return &copy, nil
+}
+
+func (s *MemoryStore) GetMediaFiles(limit int) ([]*MediaFile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*MediaFile, 0, len(s.mediaFiles))
+	for _, file := range s.mediaFiles {
+		copy := *file
+		result = append(result, &copy)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 func (s *MemoryStore) DeleteMedia(id string) error {

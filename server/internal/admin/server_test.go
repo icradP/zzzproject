@@ -11,10 +11,23 @@ import (
 
 	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type registrationStub struct {
 	code string
+}
+
+type mediaStub struct {
+	store *store.MemoryStore
+}
+
+func (m *mediaStub) Delete(id string) (bool, error) {
+	file, err := m.store.GetMedia(id)
+	if err != nil || file == nil {
+		return false, err
+	}
+	return true, m.store.DeleteMedia(id)
 }
 
 func (r *registrationStub) RegistrationEnabled() bool { return r.code != "" }
@@ -163,6 +176,70 @@ func TestAdminLoginRateLimitAndStaticSecurity(t *testing.T) {
 	}
 	if page.Header().Get("Content-Security-Policy") == "" || page.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("missing static security headers: %#v", page.Header())
+	}
+}
+
+func TestAdminContentAndPasswordManagement(t *testing.T) {
+	database := store.NewMemoryStore()
+	seedAdminStore(t, database)
+	if err := database.StoreMedia(&store.MediaFile{
+		ID: "media-one", FileName: "photo.png", FileType: "image", MimeType: "image/png",
+		Size: 128, URL: "/files/media-one/photo.png", UploaderID: "alice", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Config{
+		Store: database, Media: &mediaStub{store: database}, Registration: &registrationStub{code: "diaogan"},
+		AdminToken: "admin", PublicPath: "/admin",
+	})
+	cookie := loginCookie(t, handler, "admin")
+
+	messages := performRequest(handler, http.MethodGet, "/admin/api/messages", nil, cookie, false)
+	if messages.Code != http.StatusOK {
+		t.Fatalf("messages status=%d body=%s", messages.Code, messages.Body.String())
+	}
+	var messagePayload struct {
+		Messages []*store.Message `json:"messages"`
+	}
+	if err := json.Unmarshal(messages.Body.Bytes(), &messagePayload); err != nil || len(messagePayload.Messages) != 1 {
+		t.Fatalf("messages payload=%#v err=%v", messagePayload, err)
+	}
+	deletedMessage := performRequest(handler, http.MethodDelete, "/admin/api/messages", map[string]interface{}{
+		"message_id": messagePayload.Messages[0].ID,
+	}, cookie, true)
+	if deletedMessage.Code != http.StatusNoContent {
+		t.Fatalf("message delete status=%d body=%s", deletedMessage.Code, deletedMessage.Body.String())
+	}
+
+	media := performRequest(handler, http.MethodGet, "/admin/api/media", nil, cookie, false)
+	if media.Code != http.StatusOK || !strings.Contains(media.Body.String(), "photo.png") {
+		t.Fatalf("media status=%d body=%s", media.Code, media.Body.String())
+	}
+	deletedMedia := performRequest(handler, http.MethodDelete, "/admin/api/media", map[string]interface{}{
+		"media_id": "media-one",
+	}, cookie, true)
+	if deletedMedia.Code != http.StatusNoContent {
+		t.Fatalf("media delete status=%d body=%s", deletedMedia.Code, deletedMedia.Body.String())
+	}
+
+	reset := performRequest(handler, http.MethodPatch, "/admin/api/users/password", map[string]interface{}{
+		"user_id": "alice", "password": "new secure password",
+	}, cookie, true)
+	if reset.Code != http.StatusOK {
+		t.Fatalf("password reset status=%d body=%s", reset.Code, reset.Body.String())
+	}
+	if strings.Contains(reset.Body.String(), "new secure password") || strings.Contains(reset.Body.String(), "password_hash") {
+		t.Fatal("password data leaked in response")
+	}
+	user, err := database.GetUser("alice")
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte("new secure password")) != nil {
+		t.Fatalf("password hash was not updated: user=%#v err=%v", user, err)
+	}
+	if session, err := database.GetSession("active"); err != nil || session != nil {
+		t.Fatalf("account session was not revoked: session=%#v err=%v", session, err)
+	}
+	if session, err := database.GetSession("expired"); err != nil || session == nil {
+		t.Fatalf("other account session changed: session=%#v err=%v", session, err)
 	}
 }
 

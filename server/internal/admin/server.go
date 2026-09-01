@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/icradp/zzz-im-server/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -38,9 +39,15 @@ type RegistrationController interface {
 	SetInviteCode(string)
 }
 
+// MediaController removes uploaded bytes together with their metadata.
+type MediaController interface {
+	Delete(string) (bool, error)
+}
+
 // Config defines the dependencies and non-secret metadata for the console.
 type Config struct {
 	Store         store.Store
+	Media         MediaController
 	Registration  RegistrationController
 	AdminToken    string
 	PublicPath    string
@@ -58,6 +65,7 @@ type loginState struct {
 // Server serves the authenticated JSON API and embedded admin application.
 type Server struct {
 	store            store.Store
+	media            MediaController
 	registration     RegistrationController
 	adminTokenDigest [sha256.Size]byte
 	publicPath       string
@@ -86,6 +94,7 @@ func New(config Config) *Server {
 	}
 	return &Server{
 		store:            config.Store,
+		media:            config.Media,
 		registration:     config.Registration,
 		adminTokenDigest: sha256.Sum256([]byte(strings.TrimSpace(config.AdminToken))),
 		publicPath:       publicPath,
@@ -166,6 +175,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleUsers(w)
 	case path == "/users" && r.Method == http.MethodPatch:
 		s.handleUpdateUser(w, r)
+	case path == "/users/password" && r.Method == http.MethodPatch:
+		s.handleResetPassword(w, r)
 	case path == "/groups" && r.Method == http.MethodGet:
 		s.handleGroups(w)
 	case path == "/groups" && r.Method == http.MethodDelete:
@@ -174,6 +185,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleConversations(w)
 	case path == "/conversations" && r.Method == http.MethodDelete:
 		s.handleDeleteConversation(w, r)
+	case path == "/messages" && r.Method == http.MethodGet:
+		s.handleMessages(w)
+	case path == "/messages" && r.Method == http.MethodDelete:
+		s.handleDeleteMessage(w, r)
+	case path == "/media" && r.Method == http.MethodGet:
+		s.handleMedia(w)
+	case path == "/media" && r.Method == http.MethodDelete:
+		s.handleDeleteMedia(w, r)
 	case path == "/settings/registration" && r.Method == http.MethodGet:
 		s.handleRegistrationSettings(w)
 	case path == "/settings/registration" && r.Method == http.MethodPatch:
@@ -298,6 +317,53 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]interface{}{"user": user})
 }
 
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserID         string `json:"user_id"`
+		Password       string `json:"password"`
+		RevokeSessions *bool  `json:"revoke_sessions"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.UserID = strings.TrimSpace(body.UserID)
+	if body.UserID == "" || len(body.Password) < 8 || len(body.Password) > 72 {
+		s.writeError(w, http.StatusBadRequest, "user_id and an 8-72 character password are required")
+		return
+	}
+	user, err := s.store.GetUser(body.UserID)
+	if err != nil || user == nil {
+		s.writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "password could not be secured")
+		return
+	}
+	originalHash := user.PasswordHash
+	user.PasswordHash = string(passwordHash)
+	if err := s.store.SetUser(user); err != nil {
+		log.Printf("[admin] password reset failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "could not reset password")
+		return
+	}
+	revokeSessions := body.RevokeSessions == nil || *body.RevokeSessions
+	if revokeSessions {
+		if err := s.store.DeleteSessionsForUser(user.ID); err != nil {
+			user.PasswordHash = originalHash
+			_ = s.store.SetUser(user)
+			log.Printf("[admin] session revocation failed: %v", err)
+			s.writeError(w, http.StatusInternalServerError, "could not revoke account sessions")
+			return
+		}
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"user_id": user.ID, "sessions_revoked": revokeSessions,
+	})
+}
+
 func (s *Server) handleGroups(w http.ResponseWriter) {
 	groups, err := s.store.GetGroups()
 	if err != nil {
@@ -363,6 +429,82 @@ func (s *Server) handleDeleteConversation(w http.ResponseWriter, r *http.Request
 	if err := s.store.DeleteConversation(conversation.ID); err != nil {
 		log.Printf("[admin] conversation deletion failed: %v", err)
 		s.writeError(w, http.StatusInternalServerError, "could not delete conversation")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleMessages(w http.ResponseWriter) {
+	messages, err := s.store.GetRecentMessages(500)
+	if err != nil {
+		log.Printf("[admin] messages failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "could not load messages")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{"messages": messages})
+}
+
+func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MessageID string `json:"message_id"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.MessageID = strings.TrimSpace(body.MessageID)
+	if body.MessageID == "" {
+		s.writeError(w, http.StatusBadRequest, "message_id is required")
+		return
+	}
+	deleted, err := s.store.DeleteMessage(body.MessageID)
+	if err != nil {
+		log.Printf("[admin] message deletion failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "could not delete message")
+		return
+	}
+	if !deleted {
+		s.writeError(w, http.StatusNotFound, "message not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleMedia(w http.ResponseWriter) {
+	files, err := s.store.GetMediaFiles(500)
+	if err != nil {
+		log.Printf("[admin] media failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "could not load media")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]interface{}{"media": files})
+}
+
+func (s *Server) handleDeleteMedia(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MediaID string `json:"media_id"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.MediaID = strings.TrimSpace(body.MediaID)
+	if body.MediaID == "" {
+		s.writeError(w, http.StatusBadRequest, "media_id is required")
+		return
+	}
+	if s.media == nil {
+		s.writeError(w, http.StatusServiceUnavailable, "media deletion is unavailable")
+		return
+	}
+	deleted, err := s.media.Delete(body.MediaID)
+	if err != nil {
+		log.Printf("[admin] media deletion failed: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "could not delete media")
+		return
+	}
+	if !deleted {
+		s.writeError(w, http.StatusNotFound, "media not found")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -494,7 +636,9 @@ func (s *Server) allowedMethods(path string) string {
 		return "GET, POST, DELETE"
 	case "/users", "/settings/registration":
 		return "GET, PATCH"
-	case "/groups", "/conversations":
+	case "/users/password":
+		return "PATCH"
+	case "/groups", "/conversations", "/messages", "/media":
 		return "GET, DELETE"
 	case "/overview":
 		return "GET"

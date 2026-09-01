@@ -101,6 +101,7 @@ func main() {
 	if strings.TrimSpace(*adminToken) != "" {
 		adminConsole := adminserver.New(adminserver.Config{
 			Store:         db,
+			Media:         mediaStore,
 			Registration:  gw,
 			AdminToken:    *adminToken,
 			PublicPath:    *adminPublicPath,

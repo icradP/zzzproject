@@ -37,6 +37,8 @@
         <button class="nav-button" type="button" data-view="users">Users</button>
         <button class="nav-button" type="button" data-view="groups">Groups</button>
         <button class="nav-button" type="button" data-view="conversations">Conversations</button>
+        <button class="nav-button" type="button" data-view="messages">Messages</button>
+        <button class="nav-button" type="button" data-view="media">Media</button>
         <button class="nav-button" type="button" data-view="settings">Settings</button>
       </nav>
       <div class="sidebar-footer">
@@ -137,6 +139,50 @@
         </section>
       </section>
 
+      <section id="view-messages" class="view" data-section="messages" hidden>
+        <section class="surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">CONTENT</p>
+              <h3>Messages</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="message-search" type="search" placeholder="Text, sender, or conversation">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Message</th><th>Sender</th><th>Conversation</th><th>Sent</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="messages-body"></tbody>
+            </table>
+          </div>
+          <p id="messages-empty" class="empty-state" hidden>No messages found.</p>
+        </section>
+      </section>
+
+      <section id="view-media" class="view" data-section="media" hidden>
+        <section class="surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">STORAGE</p>
+              <h3>Media</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="media-search" type="search" placeholder="File, uploader, or type">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>File</th><th>Uploader</th><th>Type</th><th>Uploaded</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="media-body"></tbody>
+            </table>
+          </div>
+          <p id="media-empty" class="empty-state" hidden>No media found.</p>
+        </section>
+      </section>
+
       <section id="view-settings" class="view" data-section="settings" hidden>
         <section class="surface settings-surface">
           <div class="section-heading">
@@ -168,20 +214,34 @@
   </div>
 
   <dialog id="edit-user-dialog" class="modal">
-    <form id="edit-user-form" method="dialog">
-      <div class="modal-header">
-        <div>
-          <p class="eyebrow">ACCOUNT</p>
-          <h3>Edit user</h3>
-        </div>
-        <button class="icon-button" type="button" data-close-dialog="edit-user-dialog" title="Close" aria-label="Close">&times;</button>
+    <div class="modal-header">
+      <div>
+        <p class="eyebrow">ACCOUNT</p>
+        <h3>Manage user</h3>
       </div>
-      <p id="edit-user-id" class="mono"></p>
+      <button class="icon-button" type="button" data-close-dialog="edit-user-dialog" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <p id="edit-user-id" class="mono dialog-identity"></p>
+    <form id="edit-user-form" class="form-section">
       <label for="edit-user-nickname">Nickname</label>
       <input id="edit-user-nickname" maxlength="64" required>
       <div class="modal-actions">
-        <button class="secondary-button" type="button" data-close-dialog="edit-user-dialog">Cancel</button>
-        <button class="primary-button compact" type="submit">Save</button>
+        <button class="primary-button compact" type="submit">Save nickname</button>
+      </div>
+    </form>
+    <form id="reset-password-form" class="form-section divided">
+      <label for="reset-password">New password</label>
+      <input id="reset-password" type="password" minlength="8" maxlength="72" required autocomplete="new-password">
+      <label for="reset-password-confirm">Confirm password</label>
+      <input id="reset-password-confirm" type="password" minlength="8" maxlength="72" required autocomplete="new-password">
+      <label class="checkbox-row">
+        <input id="revoke-user-sessions" type="checkbox" checked>
+        <span>Sign out saved sessions</span>
+      </label>
+      <p id="reset-password-error" class="form-error" role="alert"></p>
+      <div class="modal-actions separated compact-actions">
+        <button class="secondary-button" type="button" data-close-dialog="edit-user-dialog">Close</button>
+        <button class="danger-button" type="submit">Reset password</button>
       </div>
     </form>
   </dialog>
@@ -202,6 +262,42 @@
     <div class="modal-actions separated">
       <button id="delete-group-button" class="danger-button" type="button">Delete group</button>
       <button class="secondary-button" type="button" data-close-dialog="group-dialog">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="message-dialog" class="modal wide">
+    <div class="modal-header">
+      <div>
+        <p class="eyebrow">MESSAGE</p>
+        <h3 id="message-dialog-title"></h3>
+      </div>
+      <button class="icon-button" type="button" data-close-dialog="message-dialog" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <dl id="message-details" class="detail-grid compact-grid"></dl>
+    <div class="content-heading"><strong>Segments</strong></div>
+    <div id="message-segments" class="segment-list"></div>
+    <div class="modal-actions separated">
+      <button id="delete-message-button" class="danger-button" type="button">Delete message</button>
+      <button class="secondary-button" type="button" data-close-dialog="message-dialog">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="media-dialog" class="modal wide">
+    <div class="modal-header">
+      <div>
+        <p class="eyebrow">MEDIA</p>
+        <h3 id="media-dialog-title"></h3>
+      </div>
+      <button class="icon-button" type="button" data-close-dialog="media-dialog" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div id="media-viewer" class="media-viewer"></div>
+    <dl id="media-details" class="detail-grid compact-grid"></dl>
+    <div class="modal-actions separated">
+      <button id="delete-media-button" class="danger-button" type="button">Delete file</button>
+      <div class="action-row">
+        <a id="open-media-link" class="secondary-button link-button" target="_blank" rel="noopener">Open file</a>
+        <button class="secondary-button" type="button" data-close-dialog="media-dialog">Close</button>
+      </div>
     </div>
   </dialog>
 

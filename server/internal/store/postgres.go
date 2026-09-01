@@ -578,6 +578,56 @@ func (s *PostgresStore) GetMessagesBefore(convID, beforeMessageID string, limit 
 	return msgs, nil
 }
 
+func (s *PostgresStore) GetRecentMessages(limit int) ([]*Message, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.Query(
+		"SELECT id, conversation_id, sender_id, sender_nickname, segments, recalled, created_at FROM messages ORDER BY created_at DESC, id DESC LIMIT $1",
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var messages []*Message
+	for rows.Next() {
+		message := &Message{}
+		var segmentsJSON string
+		if err := rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderNickname, &segmentsJSON, &message.Recalled, &message.Timestamp); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(segmentsJSON), &message.Segments); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
+}
+
+func (s *PostgresStore) DeleteMessage(msgID string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM message_reactions WHERE message_id = $1", msgID); err != nil {
+		return false, err
+	}
+	result, err := tx.Exec("DELETE FROM messages WHERE id = $1", msgID)
+	if err != nil {
+		return false, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return deleted > 0, nil
+}
+
 func (s *PostgresStore) ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1180,6 +1230,29 @@ func (s *PostgresStore) GetMedia(id string) (*MediaFile, error) {
 		return nil, err
 	}
 	return file, nil
+}
+
+func (s *PostgresStore) GetMediaFiles(limit int) ([]*MediaFile, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.Query(
+		"SELECT id, file_name, file_type, mime_type, size, url, uploader_id, created_at FROM media_files ORDER BY created_at DESC, id DESC LIMIT $1",
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var files []*MediaFile
+	for rows.Next() {
+		file := &MediaFile{}
+		if err := rows.Scan(&file.ID, &file.FileName, &file.FileType, &file.MimeType, &file.Size, &file.URL, &file.UploaderID, &file.CreatedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	return files, rows.Err()
 }
 
 func (s *PostgresStore) DeleteMedia(id string) error {

@@ -36,6 +36,17 @@ func (s *MemoryStore) DeleteSession(tokenHash string) error {
 	return nil
 }
 
+func (s *MemoryStore) DeleteSessionsForUser(userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for tokenHash, session := range s.sessions {
+		if session.UserID == userID {
+			delete(s.sessions, tokenHash)
+		}
+	}
+	return nil
+}
+
 // ---- SQLite account session operations ----
 
 func (s *SQLiteStore) UpsertSession(session *Session) error {
@@ -75,6 +86,11 @@ func (s *SQLiteStore) DeleteSession(tokenHash string) error {
 	return err
 }
 
+func (s *SQLiteStore) DeleteSessionsForUser(userID string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
+	return err
+}
+
 // ---- PostgreSQL account session operations ----
 
 func (s *PostgresStore) UpsertSession(session *Session) error {
@@ -111,5 +127,10 @@ func (s *PostgresStore) GetSession(tokenHash string) (*Session, error) {
 
 func (s *PostgresStore) DeleteSession(tokenHash string) error {
 	_, err := s.db.Exec("DELETE FROM sessions WHERE token_hash = $1", tokenHash)
+	return err
+}
+
+func (s *PostgresStore) DeleteSessionsForUser(userID string) error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id = $1", userID)
 	return err
 }

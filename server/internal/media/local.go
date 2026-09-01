@@ -91,6 +91,40 @@ func (s *LocalStore) Save(
 	return metadata, nil
 }
 
+// Delete removes both the media bytes and their metadata.
+func (s *LocalStore) Delete(id string) (bool, error) {
+	if !validID(id) {
+		return false, nil
+	}
+	metadata, err := s.metadata.GetMedia(id)
+	if err != nil {
+		return false, err
+	}
+	if metadata == nil {
+		return false, nil
+	}
+	originalPath := filepath.Join(s.directory, id)
+	tombstonePath := filepath.Join(s.directory, "."+id+".deleting")
+	renamed := false
+	if err := os.Rename(originalPath, tombstonePath); err == nil {
+		renamed = true
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stage media deletion: %w", err)
+	}
+	if err := s.metadata.DeleteMedia(id); err != nil {
+		if renamed {
+			_ = os.Rename(tombstonePath, originalPath)
+		}
+		return false, fmt.Errorf("delete media metadata: %w", err)
+	}
+	if renamed {
+		if err := os.Remove(tombstonePath); err != nil {
+			return false, fmt.Errorf("delete media file: %w", err)
+		}
+	}
+	return true, nil
+}
+
 func (s *LocalStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
