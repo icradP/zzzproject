@@ -22,7 +22,7 @@ import 'nonebot_models.dart';
 /// - **Connected mode** ([NoneBotSource.connected]): wraps [OneBotClient] from
 ///   the standalone SDK, ingesting live events and translating them to the
 ///   [ImMessageSource] interface used by the app.
-class NoneBotSource implements ImMessageSource {
+class NoneBotSource extends ImMessageSource {
   NoneBotSource._({
     required this.config,
     required bool mock,

@@ -11,6 +11,7 @@ class ZzzTextInput extends StatefulWidget {
     this.maxLength,
     this.autofocus = false,
     this.textInputAction,
+    this.keyboardType,
     this.onChanged,
     this.onSubmitted,
     this.obscureText = false,
@@ -29,6 +30,7 @@ class ZzzTextInput extends StatefulWidget {
   final int? maxLength;
   final bool autofocus;
   final TextInputAction? textInputAction;
+  final TextInputType? keyboardType;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
   final bool obscureText;
@@ -88,6 +90,7 @@ class _ZzzTextInputState extends State<ZzzTextInput> {
         maxLength: widget.maxLength,
         autofocus: widget.autofocus,
         textInputAction: widget.textInputAction,
+        keyboardType: widget.keyboardType,
         obscureText: widget.obscureText,
         enableSuggestions: !widget.obscureText,
         autocorrect: !widget.obscureText,

@@ -33,6 +33,9 @@ class ImChatRoomView extends StatefulWidget {
     this.onRecall,
     this.onReact,
     this.onSticker,
+    this.onForward,
+    this.onPoke,
+    this.onLocation,
     this.onLoadOlder,
     this.onManageGroup,
     this.onBack,
@@ -52,6 +55,9 @@ class ImChatRoomView extends StatefulWidget {
   final Future<void> Function(ImMessage message, String emojiId, bool remove)?
   onReact;
   final Future<void> Function(ImStickerReference sticker)? onSticker;
+  final Future<void> Function(List<ImMessage> messages)? onForward;
+  final Future<void> Function(String targetUserId)? onPoke;
+  final Future<void> Function(ImLocationShare location)? onLocation;
   final Future<bool> Function()? onLoadOlder;
   final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
@@ -537,6 +543,24 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
               label: 'Reply',
             ),
           ),
+        if (widget.onForward != null &&
+            message.kind != ImMessageKind.system &&
+            message.kind != ImMessageKind.poke)
+          const PopupMenuItem(
+            value: _MessageAction.forward,
+            child: _MessageActionItem(
+              icon: Icons.forward_rounded,
+              label: 'Forward',
+            ),
+          ),
+        if (widget.onPoke != null && !message.isMine)
+          const PopupMenuItem(
+            value: _MessageAction.poke,
+            child: _MessageActionItem(
+              icon: Icons.touch_app_rounded,
+              label: 'Poke',
+            ),
+          ),
         if (_canRecall(message))
           const PopupMenuItem(
             value: _MessageAction.recall,
@@ -569,8 +593,114 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
           _showStickers = false;
         });
         _composerFocus.requestFocus();
+      case _MessageAction.forward:
+        await _showForwardSelection(message);
+      case _MessageAction.poke:
+        try {
+          await widget.onPoke!(message.senderId);
+        } catch (error) {
+          if (mounted) _showError(error);
+        }
       case _MessageAction.recall:
         await _confirmRecall(message);
+    }
+  }
+
+  Future<void> _showForwardSelection(ImMessage initialMessage) async {
+    final available = widget.messages
+        .where(
+          (message) =>
+              !message.recalled &&
+              message.kind != ImMessageKind.system &&
+              message.kind != ImMessageKind.poke,
+        )
+        .toList(growable: false);
+    final selectedIds = <String>{initialMessage.id};
+    final selected = await showZzzModalPanel<List<ImMessage>>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setPanelState) => ZzzModalPanel(
+                  key: const ValueKey('forward-message-panel'),
+                  title: 'Forward messages',
+                  subtitle: 'Select up to 100 messages',
+                  icon: Icons.forward_rounded,
+                  maxWidth: 520,
+                  maxHeight: 640,
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton.icon(
+                      key: const ValueKey('confirm-forward-selection'),
+                      onPressed:
+                          selectedIds.isEmpty
+                              ? null
+                              : () => Navigator.of(dialogContext).pop(
+                                available
+                                    .where(
+                                      (message) =>
+                                          selectedIds.contains(message.id),
+                                    )
+                                    .toList(growable: false),
+                              ),
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                      label: Text('Next (${selectedIds.length})'),
+                    ),
+                  ],
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: available.length,
+                    itemBuilder: (context, index) {
+                      final message = available[index];
+                      final checked = selectedIds.contains(message.id);
+                      return Material(
+                        color: Colors.transparent,
+                        child: CheckboxListTile(
+                          key: ValueKey('forward-choice-${message.id}'),
+                          value: checked,
+                          onChanged: (value) {
+                            setPanelState(() {
+                              if (value == true && selectedIds.length < 100) {
+                                selectedIds.add(message.id);
+                              } else if (value != true) {
+                                selectedIds.remove(message.id);
+                              }
+                            });
+                          },
+                          title: Text(
+                            message.text.isEmpty ? '[Message]' : message.text,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            message.senderId,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          secondary: Icon(switch (message.kind) {
+                            ImMessageKind.image => Icons.image_outlined,
+                            ImMessageKind.record => Icons.mic_none_rounded,
+                            ImMessageKind.file =>
+                              Icons.insert_drive_file_outlined,
+                            ImMessageKind.location =>
+                              Icons.location_on_outlined,
+                            _ => Icons.chat_bubble_outline_rounded,
+                          }),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+          ),
+    );
+    if (!mounted || selected == null || selected.isEmpty) return;
+    try {
+      await widget.onForward!(selected);
+    } catch (error) {
+      if (mounted) _showError(error);
     }
   }
 
@@ -651,12 +781,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         _stageFiles(result.files, ImMessageKind.image);
         return;
       case 'Voice':
-        final result = await FilePicker.pickFiles(
-          type: FileType.audio,
-          withData: kIsWeb,
-        );
-        if (result == null || result.files.isEmpty) return;
-        _stageFiles(result.files, ImMessageKind.record);
+        await _recordVoiceMessage();
         return;
       case 'Video':
         final result = await FilePicker.pickFiles(
@@ -675,9 +800,36 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         _stageFiles(result.files, ImMessageKind.file);
         return;
       case 'Location':
+        await _shareLocation();
         return;
       default:
         return;
+    }
+  }
+
+  Future<void> _recordVoiceMessage() async {
+    final upload = await showZzzModalPanel<ImMediaUpload>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const ImVoiceRecorderPanel(),
+    );
+    if (upload != null && mounted) {
+      setState(() => _pendingMedia.add(upload));
+    }
+  }
+
+  Future<void> _shareLocation() async {
+    final callback = widget.onLocation;
+    if (callback == null) return;
+    final location = await showZzzModalPanel<ImLocationShare>(
+      context: context,
+      builder: (_) => const ImLocationSharePanel(),
+    );
+    if (!mounted || location == null) return;
+    try {
+      await callback(location);
+    } catch (error) {
+      if (mounted) _showError(error);
     }
   }
 
@@ -959,6 +1111,14 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
               '${_pendingMedia.length}',
               style: const TextStyle(color: Colors.white54, fontSize: 13),
             ),
+            if (_sending)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6),
+                child: SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
             IconButton(
               onPressed: () => setState(() => _pendingMedia.clear()),
               icon: const Icon(Icons.close_rounded, size: 20),
@@ -1031,7 +1191,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                     border: Border.all(color: ZzzColors.grayPanel, width: 3),
                   ),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 80),
+                    constraints: const BoxConstraints(maxHeight: 180),
                     child: SingleChildScrollView(
                       child: Wrap(
                         spacing: 12,
@@ -1043,7 +1203,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                               icon: item.icon,
                               label: item.tooltip,
                               onTap:
-                                  item.tooltip == 'Location'
+                                  item.tooltip == 'Location' &&
+                                          widget.onLocation == null
                                       ? null
                                       : () => _pickAndStageMedia(item.tooltip),
                             ),
@@ -1211,7 +1372,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 }
 
-enum _MessageAction { react, copy, reply, recall }
+enum _MessageAction { react, copy, reply, forward, poke, recall }
 
 class _MessageActionItem extends StatelessWidget {
   const _MessageActionItem({

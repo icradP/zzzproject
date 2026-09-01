@@ -73,7 +73,7 @@ type Store interface {
 	HandleFriendRequest(reqID, action string) (bool, error)
 
 	// ---- Forward message operations ----
-	StoreForward(messages []*Message) (*ForwardMessage, error)
+	StoreForward(conversationID string, messages []*Message) (*ForwardMessage, error)
 	GetForward(id string) (*ForwardMessage, error)
 
 	// ---- Media operations ----
@@ -195,9 +195,10 @@ type FriendRequest struct {
 
 // ForwardMessage represents a forwarded message group.
 type ForwardMessage struct {
-	ID        string     `json:"id"`
-	Messages  []*Message `json:"messages"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	ConversationID string     `json:"conversation_id"`
+	Messages       []*Message `json:"messages"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // MediaFile represents a stored media file.

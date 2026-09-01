@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -71,7 +72,9 @@ type Gateway struct {
 	// A user may be connected from several devices at once. Keep every
 	// connection so desktop, mobile, and browser sessions receive the same
 	// realtime events.
-	clients map[string]map[*Client]struct{} // userID -> active clients
+	clients  map[string]map[*Client]struct{} // userID -> active clients
+	pokeMu   sync.Mutex
+	pokeLast map[string]time.Time
 }
 
 // PushSender abstracts VAPID delivery so the gateway remains testable.
@@ -96,7 +99,8 @@ func NewGateway(database store.Store, pushSenders ...PushSender) *Gateway {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients: make(map[string]map[*Client]struct{}),
+		clients:  make(map[string]map[*Client]struct{}),
+		pokeLast: make(map[string]time.Time),
 	}
 }
 
@@ -263,6 +267,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleFriendHandle(client, req)
 	case protocol.ActionGetForwardMessage:
 		g.handleGetForwardMessage(client, req)
+	case protocol.ActionCreateForward:
+		g.handleCreateForward(client, req)
 	case protocol.ActionUploadFile:
 		g.handleUploadFile(client, req)
 	case protocol.ActionGetPushConfig:
@@ -859,6 +865,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "invalid message segments")
 		return
 	}
+	if len(segments) == 0 || len(segments) > 20 {
+		g.sendError(client, req.Echo, "message must contain between 1 and 20 segments")
+		return
+	}
 
 	// Ensure conversation exists.
 	convType := "private"
@@ -903,6 +913,26 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			return
 		}
 		if err := validateStickerSegment(segment); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
+		if err := validateRecordSegment(segment); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
+		if err := validateShareSegment(segment); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
+		if err := validateLocationSegment(segment); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
+		if err := g.validateForwardSegment(segment, convID); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
+		if err := g.validatePokeSegment(segment, convID, client.userID); err != nil {
 			g.sendError(client, req.Echo, err.Error())
 			return
 		}
@@ -1022,6 +1052,110 @@ func validateStickerSegment(segment protocol.MessageSegment) error {
 	if !versionOK || version < 1 || version > 1000 || version != float64(int(version)) {
 		return fmt.Errorf("sticker version is invalid")
 	}
+	return nil
+}
+
+func validateRecordSegment(segment protocol.MessageSegment) error {
+	if segment.Type != "record" {
+		return nil
+	}
+	if duration, ok := segment.Data["duration_ms"].(float64); ok &&
+		(duration < 0 || duration > float64((2*time.Minute)/time.Millisecond)) {
+		return fmt.Errorf("voice message duration must not exceed 2 minutes")
+	}
+	if size, ok := segment.Data["size"].(float64); ok && (size < 0 || size > 10*1024*1024) {
+		return fmt.Errorf("voice message must not exceed 10 MB")
+	}
+	return nil
+}
+
+func validateShareSegment(segment protocol.MessageSegment) error {
+	if segment.Type != "share" {
+		return nil
+	}
+	rawURL, _ := segment.Data["url"].(string)
+	if len(rawURL) == 0 || len(rawURL) > 2048 || rawURL != strings.TrimSpace(rawURL) {
+		return fmt.Errorf("link URL is invalid")
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("link URL must use HTTP or HTTPS")
+	}
+	title, _ := segment.Data["title"].(string)
+	if len([]rune(title)) > 160 {
+		return fmt.Errorf("link title is too long")
+	}
+	return nil
+}
+
+func validateLocationSegment(segment protocol.MessageSegment) error {
+	if segment.Type != "location" {
+		return nil
+	}
+	name, _ := segment.Data["name"].(string)
+	if strings.TrimSpace(name) == "" || len([]rune(name)) > 120 {
+		return fmt.Errorf("location name is required and must not exceed 120 characters")
+	}
+	lat, hasLat := segment.Data["lat"].(float64)
+	lon, hasLon := segment.Data["lon"].(float64)
+	if hasLat != hasLon {
+		return fmt.Errorf("location coordinates must include both latitude and longitude")
+	}
+	if hasLat && (math.IsNaN(lat) || math.IsInf(lat, 0) || math.IsNaN(lon) || math.IsInf(lon, 0) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+		return fmt.Errorf("location coordinates are invalid")
+	}
+	return nil
+}
+
+func (g *Gateway) validateForwardSegment(segment protocol.MessageSegment, conversationID string) error {
+	if segment.Type != "forward" {
+		return nil
+	}
+	forwardID, _ := segment.Data["id"].(string)
+	forward, err := g.store.GetForward(forwardID)
+	if err != nil || forward == nil {
+		return fmt.Errorf("forward not found")
+	}
+	if forward.ConversationID != conversationID {
+		return fmt.Errorf("forward belongs to another conversation")
+	}
+	return nil
+}
+
+func (g *Gateway) validatePokeSegment(segment protocol.MessageSegment, conversationID, senderID string) error {
+	if segment.Type != "poke" {
+		return nil
+	}
+	targetID, _ := segment.Data["target_id"].(string)
+	if targetID == "" || targetID == senderID {
+		return fmt.Errorf("poke target is invalid")
+	}
+	conversation, err := g.store.GetConversation(conversationID)
+	if err != nil || conversation == nil {
+		return fmt.Errorf("conversation not found")
+	}
+	allowed := false
+	if conversation.Type == "group" {
+		allowed, err = g.store.IsGroupMember(conversationID, targetID)
+	} else {
+		for _, participantID := range conversation.Participants {
+			if participantID == targetID {
+				allowed = true
+				break
+			}
+		}
+	}
+	if err != nil || !allowed {
+		return fmt.Errorf("poke target is not in this conversation")
+	}
+	key := senderID + "\x00" + conversationID
+	now := time.Now()
+	g.pokeMu.Lock()
+	defer g.pokeMu.Unlock()
+	if previous := g.pokeLast[key]; !previous.IsZero() && now.Sub(previous) < 5*time.Second {
+		return fmt.Errorf("please wait before poking again")
+	}
+	g.pokeLast[key] = now
 	return nil
 }
 
@@ -2504,7 +2638,68 @@ func (g *Gateway) handleFriendHandle(client *Client, req *protocol.Request) {
 	}
 }
 
+func (g *Gateway) handleCreateForward(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid create_forward params")
+		return
+	}
+	conversationID, _ := params["conversation_id"].(string)
+	if conversationID == "" || !g.canAccessConversation(client.userID, conversationID) {
+		g.sendError(client, req.Echo, "conversation access denied")
+		return
+	}
+	rawIDs, ok := params["message_ids"].([]interface{})
+	if !ok || len(rawIDs) == 0 || len(rawIDs) > 100 {
+		g.sendError(client, req.Echo, "message_ids must contain between 1 and 100 messages")
+		return
+	}
+	messages := make([]*store.Message, 0, len(rawIDs))
+	seen := make(map[string]bool, len(rawIDs))
+	for _, rawID := range rawIDs {
+		messageID, ok := rawID.(string)
+		if !ok || strings.TrimSpace(messageID) == "" || seen[messageID] {
+			g.sendError(client, req.Echo, "message_ids contains an invalid or duplicate ID")
+			return
+		}
+		seen[messageID] = true
+		message, err := g.store.GetMessage(messageID)
+		if err != nil || message == nil || message.Recalled || !g.canAccessConversation(client.userID, message.ConversationID) {
+			g.sendError(client, req.Echo, "forward source message is unavailable")
+			return
+		}
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			g.sendError(client, req.Echo, "failed to copy forward source message")
+			return
+		}
+		var snapshot store.Message
+		if err := json.Unmarshal(encoded, &snapshot); err != nil {
+			g.sendError(client, req.Echo, "failed to copy forward source message")
+			return
+		}
+		messages = append(messages, &snapshot)
+	}
+	forward, err := g.store.StoreForward(conversationID, messages)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to create forward")
+		return
+	}
+	g.sendJSON(client, protocol.Response{
+		Status: "ok", RetCode: 0, Echo: req.Echo,
+		Data: map[string]interface{}{"forward_id": forward.ID, "count": len(messages)},
+	})
+}
+
 func (g *Gateway) handleGetForwardMessage(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
 	params, ok := req.Params.(map[string]interface{})
 	if !ok {
 		g.sendError(client, req.Echo, "invalid params")
@@ -2515,6 +2710,10 @@ func (g *Gateway) handleGetForwardMessage(client *Client, req *protocol.Request)
 	forward, _ := g.store.GetForward(forwardID)
 	if forward == nil {
 		g.sendError(client, req.Echo, "forward not found")
+		return
+	}
+	if forward.ConversationID == "" || !g.canAccessConversation(client.userID, forward.ConversationID) {
+		g.sendError(client, req.Echo, "forward access denied")
 		return
 	}
 
@@ -2568,8 +2767,12 @@ func (g *Gateway) handleUploadFile(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "media storage is not configured")
 		return
 	}
-	if len(fileData) > 28*1024*1024 {
-		g.sendError(client, req.Echo, "file is larger than 20 MB")
+	maxBytes := 20 * 1024 * 1024
+	if fileType == "voice" {
+		maxBytes = 10 * 1024 * 1024
+	}
+	if len(fileData) > (maxBytes*4/3)+16 {
+		g.sendError(client, req.Echo, "file exceeds the size limit")
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(fileData)
@@ -2577,8 +2780,8 @@ func (g *Gateway) handleUploadFile(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "invalid base64 file data")
 		return
 	}
-	if len(data) == 0 || len(data) > 20*1024*1024 {
-		g.sendError(client, req.Echo, "file must be between 1 byte and 20 MB")
+	if len(data) == 0 || len(data) > maxBytes {
+		g.sendError(client, req.Echo, "file exceeds the size limit")
 		return
 	}
 	media, err := g.media.Save(fileName, fileType, mimeType, data, client.userID)
@@ -2950,6 +3153,22 @@ func pushBody(segments []protocol.MessageSegment) string {
 			text.WriteString("[File]")
 		case "sticker":
 			text.WriteString("[Sticker]")
+		case "share":
+			if title, ok := segment.Data["title"].(string); ok && strings.TrimSpace(title) != "" {
+				text.WriteString("[Link] " + title)
+			} else {
+				text.WriteString("[Link]")
+			}
+		case "location":
+			if name, ok := segment.Data["name"].(string); ok && strings.TrimSpace(name) != "" {
+				text.WriteString("[Location] " + name)
+			} else {
+				text.WriteString("[Location]")
+			}
+		case "forward":
+			text.WriteString("[Chat records]")
+		case "poke":
+			text.WriteString("[Poke]")
 		}
 	}
 	result := strings.TrimSpace(text.String())

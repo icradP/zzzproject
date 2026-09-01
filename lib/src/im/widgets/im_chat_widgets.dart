@@ -12,3 +12,6 @@ export 'im_chat_room_view/im_nsfw_guard.dart';
 export 'im_chat_room_view/im_reaction_chips.dart';
 export 'im_chat_room_view/im_reply_quote_bar.dart';
 export 'im_chat_room_view/im_voice_bubble.dart';
+export 'im_chat_room_view/im_share_bubbles.dart';
+export 'im_chat_room_view/im_location_share_panel.dart';
+export 'im_chat_room_view/im_voice_recorder_panel.dart';

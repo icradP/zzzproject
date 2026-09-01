@@ -204,6 +204,99 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<ImMessage> sendLinkMessage({
+    required String conversationId,
+    required ImLinkShare link,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    final message = await registration.repository.sendLinkMessage(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      link: link,
+    );
+    return _scopeMessage(registration, message);
+  }
+
+  @override
+  Future<ImMessage> sendLocationMessage({
+    required String conversationId,
+    required ImLocationShare location,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    final message = await registration.repository.sendLocationMessage(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      location: location,
+    );
+    return _scopeMessage(registration, message);
+  }
+
+  @override
+  Future<ImMessage> sendPoke({
+    required String conversationId,
+    required String targetUserId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, targetUserId, 'Poke target');
+    final message = await registration.repository.sendPoke(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      targetUserId: ImSourceAddress.localIdOf(targetUserId),
+    );
+    return _scopeMessage(registration, message);
+  }
+
+  @override
+  Future<ImMessage> forwardMessages({
+    required String conversationId,
+    required List<ImMessage> messages,
+  }) async {
+    if (messages.isEmpty) {
+      throw ArgumentError('At least one message is required.');
+    }
+    final registration = _registrationForValue(conversationId);
+    for (final message in messages) {
+      _requireMatchingSource(registration, message.id, 'Forwarded message');
+    }
+    final forwarded = await registration.repository.forwardMessages(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messages: messages
+          .map(
+            (message) => ImMessage(
+              id: ImSourceAddress.localIdOf(message.id),
+              conversationId: ImSourceAddress.localIdOf(message.conversationId),
+              senderId: ImSourceAddress.localIdOf(message.senderId),
+              text: message.text,
+              sentAt: message.sentAt,
+              kind: message.kind,
+              status: message.status,
+              isMine: message.isMine,
+              segments: message.segments,
+              mediaPath: message.mediaPath,
+              mediaUrl: message.mediaUrl,
+              mediaSize: message.mediaSize,
+              mediaDuration: message.mediaDuration,
+            ),
+          )
+          .toList(growable: false),
+    );
+    return _scopeMessage(registration, forwarded);
+  }
+
+  @override
+  Future<ForwardGroup> getForwardMessages(String forwardId) async {
+    final registration = _registrationForValue(forwardId);
+    final group = await registration.repository.getForwardMessages(
+      ImSourceAddress.localIdOf(forwardId),
+    );
+    return ForwardGroup(
+      title: group.title,
+      senderName: group.senderName,
+      messages: group.messages
+          .map((message) => _scopeMessage(registration, message))
+          .toList(growable: false),
+      children: group.children,
+    );
+  }
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,
@@ -769,6 +862,7 @@ class CompositeImRepository implements ImRepository {
       thumbnailPath: message.thumbnailPath,
       thumbnailUrl: message.thumbnailUrl,
       mediaMime: message.mediaMime,
+      mediaDuration: message.mediaDuration,
       reactions: message.reactions,
       replyToMessageId:
           message.replyToMessageId == null

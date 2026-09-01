@@ -55,6 +55,7 @@ class ImMediaUpload {
     this.filePath,
     this.bytes,
     this.mimeType,
+    this.duration,
   }) : assert(filePath != null || bytes != null);
 
   final ImMessageKind kind;
@@ -62,6 +63,41 @@ class ImMediaUpload {
   final String? filePath;
   final Uint8List? bytes;
   final String? mimeType;
+  final Duration? duration;
+}
+
+class ImLinkShare {
+  const ImLinkShare({required this.url, required this.title});
+
+  final Uri url;
+  final String title;
+
+  static ImLinkShare? tryParse(String value) {
+    final trimmed = value.trim();
+    if (trimmed.contains(RegExp(r'\s'))) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      return null;
+    }
+    return ImLinkShare(url: uri, title: uri.host);
+  }
+}
+
+class ImLocationShare {
+  const ImLocationShare({required this.name, this.latitude, this.longitude})
+    : assert(
+        (latitude == null && longitude == null) ||
+            (latitude != null && longitude != null),
+      );
+
+  final String name;
+  final double? latitude;
+  final double? longitude;
+
+  bool get hasCoordinates => latitude != null && longitude != null;
 }
 
 /// Stable reference to an application-bundled sticker asset.
@@ -404,6 +440,7 @@ class ImMessage {
     this.thumbnailPath,
     this.thumbnailUrl,
     this.mediaMime,
+    this.mediaDuration,
     this.reactions,
     this.replyToMessageId,
     this.recalled = false,
@@ -448,6 +485,9 @@ class ImMessage {
 
   /// MIME type, e.g. `image/png` or `audio/ogg`.
   final String? mediaMime;
+
+  /// Voice/video duration supplied by the sender, when known.
+  final Duration? mediaDuration;
 
   /// Emoji reactions on this message.
   final List<ImReaction>? reactions;
@@ -497,6 +537,7 @@ class ImMessage {
       thumbnailPath: thumbnailPath ?? this.thumbnailPath,
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
       mediaMime: mediaMime,
+      mediaDuration: mediaDuration,
       reactions: reactions ?? this.reactions,
       replyToMessageId: replyToMessageId ?? this.replyToMessageId,
       recalled: recalled ?? this.recalled,

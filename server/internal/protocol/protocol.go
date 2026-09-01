@@ -218,6 +218,7 @@ const (
 	ActionFriendRequest              = "friend_request"
 	ActionFriendHandle               = "friend_request_handle"
 	ActionUploadFile                 = "upload_file"
+	ActionCreateForward              = "create_forward"
 	ActionGetForwardMessage          = "get_forward_msg"
 	ActionGetPushConfig              = "get_push_config"
 	ActionRegisterPush               = "register_push"
@@ -377,6 +378,11 @@ type UploadFileParams struct {
 // GetForwardMsgParams are the params for the "get_forward_msg" action.
 type GetForwardMsgParams struct {
 	ForwardID string `json:"forward_id"`
+}
+
+type CreateForwardParams struct {
+	ConversationID string   `json:"conversation_id"`
+	MessageIDs     []string `json:"message_ids"`
 }
 
 // UpdateProfileParams are the params for the "update_profile" action.

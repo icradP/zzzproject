@@ -131,7 +131,7 @@ void main() {
     expect(ImSourceAddress.localIdOf(qqSelf.id), 'me');
   });
 
-  test('preserves read receipt metadata across source namespacing', () {
+  test('preserves message metadata across source namespacing', () {
     final repository = CompositeImRepository(
       registrations: [
         ImRepositoryRegistration(
@@ -155,6 +155,7 @@ void main() {
         status: ImMessageStatus.read,
         readCount: 12,
         recipientCount: 128,
+        mediaDuration: const Duration(seconds: 17),
         isMine: true,
         segments: const [
           OneBotMessageSegment(type: 'reply', data: {'id': 'message-0'}),
@@ -166,6 +167,7 @@ void main() {
     expect(scoped.status, ImMessageStatus.read);
     expect(scoped.readCount, 12);
     expect(scoped.recipientCount, 128);
+    expect(scoped.mediaDuration, const Duration(seconds: 17));
     expect(scoped.replyToMessageId, 'zzz::message-0');
     expect(scoped.segments?.single.data['id'], 'zzz::message-0');
   });

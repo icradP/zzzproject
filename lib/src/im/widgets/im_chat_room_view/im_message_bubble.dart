@@ -11,6 +11,7 @@ import 'im_nsfw_guard.dart';
 import '../im_platform_image_widget.dart' show platformImageWidget;
 import 'im_reaction_chips.dart';
 import 'im_reply_quote_bar.dart';
+import 'im_share_bubbles.dart';
 import 'im_voice_bubble.dart';
 
 String? _previewLocationFor(ImMessage message) =>
@@ -105,7 +106,14 @@ class _RecalledContent extends StatelessWidget {
           localPath: message.mediaPath,
           isMine: message.isMine,
           fileSize: message.mediaSize,
+          declaredDuration: message.mediaDuration,
         );
+      }
+      if (message.kind == ImMessageKind.share) {
+        return ImLinkBubble(message: message);
+      }
+      if (message.kind == ImMessageKind.location) {
+        return ImLocationBubble(message: message);
       }
     }
     return Container(
@@ -269,7 +277,14 @@ class ImMessageBubble extends StatelessWidget {
           localPath: message.mediaPath,
           isMine: isMine,
           fileSize: message.mediaSize,
+          declaredDuration: message.mediaDuration,
         );
+      }
+      if (message.kind == ImMessageKind.share) {
+        return ImLinkBubble(message: message);
+      }
+      if (message.kind == ImMessageKind.location) {
+        return ImLocationBubble(message: message);
       }
       if (message.kind == ImMessageKind.file ||
           message.kind == ImMessageKind.video) {
@@ -418,10 +433,12 @@ class ImMessageBubble extends StatelessWidget {
               child: bubbleContent,
             )
             : isImageOnly ||
-                  isRecordOnly ||
-                  isJsonCard ||
-                  isForward ||
-                  sticker != null
+                isRecordOnly ||
+                isJsonCard ||
+                isForward ||
+                message.kind == ImMessageKind.share ||
+                message.kind == ImMessageKind.location ||
+                sticker != null
             ? Container(
               constraints: const BoxConstraints(maxWidth: 520),
               decoration: BoxDecoration(

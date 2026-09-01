@@ -170,6 +170,97 @@ class _ImHomePageState extends State<ImHomePage>
     );
   }
 
+  Future<void> _forwardMessages(
+    ImRepository repository,
+    List<ImMessage> messages,
+  ) async {
+    if (messages.isEmpty) return;
+    final sourceId = messages.first.sourceId;
+    final conversations = (_conversationCache['all'] ??
+            const <ImConversation>[])
+        .where(
+          (conversation) =>
+              sourceId == null || conversation.sourceId == sourceId,
+        )
+        .toList(growable: false);
+    final target = await showZzzModalPanel<ImConversation>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            key: const ValueKey('forward-target-panel'),
+            title: 'Forward to',
+            subtitle:
+                messages.length == 1
+                    ? '1 message selected'
+                    : '${messages.length} messages selected',
+            icon: Icons.forward_rounded,
+            maxWidth: 500,
+            maxHeight: 620,
+            child:
+                conversations.isEmpty
+                    ? const Padding(
+                      padding: EdgeInsets.all(28),
+                      child: Text(
+                        'No conversation is available for this source.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    )
+                    : ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: conversations.length,
+                      separatorBuilder:
+                          (_, __) =>
+                              const Divider(height: 1, color: Colors.white10),
+                      itemBuilder: (context, index) {
+                        final conversation = conversations[index];
+                        return Material(
+                          color: Colors.transparent,
+                          child: ListTile(
+                            key: ValueKey('forward-target-${conversation.id}'),
+                            leading: CircleAvatar(
+                              backgroundImage: conversation.avatarImage(
+                                AppAssets.fallbackAvatarForId(conversation.id),
+                              ),
+                            ),
+                            title: Text(
+                              conversation.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              conversation.isGroup ? 'Group' : 'Direct message',
+                              style: const TextStyle(color: Colors.white54),
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap:
+                                () => Navigator.of(
+                                  dialogContext,
+                                ).pop(conversation),
+                          ),
+                        );
+                      },
+                    ),
+          ),
+    );
+    if (!mounted || target == null) return;
+    await repository.forwardMessages(
+      conversationId: target.id,
+      messages: messages,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          messages.length == 1
+              ? 'Message forwarded to ${target.title}.'
+              : '${messages.length} messages forwarded to ${target.title}.',
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final repository = ImScope.repositoryOf(context);
@@ -587,10 +678,18 @@ class _ImHomePageState extends State<ImHomePage>
                     await ImScope.interactionsOf(
                       context,
                     ).onSendMessage(conversation: conv, text: text);
-                    await repository.sendTextMessage(
-                      conversationId: conv.id,
-                      text: text,
-                    );
+                    final link = ImLinkShare.tryParse(text);
+                    if (link != null) {
+                      await repository.sendLinkMessage(
+                        conversationId: conv.id,
+                        link: link,
+                      );
+                    } else {
+                      await repository.sendTextMessage(
+                        conversationId: conv.id,
+                        text: text,
+                      );
+                    }
                   },
                   onReply: (text, replyTo) async {
                     await ImScope.interactionsOf(
@@ -606,6 +705,20 @@ class _ImHomePageState extends State<ImHomePage>
                     await repository.sendStickerMessage(
                       conversationId: conv.id,
                       sticker: sticker,
+                    );
+                  },
+                  onLocation: (location) async {
+                    await repository.sendLocationMessage(
+                      conversationId: conv.id,
+                      location: location,
+                    );
+                  },
+                  onForward:
+                      (messages) => _forwardMessages(repository, messages),
+                  onPoke: (targetUserId) async {
+                    await repository.sendPoke(
+                      conversationId: conv.id,
+                      targetUserId: targetUserId,
                     );
                   },
                   onRecall: (message) async {

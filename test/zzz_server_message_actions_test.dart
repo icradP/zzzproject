@@ -170,6 +170,144 @@ void main() {
       );
     },
   );
+
+  test('ZZZ server source sends structured M4 request payloads', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final sockets = <WebSocket>[];
+    final requests = <Map<String, dynamic>>[];
+    var sentMessageId = 0;
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      sockets.add(socket);
+      socket.listen((raw) {
+        final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
+        requests.add(requestJson);
+        final action = requestJson['action'];
+        final data = switch (action) {
+          'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+          'get_friends' => [
+            {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
+          ],
+          'get_friend_requests' => <Object?>[],
+          'get_conversations' => [
+            {
+              'conversation_id': 'private_me_bob',
+              'type': 'private',
+              'title': 'Bob',
+              'participants': ['me', 'bob'],
+              'unread_count': 0,
+              'last_timestamp': 200,
+            },
+          ],
+          'get_messages' => <Object?>[],
+          'create_forward' => {'forward_id': 'forward-1'},
+          'send_message' => {'message_id': 'sent-${++sentMessageId}'},
+          _ => <String, Object?>{},
+        };
+        socket.add(
+          jsonEncode({
+            'status': 'ok',
+            'retcode': 0,
+            'data': data,
+            'echo': requestJson['echo'],
+          }),
+        );
+      });
+    });
+
+    final source = ZzzServerSource(
+      config: ZzzServerConfig(
+        serverUrl: 'ws://127.0.0.1:${server.port}',
+        selfId: 'me',
+      ),
+      allowReconnect: false,
+    );
+    addTearDown(() async {
+      source.disconnect();
+      for (final socket in sockets) {
+        await socket.close();
+      }
+      await server.close(force: true);
+    });
+
+    await source.connect();
+    requests.clear();
+
+    await source.sendLinkMessage(
+      conversationId: 'private_me_bob',
+      link: ImLinkShare(
+        url: Uri.parse('https://example.test/docs'),
+        title: 'Documentation',
+      ),
+    );
+    await source.sendLocationMessage(
+      conversationId: 'private_me_bob',
+      location: const ImLocationShare(
+        name: 'People\'s Square',
+        latitude: 31.2304,
+        longitude: 121.4737,
+      ),
+    );
+    await source.sendPoke(
+      conversationId: 'private_me_bob',
+      targetUserId: 'bob',
+    );
+    await source.forwardMessages(
+      conversationId: 'private_me_bob',
+      messages: [
+        ImMessage(
+          id: 'source-message-1',
+          conversationId: 'private_me_bob',
+          senderId: 'bob',
+          text: 'Snapshot me',
+          sentAt: DateTime(2026),
+        ),
+      ],
+    );
+
+    final sendRequests =
+        requests
+            .where((request) => request['action'] == 'send_message')
+            .toList();
+    expect(sendRequests, hasLength(4));
+    expect(_sentSegments(sendRequests[0]), [
+      {
+        'type': 'share',
+        'data': {'url': 'https://example.test/docs', 'title': 'Documentation'},
+      },
+    ]);
+    expect(_sentSegments(sendRequests[1]), [
+      {
+        'type': 'location',
+        'data': {'name': 'People\'s Square', 'lat': 31.2304, 'lon': 121.4737},
+      },
+    ]);
+    expect(_sentSegments(sendRequests[2]), [
+      {
+        'type': 'poke',
+        'data': {'target_id': 'bob'},
+      },
+    ]);
+    expect(_sentSegments(sendRequests[3]), [
+      {
+        'type': 'forward',
+        'data': {'id': 'forward-1', 'count': 1},
+      },
+    ]);
+
+    final createForward = requests.singleWhere(
+      (request) => request['action'] == 'create_forward',
+    );
+    expect(createForward['params'], {
+      'conversation_id': 'private_me_bob',
+      'message_ids': ['source-message-1'],
+    });
+  });
+}
+
+List<dynamic> _sentSegments(Map<String, dynamic> request) {
+  final params = request['params'] as Map<String, dynamic>;
+  return params['message'] as List<dynamic>;
 }
 
 Map<String, Object?> _messageJson({

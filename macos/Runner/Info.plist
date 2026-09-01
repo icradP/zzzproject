@@ -33,5 +33,9 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record voice messages in chat.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Share your current location in chat when you choose to.</string>
 </dict>
 </plist>

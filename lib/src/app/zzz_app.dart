@@ -381,6 +381,12 @@ class _ZzzImInteractionHandler implements ImInteractionHandler {
 
   @override
   Future<ForwardGroup> getForwardMessages(String forwardId) async {
+    try {
+      final group = await repository.getForwardMessages(forwardId);
+      if (!group.isEmpty) return group;
+    } on UnsupportedError {
+      // External sources may rely on their platform-specific forward API below.
+    }
     // 1. Try SQLite cache first — re-parse raw JSON to preserve tree.
     final sourceId = ImSourceAddress.sourceIdOf(forwardId);
     final source = _sourceFor(forwardId);

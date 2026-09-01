@@ -305,6 +305,88 @@ class ZzzServerSource implements ImMessageSource {
   ]);
 
   @override
+  Future<ImMessage> sendLinkMessage({
+    required String conversationId,
+    required ImLinkShare link,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'share',
+      'data': {'url': link.url.toString(), 'title': link.title},
+    },
+  ]);
+
+  @override
+  Future<ImMessage> sendLocationMessage({
+    required String conversationId,
+    required ImLocationShare location,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'location',
+      'data': {
+        'name': location.name,
+        if (location.latitude != null) 'lat': location.latitude,
+        if (location.longitude != null) 'lon': location.longitude,
+      },
+    },
+  ]);
+
+  @override
+  Future<ImMessage> sendPoke({
+    required String conversationId,
+    required String targetUserId,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'poke',
+      'data': {'target_id': targetUserId},
+    },
+  ]);
+
+  @override
+  Future<ImMessage> forwardMessages({
+    required String conversationId,
+    required List<ImMessage> messages,
+  }) async {
+    if (messages.isEmpty) {
+      throw ArgumentError('At least one message is required.');
+    }
+    final response = await _request('create_forward', {
+      'conversation_id': conversationId,
+      'message_ids': messages.map((message) => message.id).toList(),
+    });
+    _requireOk(response, 'Create forward');
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final forwardId = '${data['forward_id'] ?? ''}';
+    if (forwardId.isEmpty) throw StateError('Create forward returned no ID.');
+    return _sendMessage(conversationId, [
+      {
+        'type': 'forward',
+        'data': {'id': forwardId, 'count': messages.length},
+      },
+    ]);
+  }
+
+  @override
+  Future<ForwardGroup> getForwardMessages(String forwardId) async {
+    final response = await _request('get_forward_msg', {
+      'forward_id': forwardId,
+    });
+    _requireOk(response, 'Get forward');
+    final rawMessages = response['data'];
+    if (rawMessages is! List) return const ForwardGroup();
+    final messages = <ImMessage>[];
+    for (final raw in rawMessages.whereType<Map>()) {
+      final json = Map<String, dynamic>.from(raw);
+      json['conversation_id'] = 'forward_$forwardId';
+      json['status'] = 'sent';
+      final message = _parseMessage(json);
+      if (message != null) messages.add(message);
+    }
+    return ForwardGroup(title: 'Chat records', messages: messages);
+  }
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,
@@ -359,8 +441,20 @@ class ZzzServerSource implements ImMessageSource {
     required ImMediaUpload upload,
   }) async {
     final bytes = await readUploadBytes(upload);
-    if (bytes.length > 20 * 1024 * 1024) {
-      throw StateError('Files larger than 20 MB are not supported.');
+    final maxBytes =
+        upload.kind == ImMessageKind.record
+            ? 10 * 1024 * 1024
+            : 20 * 1024 * 1024;
+    if (bytes.length > maxBytes) {
+      throw StateError(
+        upload.kind == ImMessageKind.record
+            ? 'Voice messages larger than 10 MB are not supported.'
+            : 'Files larger than 20 MB are not supported.',
+      );
+    }
+    if (upload.kind == ImMessageKind.record &&
+        (upload.duration ?? Duration.zero) > const Duration(minutes: 2)) {
+      throw StateError('Voice messages are limited to 2 minutes.');
     }
     final fileType = _segmentType(upload.kind);
     if (fileType == null) throw StateError('Unsupported media type.');
@@ -408,6 +502,8 @@ class ZzzServerSource implements ImMessageSource {
           'name': upload.fileName,
           'mime_type': upload.mimeType,
           'size': bytes.length,
+          if (upload.duration != null)
+            'duration_ms': upload.duration!.inMilliseconds,
           if (data?['width'] != null) 'width': data?['width'],
           if (data?['height'] != null) 'height': data?['height'],
         },
@@ -1462,6 +1558,10 @@ class ZzzServerSource implements ImMessageSource {
         mediaHeight: (data['height'] as num?)?.toInt(),
         thumbnailUrl: _resolveMediaUrl(thumbnailUrl),
         mediaMime: data['mime_type'] as String?,
+        mediaDuration:
+            data['duration_ms'] is num
+                ? Duration(milliseconds: (data['duration_ms'] as num).toInt())
+                : null,
         reactions: _parseReactions(
           json['reactions'],
           myReactionIds: myReactionIds,
@@ -1514,6 +1614,10 @@ class ZzzServerSource implements ImMessageSource {
       'video' => '${data['name'] ?? '[视频]'}',
       'file' => '${data['name'] ?? '[文件]'}',
       'sticker' => '[表情]',
+      'share' => '${data['title'] ?? data['url'] ?? '[链接]'}',
+      'location' => '${data['name'] ?? '[位置]'}',
+      'forward' => '[聊天记录]',
+      'poke' => '[戳一戳]',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',
@@ -1527,6 +1631,9 @@ class ZzzServerSource implements ImMessageSource {
     'file' => ImMessageKind.file,
     'sticker' => ImMessageKind.face,
     'forward' => ImMessageKind.forward,
+    'share' => ImMessageKind.share,
+    'location' => ImMessageKind.location,
+    'poke' => ImMessageKind.poke,
     'json' => ImMessageKind.json,
     _ => ImMessageKind.text,
   };
@@ -1620,6 +1727,12 @@ class ZzzServerSource implements ImMessageSource {
       mediaHeight: (firstData?['height'] as num?)?.toInt(),
       thumbnailUrl: _resolveMediaUrl(thumbnailUrl),
       mediaMime: firstData?['mime_type'] as String?,
+      mediaDuration:
+          firstData?['duration_ms'] is num
+              ? Duration(
+                milliseconds: (firstData?['duration_ms'] as num).toInt(),
+              )
+              : null,
     );
     _addMessageToStream(message);
     return message;

@@ -76,6 +76,10 @@
 	<string>Select images and videos to send in chat.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Select audio files to send as voice messages.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record voice messages in chat.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Share your current location in chat when you choose to.</string>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

@@ -70,6 +70,43 @@ class SourceBackedRepository implements ImRepository {
   );
 
   @override
+  Future<ImMessage> sendLinkMessage({
+    required String conversationId,
+    required ImLinkShare link,
+  }) => _source.sendLinkMessage(conversationId: conversationId, link: link);
+
+  @override
+  Future<ImMessage> sendLocationMessage({
+    required String conversationId,
+    required ImLocationShare location,
+  }) => _source.sendLocationMessage(
+    conversationId: conversationId,
+    location: location,
+  );
+
+  @override
+  Future<ImMessage> sendPoke({
+    required String conversationId,
+    required String targetUserId,
+  }) => _source.sendPoke(
+    conversationId: conversationId,
+    targetUserId: targetUserId,
+  );
+
+  @override
+  Future<ImMessage> forwardMessages({
+    required String conversationId,
+    required List<ImMessage> messages,
+  }) => _source.forwardMessages(
+    conversationId: conversationId,
+    messages: messages,
+  );
+
+  @override
+  Future<ForwardGroup> getForwardMessages(String forwardId) =>
+      _source.getForwardMessages(forwardId);
+
+  @override
   Future<void> recallMessage({
     required String conversationId,
     required String messageId,

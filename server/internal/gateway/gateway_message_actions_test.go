@@ -193,6 +193,170 @@ func TestValidateImageSegmentURL(t *testing.T) {
 	}
 }
 
+func TestValidateM4StructuredSegments(t *testing.T) {
+	t.Run("link", func(t *testing.T) {
+		valid := protocol.MessageSegment{Type: "share", Data: map[string]interface{}{
+			"url": "https://example.test/docs", "title": "Documentation",
+		}}
+		if err := validateShareSegment(valid); err != nil {
+			t.Fatalf("valid link rejected: %v", err)
+		}
+		invalid := valid
+		invalid.Data = map[string]interface{}{"url": "file:///etc/passwd"}
+		if err := validateShareSegment(invalid); err == nil {
+			t.Fatal("unsafe link scheme was accepted")
+		}
+	})
+
+	t.Run("location", func(t *testing.T) {
+		nameOnly := protocol.MessageSegment{Type: "location", Data: map[string]interface{}{
+			"name": "People's Square",
+		}}
+		if err := validateLocationSegment(nameOnly); err != nil {
+			t.Fatalf("name-only location rejected: %v", err)
+		}
+		coordinates := protocol.MessageSegment{Type: "location", Data: map[string]interface{}{
+			"name": "People's Square", "lat": float64(31.2304), "lon": float64(121.4737),
+		}}
+		if err := validateLocationSegment(coordinates); err != nil {
+			t.Fatalf("valid coordinates rejected: %v", err)
+		}
+		coordinates.Data["lat"] = float64(91)
+		if err := validateLocationSegment(coordinates); err == nil {
+			t.Fatal("out-of-range latitude was accepted")
+		}
+	})
+
+	t.Run("voice", func(t *testing.T) {
+		valid := protocol.MessageSegment{Type: "record", Data: map[string]interface{}{
+			"duration_ms": float64(120000), "size": float64(10 * 1024 * 1024),
+		}}
+		if err := validateRecordSegment(valid); err != nil {
+			t.Fatalf("boundary voice message rejected: %v", err)
+		}
+		valid.Data["duration_ms"] = float64(120001)
+		if err := validateRecordSegment(valid); err == nil {
+			t.Fatal("overlong voice message was accepted")
+		}
+	})
+
+	if body := pushBody([]protocol.MessageSegment{
+		{Type: "share", Data: map[string]interface{}{"title": "Docs"}},
+		{Type: "location", Data: map[string]interface{}{"name": "Office"}},
+		{Type: "poke", Data: map[string]interface{}{}},
+	}); body != "[Link] Docs[Location] Office[Poke]" {
+		t.Fatalf("unexpected structured push body: %q", body)
+	}
+}
+
+func TestWebSocketForwardAccessAndPokeRateLimit(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	alice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	eve := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+	t.Cleanup(func() { _ = eve.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	authenticate(t, eve, "eve")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddFriend("alice", "eve"); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceConversation := "private_alice_bob"
+	targetConversation := "private_alice_eve"
+	for _, conversation := range []struct {
+		id           string
+		participants []string
+	}{
+		{id: sourceConversation, participants: []string{"alice", "bob"}},
+		{id: targetConversation, participants: []string{"alice", "eve"}},
+	} {
+		assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+			"conversation_id": conversation.id,
+			"type":            "private",
+			"participants":    conversation.participants,
+		}))
+	}
+
+	original := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": sourceConversation,
+		"message": []map[string]interface{}{
+			{"type": "text", "data": map[string]interface{}{"text": "immutable source"}},
+		},
+	})
+	assertOK(t, original)
+	originalID := responseData(t, original)["message_id"].(string)
+	_ = readJSON(t, bob)
+
+	created := request(t, alice, "create_forward", map[string]interface{}{
+		"conversation_id": targetConversation,
+		"message_ids":     []string{originalID},
+	})
+	assertOK(t, created)
+	forwardID := responseData(t, created)["forward_id"].(string)
+
+	forwarded := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": targetConversation,
+		"message": []map[string]interface{}{
+			{"type": "forward", "data": map[string]interface{}{"id": forwardID, "count": 1}},
+		},
+	})
+	assertOK(t, forwarded)
+	event := readJSON(t, eve)
+	segments := event["message"].([]interface{})
+	if segments[0].(map[string]interface{})["type"] != "forward" {
+		t.Fatalf("forward event was not structured: %#v", event)
+	}
+
+	available := request(t, eve, "get_forward_msg", map[string]interface{}{"forward_id": forwardID})
+	assertOK(t, available)
+	if got := len(responseDataList(t, available)); got != 1 {
+		t.Fatalf("forward snapshot has %d messages, want 1", got)
+	}
+	denied := request(t, bob, "get_forward_msg", map[string]interface{}{"forward_id": forwardID})
+	if denied["status"] == "ok" {
+		t.Fatalf("non-target conversation member read forward snapshot: %#v", denied)
+	}
+	crossConversation := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": sourceConversation,
+		"message": []map[string]interface{}{
+			{"type": "forward", "data": map[string]interface{}{"id": forwardID}},
+		},
+	})
+	if crossConversation["status"] == "ok" {
+		t.Fatalf("forward snapshot was reused across conversations: %#v", crossConversation)
+	}
+
+	poke := func() map[string]interface{} {
+		return request(t, alice, "send_message", map[string]interface{}{
+			"conversation_id": sourceConversation,
+			"message": []map[string]interface{}{
+				{"type": "poke", "data": map[string]interface{}{"target_id": "bob"}},
+			},
+		})
+	}
+	assertOK(t, poke())
+	pokeEvent := readJSON(t, bob)
+	pokeSegments := pokeEvent["message"].([]interface{})
+	if pokeSegments[0].(map[string]interface{})["type"] != "poke" {
+		t.Fatalf("poke was converted to a text message: %#v", pokeEvent)
+	}
+	limited := poke()
+	if limited["status"] == "ok" || !strings.Contains(limited["msg"].(string), "wait") {
+		t.Fatalf("poke rate limit did not apply: %#v", limited)
+	}
+}
+
 func TestWebSocketMessageReactionLifecycle(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)

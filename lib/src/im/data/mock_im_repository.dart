@@ -8,7 +8,7 @@ import 'im_repository.dart';
 import 'im_sticker_catalog.dart';
 
 /// In-memory repository with sample ZZZ-themed conversations.
-class MockImRepository implements ImRepository {
+class MockImRepository extends ImRepository {
   MockImRepository() {
     _seed();
   }

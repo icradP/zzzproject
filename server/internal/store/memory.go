@@ -690,13 +690,14 @@ func (s *MemoryStore) HandleFriendRequest(reqID, action string) (bool, error) {
 
 // ---- Forward message operations ----
 
-func (s *MemoryStore) StoreForward(messages []*Message) (*ForwardMessage, error) {
+func (s *MemoryStore) StoreForward(conversationID string, messages []*Message) (*ForwardMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	forward := &ForwardMessage{
-		ID:        fmt.Sprintf("fwd_%d", time.Now().UnixNano()),
-		Messages:  messages,
-		CreatedAt: time.Now(),
+		ID:             fmt.Sprintf("fwd_%d", time.Now().UnixNano()),
+		ConversationID: conversationID,
+		Messages:       messages,
+		CreatedAt:      time.Now(),
 	}
 	s.forwards[forward.ID] = forward
 	return forward, nil

@@ -43,6 +43,42 @@ abstract class ImRepository {
     required ImStickerReference sticker,
   }) => sendTextMessage(conversationId: conversationId, text: '[Sticker]');
 
+  Future<ImMessage> sendLinkMessage({
+    required String conversationId,
+    required ImLinkShare link,
+  }) => sendTextMessage(
+    conversationId: conversationId,
+    text: link.url.toString(),
+  );
+
+  Future<ImMessage> sendLocationMessage({
+    required String conversationId,
+    required ImLocationShare location,
+  }) => sendTextMessage(
+    conversationId: conversationId,
+    text:
+        location.hasCoordinates
+            ? '${location.name} (${location.latitude}, ${location.longitude})'
+            : location.name,
+  );
+
+  Future<ImMessage> sendPoke({
+    required String conversationId,
+    required String targetUserId,
+  }) async {
+    throw UnsupportedError('Poke is not supported by this source.');
+  }
+
+  Future<ImMessage> forwardMessages({
+    required String conversationId,
+    required List<ImMessage> messages,
+  }) async {
+    throw UnsupportedError('Forwarding is not supported by this source.');
+  }
+
+  Future<ForwardGroup> getForwardMessages(String forwardId) async =>
+      const ForwardGroup();
+
   /// Recall a message remotely when the source and server policy allow it.
   Future<void> recallMessage({
     required String conversationId,

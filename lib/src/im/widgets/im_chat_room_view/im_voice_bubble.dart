@@ -6,11 +6,13 @@ import '../../im_scope.dart';
 /// Voice message bubble — play / pause button + duration display.
 class ImVoiceBubble extends StatefulWidget {
   const ImVoiceBubble({
+    super.key,
     this.fileId,
     this.url,
     this.localPath,
     required this.isMine,
     this.fileSize,
+    this.declaredDuration,
   });
 
   final String? fileId;
@@ -18,6 +20,7 @@ class ImVoiceBubble extends StatefulWidget {
   final String? localPath;
   final bool isMine;
   final int? fileSize;
+  final Duration? declaredDuration;
 
   @override
   State<ImVoiceBubble> createState() => _ImVoiceBubbleState();
@@ -57,7 +60,10 @@ class _ImVoiceBubbleState extends State<ImVoiceBubble> {
     if (_resolvedPath == null) return;
     try {
       final uri = Uri.tryParse(_resolvedPath!);
-      if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      if (uri != null &&
+          (uri.scheme == 'http' ||
+              uri.scheme == 'https' ||
+              uri.scheme == 'blob')) {
         await _player.setSource(UrlSource(uri.toString()));
       } else {
         await _player.setSourceDeviceFile(_resolvedPath!);
@@ -128,7 +134,9 @@ class _ImVoiceBubbleState extends State<ImVoiceBubble> {
   }
 
   Duration get _total =>
-      _duration > Duration.zero ? _duration : Duration(seconds: _estimatedSecs);
+      _duration > Duration.zero
+          ? _duration
+          : widget.declaredDuration ?? Duration(seconds: _estimatedSecs);
 
   @override
   Widget build(BuildContext context) {

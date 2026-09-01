@@ -14,12 +14,21 @@ class ImReleaseNote {
 
 /// Versioned product updates shown on first launch and from Settings.
 abstract final class ImReleaseNotes {
-  static const currentVersion = '1.1.0';
+  static const currentVersion = '1.2.0';
   static const _dismissedVersionKey = 'im.release_notes.dismissed_version';
 
   static const releases = <ImReleaseNote>[
     ImReleaseNote(
       version: currentVersion,
+      title: 'Everyday messaging',
+      items: [
+        'Record, preview, and send voice messages on Web and desktop.',
+        'Share links and locations without server-side page or map fetching.',
+        'Forward one or more messages and send rate-limited pokes.',
+      ],
+    ),
+    ImReleaseNote(
+      version: '1.1.0',
       title: 'Expression and clarity',
       items: [
         'Send built-in stickers without uploading the same image each time.',
@@ -38,9 +47,8 @@ abstract final class ImReleaseNotes {
     ),
   ];
 
-  static ImReleaseNote get current => releases.firstWhere(
-    (release) => release.version == currentVersion,
-  );
+  static ImReleaseNote get current =>
+      releases.firstWhere((release) => release.version == currentVersion);
 
   static Future<bool> shouldShowCurrent() async {
     final preferences = await SharedPreferences.getInstance();

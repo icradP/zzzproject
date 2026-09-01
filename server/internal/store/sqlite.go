@@ -162,6 +162,7 @@ func (s *SQLiteStore) initSchema() error {
 
 	CREATE TABLE IF NOT EXISTS forwards (
 		id TEXT PRIMARY KEY,
+		conversation_id TEXT NOT NULL DEFAULT '',
 		messages TEXT NOT NULL, -- JSON array of messages
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -208,6 +209,7 @@ func (s *SQLiteStore) initSchema() error {
 		"ALTER TABLE media_files ADD COLUMN thumbnail_url TEXT DEFAULT ''",
 		"ALTER TABLE media_files ADD COLUMN width INTEGER DEFAULT 0",
 		"ALTER TABLE media_files ADD COLUMN height INTEGER DEFAULT 0",
+		"ALTER TABLE forwards ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''",
 	} {
 		if _, err := s.db.Exec(statement); err != nil &&
 			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -1184,21 +1186,22 @@ func (s *SQLiteStore) HandleFriendRequest(reqID, action string) (bool, error) {
 
 // ---- Forward message operations ----
 
-func (s *SQLiteStore) StoreForward(messages []*Message) (*ForwardMessage, error) {
+func (s *SQLiteStore) StoreForward(conversationID string, messages []*Message) (*ForwardMessage, error) {
 	messagesJSON, err := json.Marshal(messages)
 	if err != nil {
 		return nil, err
 	}
 
 	forward := &ForwardMessage{
-		ID:        fmt.Sprintf("fwd_%d", time.Now().UnixNano()),
-		Messages:  messages,
-		CreatedAt: time.Now(),
+		ID:             fmt.Sprintf("fwd_%d", time.Now().UnixNano()),
+		ConversationID: conversationID,
+		Messages:       messages,
+		CreatedAt:      time.Now(),
 	}
 
 	_, err = s.db.Exec(
-		"INSERT INTO forwards (id, messages) VALUES (?, ?)",
-		forward.ID, string(messagesJSON),
+		"INSERT INTO forwards (id, conversation_id, messages) VALUES (?, ?, ?)",
+		forward.ID, forward.ConversationID, string(messagesJSON),
 	)
 	if err != nil {
 		return nil, err
@@ -1211,9 +1214,9 @@ func (s *SQLiteStore) GetForward(id string) (*ForwardMessage, error) {
 	forward := &ForwardMessage{}
 	var messagesJSON string
 	err := s.db.QueryRow(
-		"SELECT id, messages, created_at FROM forwards WHERE id = ?",
+		"SELECT id, conversation_id, messages, created_at FROM forwards WHERE id = ?",
 		id,
-	).Scan(&forward.ID, &messagesJSON, &forward.CreatedAt)
+	).Scan(&forward.ID, &forward.ConversationID, &messagesJSON, &forward.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

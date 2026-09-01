@@ -13,7 +13,7 @@ import 'nonebot_models_web.dart';
 /// on web.  The app will always use [MockImRepository] on web (because
 /// `ImConnectionConfig.isNoneBot` is `false`), so these methods are never
 /// actually called at runtime.
-class NoneBotSource implements ImMessageSource {
+class NoneBotSource extends ImMessageSource {
   NoneBotSource._({
     required this.config,
     required bool mock,
