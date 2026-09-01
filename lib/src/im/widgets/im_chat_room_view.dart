@@ -15,6 +15,7 @@ import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
 import '../data/im_draft_store.dart';
+import '../data/im_message_display_config.dart';
 import '../models/im_models.dart';
 import 'im_chat_widgets.dart';
 
@@ -73,11 +74,16 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   bool _draftRestoreStarted = false;
   String? _draftOwnerId;
   Timer? _draftSaveTimer;
+  late bool _showMessageStatus;
 
   @override
   void initState() {
     super.initState();
     _lastMaxExtent = 0;
+    _showMessageStatus = ImMessageDisplayConfig.showsMessageStatus;
+    ImMessageDisplayConfig.showMessageStatus.addListener(
+      _handleMessageStatusVisibilityChanged,
+    );
     _canLoadOlder = widget.onLoadOlder != null;
     _scrollController.addListener(_handleScroll);
     _composerController.addListener(_scheduleDraftSave);
@@ -97,6 +103,9 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
 
   @override
   void dispose() {
+    ImMessageDisplayConfig.showMessageStatus.removeListener(
+      _handleMessageStatusVisibilityChanged,
+    );
     _draftSaveTimer?.cancel();
     final ownerId = _draftOwnerId;
     if (ownerId != null) {
@@ -114,6 +123,13 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     _composerFocus.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _handleMessageStatusVisibilityChanged() {
+    if (!mounted) return;
+    setState(() {
+      _showMessageStatus = ImMessageDisplayConfig.showsMessageStatus;
+    });
   }
 
   @override
@@ -816,6 +832,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                     hideAvatar: hideAvatar,
                     compact: compact,
                     hideTimestamp: hideTimestamp,
+                    showMessageStatus: _showMessageStatus,
                     resolveQuote: widget.resolveMessage,
                     onQuoteTap:
                         message.isReply

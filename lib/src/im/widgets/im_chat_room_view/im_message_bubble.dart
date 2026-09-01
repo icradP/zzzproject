@@ -123,6 +123,7 @@ class ImMessageBubble extends StatelessWidget {
     this.hideAvatar = false,
     this.compact = false,
     this.hideTimestamp = false,
+    this.showMessageStatus = false,
     this.highlighted = false,
     this.resolveQuote,
     this.onQuoteTap,
@@ -147,6 +148,9 @@ class ImMessageBubble extends StatelessWidget {
   /// When true the clock line is hidden (used for all but the last
   /// bubble in a split group).
   final bool hideTimestamp;
+
+  /// Shows sending, delivery, read, and failure indicators for own messages.
+  final bool showMessageStatus;
 
   /// When true the message bubble glows yellow briefly (scroll-to target).
   final bool highlighted;
@@ -487,7 +491,8 @@ class ImMessageBubble extends StatelessWidget {
   }
 
   Widget _buildMessageMeta() {
-    final status = message.isMine ? _statusPresentation() : null;
+    final status =
+        showMessageStatus && message.isMine ? _statusPresentation() : null;
     return Wrap(
       alignment: message.isMine ? WrapAlignment.end : WrapAlignment.start,
       crossAxisAlignment: WrapCrossAlignment.center,

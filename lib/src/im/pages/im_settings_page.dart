@@ -8,6 +8,7 @@ import '../../widgets/zzz_widgets.dart';
 import '../data/im_animation_config.dart';
 import '../data/im_backdrop_config.dart';
 import '../data/im_connection_config.dart';
+import '../data/im_message_display_config.dart';
 import '../data/im_nsfw_config.dart';
 import '../data/im_push_manager.dart';
 import '../data/im_storage_config.dart';
@@ -46,6 +47,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   bool _migrating = false;
   bool _clearingCache = false;
   ImAnimationConfig _animConfig = ImAnimationConfig();
+  bool _showMessageStatus = false;
   ImBackdropConfig _backdropConfig = ImBackdropConfig();
   final _backdropControllers = <TextEditingController>[];
   ImNsfwConfig _nsfwConfig = ImNsfwConfig();
@@ -125,6 +127,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     final storage = await ImStorageConfig.load();
     final anim = await ImAnimationConfig.load();
     _animConfig = anim;
+    final showMessageStatus = await ImMessageDisplayConfig.load();
     final backdrop = await ImBackdropConfig.load();
     _backdropConfig = backdrop;
     _rebuildBackdropControllers();
@@ -138,6 +141,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
         profiles.primaryProfile ?? profiles.profiles.first,
       );
       _storagePathController.text = storage.basePath ?? '';
+      _showMessageStatus = showMessageStatus;
       _loaded = true;
     });
   }
@@ -449,7 +453,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
                         const SizedBox(height: 12),
                         ZzzExpandableSection(
                           title: 'Visual',
-                          subtitle: 'Animation and motion effects',
+                          subtitle: 'Message display, animation, and motion',
                           initiallyExpanded: false,
                           child: _buildAnimationToggles(),
                         ),
@@ -825,6 +829,15 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   Widget _buildAnimationToggles() {
     return Column(
       children: [
+        ZzzSwitchTile(
+          value: _showMessageStatus,
+          title: 'Message status',
+          subtitle: 'Show sending, delivered, and read indicators.',
+          onChanged: (value) {
+            setState(() => _showMessageStatus = value);
+            ImMessageDisplayConfig.setShowMessageStatus(value);
+          },
+        ),
         ZzzSwitchTile(
           value: _animConfig.conversationListSlide,
           title: 'Conversation list slide',

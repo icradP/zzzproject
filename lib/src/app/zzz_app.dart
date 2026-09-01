@@ -21,6 +21,7 @@ import '../im/data/im_storage_config_web.dart'
     if (dart.library.io) '../im/data/im_storage_config.dart';
 import '../im/data/im_interaction_handler.dart';
 import '../im/data/im_logger.dart';
+import '../im/data/im_message_display_config.dart';
 import '../im/data/im_notification_service.dart';
 import '../im/data/im_media_cache.dart';
 import '../im/models/im_models.dart';
@@ -87,6 +88,7 @@ class _ZzzAppState extends State<ZzzApp> {
     final storageConfig = await ImStorageConfig.load();
     await ImAnimationConfig.load();
     await ImBackdropConfig.load();
+    await ImMessageDisplayConfig.load();
     await ImNsfwConfig.load();
     final hasWebServer = profiles.enabledProfiles.any((profile) {
       final config = profile.config;
