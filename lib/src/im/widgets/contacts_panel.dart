@@ -32,11 +32,13 @@ class _ContactsPanelState extends State<ContactsPanel> {
   String _query = '';
 
   List<ImUser> _users = const [];
+  List<ImUser> _suggestedUsers = const [];
   List<ImConversation> _groups = const [];
   List<ImFriendRequest> _friendRequests = const [];
   String? _selfId;
   bool _loading = true;
   bool _showGroups = false;
+  final Set<String> _addingSuggestedUserIds = {};
 
   @override
   void initState() {
@@ -57,6 +59,7 @@ class _ContactsPanelState extends State<ContactsPanel> {
         _users = users;
         _loading = false;
       });
+      unawaited(_refreshSuggestedContacts(repository));
     });
     unawaited(_friendRequestsSubscription?.cancel());
     _friendRequestsSubscription =
@@ -79,16 +82,23 @@ class _ContactsPanelState extends State<ContactsPanel> {
   Future<void> _loadData() async {
     final repo = ImScope.repositoryOf(context);
     try {
-      final users = await repo.getUsers();
-      final groups = await repo.getGroupList();
-      final self = await repo.getCurrentUser();
-      final friendRequests =
+      final usersFuture = repo.getUsers();
+      final suggestedUsersFuture = repo.getSuggestedContacts();
+      final groupsFuture = repo.getGroupList();
+      final selfFuture = repo.getCurrentUser();
+      final friendRequestsFuture =
           repo.supportsFriendManagement
-              ? await repo.getFriendRequests()
-              : const <ImFriendRequest>[];
+              ? repo.getFriendRequests()
+              : Future.value(const <ImFriendRequest>[]);
+      final users = await usersFuture;
+      final suggestedUsers = await suggestedUsersFuture;
+      final groups = await groupsFuture;
+      final self = await selfFuture;
+      final friendRequests = await friendRequestsFuture;
       if (mounted) {
         setState(() {
           _users = users;
+          _suggestedUsers = suggestedUsers;
           _groups = groups;
           _friendRequests = friendRequests;
           _selfId = self.id;
@@ -97,6 +107,16 @@ class _ContactsPanelState extends State<ContactsPanel> {
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _refreshSuggestedContacts(ImRepository repository) async {
+    try {
+      final suggestedUsers = await repository.getSuggestedContacts();
+      if (!mounted || !identical(repository, _subscribedRepository)) return;
+      setState(() => _suggestedUsers = suggestedUsers);
+    } catch (_) {
+      // Suggested contacts are optional and must not block ordinary contacts.
     }
   }
 
@@ -120,6 +140,19 @@ class _ContactsPanelState extends State<ContactsPanel> {
         .toList();
   }
 
+  List<ImUser> get _filteredSuggestedUsers {
+    final contactIds = _users.map((user) => user.id).toSet();
+    return _suggestedUsers
+        .where((user) => !contactIds.contains(user.id))
+        .where(
+          (user) =>
+              _query.isEmpty ||
+              user.displayName.toLowerCase().contains(_query) ||
+              user.id.toLowerCase().contains(_query),
+        )
+        .toList(growable: false);
+  }
+
   List<ImConversation> get _filteredGroups {
     if (_query.isEmpty) return _groups;
     return _groups
@@ -137,6 +170,46 @@ class _ContactsPanelState extends State<ContactsPanel> {
             onMessage: _openConversationWithUser,
           ),
     );
+  }
+
+  Future<void> _addSuggestedContact(ImUser user) async {
+    if (_addingSuggestedUserIds.contains(user.id)) return;
+    setState(() => _addingSuggestedUserIds.add(user.id));
+    try {
+      await ImScope.repositoryOf(context).sendFriendRequest(
+        userId: user.id,
+        comment: 'Sent from suggested contacts',
+      );
+      if (!mounted) return;
+      setState(() {
+        _suggestedUsers = _suggestedUsers
+            .map(
+              (candidate) =>
+                  candidate.id == user.id
+                      ? candidate.copyWith(
+                        relationship: ImRelationship.outgoing,
+                      )
+                      : candidate,
+            )
+            .toList(growable: false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Friend request sent to ${user.displayName}.')),
+      );
+      await _loadData();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to add ${user.displayName}: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _addingSuggestedUserIds.remove(user.id));
+      }
+    }
   }
 
   Future<void> _openConversationWithUser(ImUser user) async {
@@ -274,19 +347,43 @@ class _ContactsPanelState extends State<ContactsPanel> {
 
   Widget _buildPrivateTab({Key? key}) {
     final users = _filteredUsers;
-    if (users.isEmpty) {
+    final suggestedUsers = _filteredSuggestedUsers;
+    if (users.isEmpty && suggestedUsers.isEmpty) {
       return _buildEmpty(
         _query.isEmpty ? 'No contacts yet' : 'No matches',
         key: key,
       );
     }
-    return ListView.separated(
+    return ListView(
       key: key,
-      itemCount: users.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 2),
-      itemBuilder:
-          (_, i) =>
-              ContactTile(user: users[i], onTap: () => _onUserTap(users[i])),
+      children: [
+        if (suggestedUsers.isNotEmpty) ...[
+          const _ContactSectionLabel('Suggested'),
+          ...suggestedUsers.map(
+            (user) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: SuggestedContactTile(
+                key: ValueKey('suggested-${user.id}'),
+                user: user,
+                adding: _addingSuggestedUserIds.contains(user.id),
+                requested: user.relationship == ImRelationship.outgoing,
+                onTap: () => _onUserTap(user),
+                onAdd: () => _addSuggestedContact(user),
+              ),
+            ),
+          ),
+          if (users.isNotEmpty) const SizedBox(height: 10),
+        ],
+        if (users.isNotEmpty) ...[
+          if (suggestedUsers.isNotEmpty) const _ContactSectionLabel('Contacts'),
+          ...users.map(
+            (user) => Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: ContactTile(user: user, onTap: () => _onUserTap(user)),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -320,6 +417,27 @@ class _ContactsPanelState extends State<ContactsPanel> {
           const SizedBox(height: 10),
           Text(message, style: const TextStyle(color: Colors.white38)),
         ],
+      ),
+    );
+  }
+}
+
+class _ContactSectionLabel extends StatelessWidget {
+  const _ContactSectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+      child: Text(
+        text.toUpperCase(),
+        style: const TextStyle(
+          color: Colors.white38,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }

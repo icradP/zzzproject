@@ -14,12 +14,21 @@ class ImReleaseNote {
 
 /// Versioned product updates shown on first launch and from Settings.
 abstract final class ImReleaseNotes {
-  static const currentVersion = '1.4.0';
+  static const currentVersion = '1.5.0';
   static const _dismissedVersionKey = 'im.release_notes.dismissed_version';
 
   static const releases = <ImReleaseNote>[
     ImReleaseNote(
       version: currentVersion,
+      title: 'Meet Fairy',
+      items: [
+        'Find Fairy in suggested contacts when the assistant is available on your server.',
+        'Add Fairy directly or open the profile card before sending a friend request.',
+        'Recognize bot accounts from a consistent badge across contacts and profiles.',
+      ],
+    ),
+    ImReleaseNote(
+      version: '1.4.0',
       title: 'Titles and profile cards',
       items: [
         'Open responsive profile cards with bios, mutual groups, and scoped titles.',

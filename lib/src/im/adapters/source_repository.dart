@@ -35,6 +35,9 @@ class SourceBackedRepository implements ImRepository {
       _source.getProfileCard(userId, groupId: groupId);
 
   @override
+  Future<List<ImUser>> getSuggestedContacts() => _source.getSuggestedContacts();
+
+  @override
   Stream<List<ImUser>> watchUsers() => _source.watchUsers();
 
   @override

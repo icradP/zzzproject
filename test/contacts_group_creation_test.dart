@@ -9,9 +9,70 @@ import 'package:zzzproject/src/im/data/mock_im_repository.dart';
 import 'package:zzzproject/src/im/im_scope.dart';
 import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/widgets/contacts_panel.dart';
+import 'package:zzzproject/src/im/widgets/im_bot_badge.dart';
 import 'package:zzzproject/src/widgets/zzz_widgets.dart';
 
 void main() {
+  testWidgets('shows Fairy as a suggested bot and sends a friend request', (
+    tester,
+  ) async {
+    final repository = _SuggestedContactRepository();
+    addTearDown(repository.dispose);
+
+    await tester.pumpWidget(
+      ImScope(
+        repository: repository,
+        interactions: const NoOpImInteractionHandler(),
+        nsfwChecker: StubNsfwChecker(),
+        nsfwStateCache: NsfwStateCache(),
+        pushManager: NoOpImPushManager(),
+        onConnectionsChanged: () async {},
+        child: MaterialApp(
+          home: Scaffold(body: ContactsPanel(onConversationSelected: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('suggested-fairy')), findsOneWidget);
+    expect(find.text('AI assistant'), findsOneWidget);
+    expect(find.byType(ImBotBadge), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('add-suggested-fairy')));
+    await tester.pumpAndSettle();
+
+    expect(repository.requestedUserId, 'fairy');
+    expect(find.byTooltip('Request pending'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('does not duplicate a suggested bot already in contacts', (
+    tester,
+  ) async {
+    final repository = _SuggestedContactRepository(fairyIsFriend: true);
+    addTearDown(repository.dispose);
+
+    await tester.pumpWidget(
+      ImScope(
+        repository: repository,
+        interactions: const NoOpImInteractionHandler(),
+        nsfwChecker: StubNsfwChecker(),
+        nsfwStateCache: NsfwStateCache(),
+        pushManager: NoOpImPushManager(),
+        onConnectionsChanged: () async {},
+        child: MaterialApp(
+          home: Scaffold(body: ContactsPanel(onConversationSelected: (_) {})),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('suggested-fairy')), findsNothing);
+    expect(find.text('Fairy'), findsOneWidget);
+    expect(find.byType(ImBotBadge), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('creates a group with selected contacts', (tester) async {
     tester.view
       ..physicalSize = const Size(375, 667)
@@ -208,4 +269,67 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _SuggestedContactRepository extends MockImRepository {
+  _SuggestedContactRepository({this.fairyIsFriend = false});
+
+  final bool fairyIsFriend;
+  String? requestedUserId;
+
+  @override
+  bool get supportsFriendManagement => true;
+
+  Future<List<ImUser>> _contacts() async {
+    final users = await super.getUsers();
+    return users
+        .where((user) => fairyIsFriend || user.id != 'fairy')
+        .map(
+          (user) =>
+              user.id == 'fairy'
+                  ? user.copyWith(
+                    isBot: true,
+                    relationship: ImRelationship.friend,
+                  )
+                  : user,
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<ImUser>> getUsers() => _contacts();
+
+  @override
+  Stream<List<ImUser>> watchUsers() async* {
+    yield await _contacts();
+  }
+
+  @override
+  Future<List<ImUser>> getSuggestedContacts() async {
+    final fairy = await getUser('fairy');
+    if (fairy == null) return const [];
+    return [
+      fairy.copyWith(
+        isBot: true,
+        relationship:
+            requestedUserId == null
+                ? ImRelationship.none
+                : ImRelationship.outgoing,
+      ),
+    ];
+  }
+
+  @override
+  Future<List<ImFriendRequest>> getFriendRequests() async => const [];
+
+  @override
+  Stream<List<ImFriendRequest>> watchFriendRequests() => Stream.value(const []);
+
+  @override
+  Future<void> sendFriendRequest({
+    required String userId,
+    String comment = '',
+  }) async {
+    requestedUserId = userId;
+  }
 }

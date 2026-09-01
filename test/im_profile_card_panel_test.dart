@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zzzproject/src/im/data/mock_im_repository.dart';
 import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/widgets/im_profile_card_panel.dart';
+import 'package:zzzproject/src/im/widgets/im_bot_badge.dart';
 import 'package:zzzproject/src/widgets/zzz_widgets.dart';
 
 void main() {
@@ -18,7 +19,7 @@ void main() {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
       });
-      final repository = _ProfileRepository();
+      final repository = _ProfileRepository(isBot: true);
       addTearDown(repository.dispose);
 
       await tester.pumpWidget(
@@ -56,6 +57,7 @@ void main() {
       expect(find.text('Random Play'), findsOneWidget);
       expect(find.text('Message'), findsOneWidget);
       expect(find.text('Block'), findsOneWidget);
+      expect(find.byType(ImBotBadge), findsOneWidget);
       final rect = tester.getRect(find.byType(ZzzModalPanel));
       expect(rect.left, greaterThanOrEqualTo(0));
       expect(rect.right, lessThanOrEqualTo(size.width));
@@ -105,9 +107,13 @@ void main() {
 }
 
 class _ProfileRepository extends MockImRepository {
-  _ProfileRepository({this.relationship = ImRelationship.friend});
+  _ProfileRepository({
+    this.relationship = ImRelationship.friend,
+    this.isBot = false,
+  });
 
   final ImRelationship relationship;
+  final bool isBot;
 
   @override
   Future<ImUser?> getProfileCard(String userId, {String? groupId}) async {
@@ -116,6 +122,7 @@ class _ProfileRepository extends MockImRepository {
       displayName: 'Anby Demara',
       bio: 'Reliable proxy with a taste for movies.',
       isOnline: true,
+      isBot: isBot,
       relationship: relationship,
       titles: const [
         ImUserTitle(

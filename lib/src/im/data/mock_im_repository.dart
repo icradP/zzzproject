@@ -609,6 +609,7 @@ class MockImRepository extends ImRepository {
               ? avatar?.filePath ?? current.avatarLocalPath
               : null,
       isOnline: true,
+      isBot: current.isBot,
       relationship: current.relationship,
       bio: bio ?? current.bio,
       cardBackgroundUrl: cardBackgroundUrl ?? current.cardBackgroundUrl,

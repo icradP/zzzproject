@@ -104,6 +104,7 @@ class ImSourceRegistry {
               serverUrl: config.serverUrl!,
               authToken: config.accessToken ?? '',
               selfId: config.selfId,
+              presetBotIds: _presetBotIds(config.extra['presetBotIds']),
             ),
             avatarResolver: avatarResolver,
             displayNameResolver: displayNameResolver,
@@ -150,4 +151,18 @@ class ImSourceRegistry {
       zzzServerSources: zzzServerSources,
     );
   }
+}
+
+List<String> _presetBotIds(Object? value) {
+  if (value == null) return const ['fairy'];
+  final values = switch (value) {
+    List<dynamic> values => values.map((item) => '$item'),
+    String value => value.split(','),
+    _ => const <String>[],
+  };
+  return values
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
 }

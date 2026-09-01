@@ -45,6 +45,33 @@ void main() {
     );
   });
 
+  test('scopes suggested bot contacts to their owning source', () async {
+    final repository = CompositeImRepository(
+      registrations: [
+        ImRepositoryRegistration(
+          id: 'zzz',
+          label: 'ZZZ Server',
+          repository: _SuggestedRepository(),
+        ),
+        ImRepositoryRegistration(
+          id: 'qq',
+          label: 'QQ',
+          repository: MockImRepository(),
+        ),
+      ],
+      primarySourceId: 'zzz',
+    );
+    addTearDown(repository.dispose);
+
+    final suggestions = await repository.getSuggestedContacts();
+
+    expect(suggestions, hasLength(1));
+    expect(suggestions.single.id, 'zzz::fairy');
+    expect(suggestions.single.sourceId, 'zzz');
+    expect(suggestions.single.sourceLabel, 'ZZZ Server');
+    expect(suggestions.single.isBot, isTrue);
+  });
+
   test(
     'namespaces overlapping identities and conversations by source',
     () async {
@@ -322,4 +349,11 @@ void main() {
       );
     },
   );
+}
+
+class _SuggestedRepository extends MockImRepository {
+  @override
+  Future<List<ImUser>> getSuggestedContacts() async => const [
+    ImUser(id: 'fairy', displayName: 'Fairy', isBot: true),
+  ];
 }

@@ -22,6 +22,8 @@ abstract class ImMessageSource {
   Future<ImUser?> getProfileCard(String userId, {String? groupId}) =>
       getUser(userId);
 
+  Future<List<ImUser>> getSuggestedContacts() async => const [];
+
   Stream<List<ImUser>> watchUsers();
 
   Stream<List<ImConversation>> watchConversations();

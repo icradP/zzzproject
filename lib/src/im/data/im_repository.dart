@@ -126,6 +126,9 @@ abstract class ImRepository {
   /// All known users (excluding self).
   Future<List<ImUser>> getUsers();
 
+  /// Optional contacts promoted by a source but not yet added as friends.
+  Future<List<ImUser>> getSuggestedContacts() async => const [];
+
   Future<List<ImUser>> searchUsers(String query) async {
     throw UnsupportedError(
       'Friend management is not supported by this repository.',

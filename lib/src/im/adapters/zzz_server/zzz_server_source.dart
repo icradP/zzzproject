@@ -21,11 +21,13 @@ class ZzzServerConfig {
     required this.serverUrl,
     this.authToken = '',
     this.selfId = '',
+    this.presetBotIds = const ['fairy'],
   });
 
   final String serverUrl;
   final String authToken;
   final String selfId;
+  final List<String> presetBotIds;
 }
 
 class ZzzAccountResult {
@@ -235,6 +237,25 @@ class ZzzServerSource implements ImMessageSource {
     );
     _users[user.id] = user;
     return user;
+  }
+
+  @override
+  Future<List<ImUser>> getSuggestedContacts() async {
+    if (_status != ConnectionStatus.connected) return const [];
+    final users = await Future.wait(
+      config.presetBotIds
+          .where((id) => id.isNotEmpty && id != _selfId)
+          .map(getUser),
+    );
+    return users
+        .whereType<ImUser>()
+        .where(
+          (user) =>
+              user.relationship != ImRelationship.friend &&
+              user.relationship != ImRelationship.blocked &&
+              user.relationship != ImRelationship.blockedBy,
+        )
+        .toList(growable: false);
   }
 
   @override
@@ -1344,6 +1365,7 @@ class ZzzServerSource implements ImMessageSource {
         id: id,
         displayName: _resolveDisplayName(id, json['nickname'] as String?),
         isOnline: json['online'] as bool? ?? false,
+        isBot: config.presetBotIds.contains(id),
         avatarAssetPath: _preserveAvatarRevision(
           _users[id]?.avatarAssetPath,
           _resolveAvatar(id, json['avatar_url'] as String?),
@@ -1623,6 +1645,7 @@ class ZzzServerSource implements ImMessageSource {
       displayName: _resolveDisplayName(userID, json['nickname'] as String?),
       avatarAssetPath: avatar,
       isOnline: existing?.isOnline ?? true,
+      isBot: existing?.isBot ?? config.presetBotIds.contains(userID),
       relationship: existing?.relationship ?? ImRelationship.none,
     );
     _users[userID] = user;
@@ -1767,6 +1790,7 @@ class ZzzServerSource implements ImMessageSource {
           _resolveAvatar(senderId, sender['avatar_url'] as String?),
         ),
         isOnline: true,
+        isBot: knownSender?.isBot ?? config.presetBotIds.contains(senderId),
         relationship: knownSender?.relationship ?? ImRelationship.none,
       );
       if (_friendIds.contains(senderId)) _emitUsers();
@@ -2068,6 +2092,7 @@ class ZzzServerSource implements ImMessageSource {
         _resolveAvatar(id, json['avatar_url'] as String?),
       ),
       isOnline: json['online'] as bool? ?? true,
+      isBot: config.presetBotIds.contains(id),
       relationship: imRelationshipFromString(json['relationship'] as String?),
       bio: '${json['bio'] ?? ''}',
       cardBackgroundUrl:

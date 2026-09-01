@@ -4,6 +4,7 @@ import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
+import 'im_bot_badge.dart';
 import 'im_source_badge.dart';
 
 class ContactTile extends StatelessWidget {
@@ -50,6 +51,10 @@ class ContactTile extends StatelessWidget {
                           const SizedBox(width: 6),
                           ImSourceBadge(sourceLabel: user.sourceLabel!),
                         ],
+                        if (user.isBot) ...[
+                          const SizedBox(width: 6),
+                          const ImBotBadge(compact: true),
+                        ],
                       ],
                     ),
                   ],
@@ -62,6 +67,94 @@ class ContactTile extends StatelessWidget {
                   shape: BoxShape.circle,
                   color: user.isOnline ? ZzzColors.yellow : Colors.white24,
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SuggestedContactTile extends StatelessWidget {
+  const SuggestedContactTile({
+    required this.user,
+    required this.onTap,
+    required this.onAdd,
+    this.adding = false,
+    this.requested = false,
+    super.key,
+  });
+
+  final ImUser user;
+  final VoidCallback onTap;
+  final VoidCallback onAdd;
+  final bool adding;
+  final bool requested;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.035),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+          child: Row(
+            children: [
+              ZzzAvatar(
+                image: user.avatarImage(AppAssets.fallbackAvatarForId(user.id)),
+                size: 42,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            user.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const ImBotBadge(compact: true),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'AI assistant',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                key: ValueKey('add-suggested-${user.id}'),
+                onPressed: adding || requested ? null : onAdd,
+                tooltip:
+                    adding
+                        ? 'Sending request'
+                        : requested
+                        ? 'Request pending'
+                        : 'Add friend',
+                icon:
+                    adding
+                        ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                        : Icon(
+                          requested
+                              ? Icons.schedule_rounded
+                              : Icons.person_add_alt_1_rounded,
+                        ),
               ),
             ],
           ),
@@ -135,9 +228,7 @@ class GroupTile extends StatelessWidget {
                         ),
                         if (conversation.sourceLabel != null) ...[
                           const SizedBox(width: 6),
-                          ImSourceBadge(
-                            sourceLabel: conversation.sourceLabel!,
-                          ),
+                          ImSourceBadge(sourceLabel: conversation.sourceLabel!),
                         ],
                       ],
                     ),

@@ -10,6 +10,8 @@ import '../../widgets/zzz_widgets.dart';
 import '../data/im_animation_config.dart';
 import '../data/im_repository.dart';
 import '../models/im_models.dart';
+import '../models/im_source_address.dart';
+import 'im_bot_badge.dart';
 
 class ImTitleBadge extends StatefulWidget {
   const ImTitleBadge({required this.title, super.key});
@@ -141,7 +143,9 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
           widget.userId,
           groupId: widget.groupId,
         ),
-        widget.repository.getCurrentUser(),
+        widget.repository.getCurrentUser(
+          sourceId: ImSourceAddress.sourceIdOf(widget.userId),
+        ),
       ]);
       if (!mounted) return;
       setState(() {
@@ -522,11 +526,18 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
   Widget _buildName(ImUser user) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        user.displayName,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+      Row(
+        children: [
+          Flexible(
+            child: Text(
+              user.displayName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+            ),
+          ),
+          if (user.isBot) ...[const SizedBox(width: 8), const ImBotBadge()],
+        ],
       ),
       const SizedBox(height: 3),
       Text(user.id, style: const TextStyle(color: Colors.white54)),

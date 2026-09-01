@@ -419,6 +419,19 @@ class CompositeImRepository implements ImRepository {
     return results.expand((result) => result).toList(growable: false);
   }
 
+  @override
+  Future<List<ImUser>> getSuggestedContacts() async {
+    final results = await Future.wait(
+      _registrations.values.map((registration) async {
+        final users = await registration.repository.getSuggestedContacts();
+        return users
+            .map((user) => _scopeUser(registration, user))
+            .toList(growable: false);
+      }),
+    );
+    return results.expand((result) => result).toList(growable: false);
+  }
+
   Iterable<ImRepositoryRegistration> get _friendRegistrations =>
       _registrations.values.where(
         (registration) => registration.repository.supportsFriendManagement,
@@ -908,6 +921,7 @@ class CompositeImRepository implements ImRepository {
       avatarBytes: user.avatarBytes,
       avatarLocalPath: user.avatarLocalPath,
       isOnline: user.isOnline,
+      isBot: user.isBot,
       relationship: user.relationship,
       bio: user.bio,
       cardBackgroundUrl: user.cardBackgroundUrl,

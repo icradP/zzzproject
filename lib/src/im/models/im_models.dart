@@ -168,6 +168,7 @@ class ImUser {
     this.avatarBytes,
     this.avatarLocalPath,
     this.isOnline = false,
+    this.isBot = false,
     this.relationship = ImRelationship.none,
     this.bio = '',
     this.cardBackgroundUrl,
@@ -187,6 +188,7 @@ class ImUser {
   /// Local file path to a downloaded avatar (e.g. QQ avatar cached to disk).
   final String? avatarLocalPath;
   final bool isOnline;
+  final bool isBot;
   final ImRelationship relationship;
   final String bio;
   final String? cardBackgroundUrl;
@@ -219,6 +221,7 @@ class ImUser {
     Uint8List? avatarBytes,
     String? avatarLocalPath,
     bool? isOnline,
+    bool? isBot,
     ImRelationship? relationship,
     String? bio,
     String? cardBackgroundUrl,
@@ -237,6 +240,7 @@ class ImUser {
       avatarBytes: avatarBytes ?? this.avatarBytes,
       avatarLocalPath: avatarLocalPath ?? this.avatarLocalPath,
       isOnline: isOnline ?? this.isOnline,
+      isBot: isBot ?? this.isBot,
       relationship: relationship ?? this.relationship,
       bio: bio ?? this.bio,
       cardBackgroundUrl:
