@@ -476,9 +476,14 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 	password, _ := params["password"].(string)
 	nickname, _ := params["nickname"].(string)
 	inviteCode, _ := params["invite_code"].(string)
+	avatarURL, _ := params["avatar_url"].(string)
+	avatarFile, _ := params["avatar_file"].(string)
+	avatarFileName, _ := params["avatar_file_name"].(string)
+	avatarMimeType, _ := params["avatar_mime_type"].(string)
 	userID = strings.TrimSpace(userID)
 	nickname = strings.TrimSpace(nickname)
 	inviteCode = strings.TrimSpace(inviteCode)
+	avatarURL = strings.TrimSpace(avatarURL)
 	configuredCode := g.currentInviteCode()
 	if configuredCode == "" {
 		g.sendError(client, req.Echo, "registration is disabled")
@@ -505,6 +510,10 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "nickname is too long")
 		return
 	}
+	if len(avatarURL) > 2048 || (avatarURL != "" && avatarFile != "") {
+		g.sendError(client, req.Echo, "choose either a built-in or uploaded avatar")
+		return
+	}
 	if existing, _ := g.store.GetUser(userID); existing != nil {
 		g.sendError(client, req.Echo, "account already exists")
 		return
@@ -514,7 +523,49 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "failed to create account")
 		return
 	}
-	user := &store.User{ID: userID, Nickname: nickname, PasswordHash: string(hash), Online: true, CreatedAt: time.Now()}
+	if avatarFile != "" {
+		if g.media == nil {
+			g.sendError(client, req.Echo, "avatar storage is not configured")
+			return
+		}
+		if len(avatarFile) > 7*1024*1024 {
+			g.sendError(client, req.Echo, "avatar must be 5 MB or smaller")
+			return
+		}
+		avatarData, err := base64.StdEncoding.DecodeString(avatarFile)
+		if err != nil || len(avatarData) == 0 || len(avatarData) > 5*1024*1024 {
+			g.sendError(client, req.Echo, "invalid avatar file")
+			return
+		}
+		detectedType := http.DetectContentType(avatarData)
+		if !strings.HasPrefix(detectedType, "image/") || detectedType == "image/svg+xml" {
+			g.sendError(client, req.Echo, "avatar must be a supported raster image")
+			return
+		}
+		if strings.TrimSpace(avatarFileName) == "" {
+			avatarFileName = "avatar"
+		}
+		if !strings.HasPrefix(avatarMimeType, "image/") {
+			avatarMimeType = detectedType
+		}
+		media, err := g.media.Save(
+			avatarFileName,
+			"image",
+			avatarMimeType,
+			avatarData,
+			userID,
+		)
+		if err != nil || media == nil || media.URL == "" {
+			log.Printf("[media] registration avatar upload failed for %s: %v", userID, err)
+			g.sendError(client, req.Echo, "failed to store avatar")
+			return
+		}
+		avatarURL = media.URL
+	}
+	user := &store.User{
+		ID: userID, Nickname: nickname, Avatar: avatarURL,
+		PasswordHash: string(hash), Online: true, CreatedAt: time.Now(),
+	}
 	if err := g.store.SetUser(user); err != nil {
 		g.sendError(client, req.Echo, "failed to create account")
 		return
@@ -565,6 +616,7 @@ func (g *Gateway) handleUpdateProfile(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "failed to update profile")
 		return
 	}
+	g.notifyProfileUpdate(user, client)
 	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
 		"user_id": user.ID, "nickname": user.Nickname, "avatar_url": user.Avatar,
 	}})
@@ -1094,6 +1146,20 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 	for i, conv := range convs {
 		lastMsg := ""
 		var lastTs int64
+		title := conv.Title
+		avatar := conv.Avatar
+		if conv.Type == "private" {
+			for _, participantID := range conv.Participants {
+				if participantID == client.userID {
+					continue
+				}
+				if peer, peerErr := g.store.GetUser(participantID); peerErr == nil && peer != nil {
+					title = peer.Nickname
+					avatar = peer.Avatar
+				}
+				break
+			}
+		}
 		msgs, err := g.store.GetMessages(conv.ID, 1)
 		if err != nil {
 			g.sendError(client, req.Echo, "failed to load conversations")
@@ -1118,8 +1184,8 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 		result[i] = protocol.Conversation{
 			ConversationID: conv.ID,
 			Type:           conv.Type,
-			Title:          conv.Title,
-			Avatar:         conv.Avatar,
+			Title:          title,
+			Avatar:         avatar,
 			UnreadCount:    unreadCount,
 			IsPinned:       preference != nil && preference.IsPinned,
 			IsMuted:        preference != nil && preference.IsMuted,
@@ -2255,6 +2321,22 @@ func (g *Gateway) handleFriendRequest(client *Client, req *protocol.Request) {
 		Comment:     comment,
 		Flag:        friendReq.ID,
 	})
+	requesterName := client.userID
+	if requester, _ := g.store.GetUser(client.userID); requester != nil && requester.Nickname != "" {
+		requesterName = requester.Nickname
+	}
+	body := requesterName + " wants to connect"
+	if comment != "" {
+		body += ": " + comment
+	}
+	g.pushEventToUser(targetID, map[string]interface{}{
+		"type":       "friend_request",
+		"title":      "New friend request",
+		"body":       body,
+		"request_id": friendReq.ID,
+		"user_id":    client.userID,
+		"path":       "/contacts",
+	}, "friend request "+friendReq.ID)
 
 	g.sendJSON(client, protocol.Response{
 		Status:  "ok",
@@ -2322,7 +2404,30 @@ func (g *Gateway) handleFriendHandle(client *Client, req *protocol.Request) {
 				NoticeType: protocol.NoticeTypeFriendAdd,
 				UserID:     client.userID,
 			})
+		} else {
+			g.sendToUser(friendReq.FromID, protocol.NoticeEvent{
+				PostType:   "notice",
+				NoticeType: protocol.NoticeTypeFriendRequestResult,
+				UserID:     client.userID,
+				SubType:    normalizedAction,
+			})
 		}
+		handlerName := client.userID
+		if handler, _ := g.store.GetUser(client.userID); handler != nil && handler.Nickname != "" {
+			handlerName = handler.Nickname
+		}
+		resultText := "declined your friend request"
+		if normalizedAction == "accepted" {
+			resultText = "accepted your friend request"
+		}
+		g.pushEventToUser(friendReq.FromID, map[string]interface{}{
+			"type":       "friend_request_result",
+			"title":      "Friend request updated",
+			"body":       handlerName + " " + resultText,
+			"request_id": friendReq.ID,
+			"user_id":    client.userID,
+			"path":       "/contacts",
+		}, "friend request result "+friendReq.ID)
 	} else {
 		g.sendError(client, req.Echo, "failed to handle request")
 	}
@@ -2653,6 +2758,74 @@ func (g *Gateway) pushToConversation(convID string, message *store.Message, excl
 			}
 		}
 	}()
+}
+
+func (g *Gateway) pushEventToUser(
+	userID string,
+	payload map[string]interface{},
+	description string,
+) {
+	if g.pushSender == nil || !g.pushSender.Enabled() || userID == "" {
+		return
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	go func() {
+		subscriptions, err := g.store.GetPushSubscriptions(userID)
+		if err != nil {
+			log.Printf("[push] failed to load subscriptions for %s: %v", userID, err)
+			return
+		}
+		for _, subscription := range subscriptions {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			expired, sendErr := g.pushSender.Send(ctx, subscription, encoded)
+			cancel()
+			if expired {
+				if err := g.store.DeletePushSubscription(userID, subscription.Endpoint); err != nil {
+					log.Printf("[push] failed to remove expired subscription for %s: %v", userID, err)
+				}
+				continue
+			}
+			if sendErr != nil {
+				log.Printf("[push] delivery failed for %s: %v", userID, sendErr)
+				continue
+			}
+			log.Printf("[push] delivered %s to %s", description, userID)
+		}
+	}()
+}
+
+func (g *Gateway) notifyProfileUpdate(user *store.User, exclude *Client) {
+	if user == nil {
+		return
+	}
+	event := protocol.NoticeEvent{
+		PostType:       "notice",
+		NoticeType:     protocol.NoticeTypeProfileUpdate,
+		UserID:         user.ID,
+		Nickname:       user.Nickname,
+		Avatar:         user.Avatar,
+		ProfileVersion: time.Now().UnixMilli(),
+	}
+	data, err := json.Marshal(event)
+	if err == nil {
+		for _, registered := range g.clientsForUser(user.ID) {
+			if registered != exclude {
+				registered.enqueue(data)
+			}
+		}
+	}
+	friends, err := g.store.GetFriends(user.ID)
+	if err != nil {
+		return
+	}
+	for _, friend := range friends {
+		if friend != nil && friend.ID != user.ID {
+			g.sendToUser(friend.ID, event)
+		}
+	}
 }
 
 func (g *Gateway) conversationRecipients(convID, excludeUserID string) []string {

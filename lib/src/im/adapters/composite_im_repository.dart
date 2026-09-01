@@ -47,6 +47,14 @@ class CompositeImRepository implements ImRepository {
           _emitConversations();
         }, onError: _conversationController.addError),
       );
+      if (registration.repository.supportsFriendManagement) {
+        _friendRequestSubscriptions.add(
+          registration.repository.watchFriendRequests().listen((requests) {
+            _friendRequestSnapshots[registration.id] = requests;
+            _emitFriendRequests();
+          }, onError: _friendRequestsController.addError),
+        );
+      }
       final status = registration.connectionStatus;
       if (status != null) {
         _statusSubscriptions.add(
@@ -63,13 +71,17 @@ class CompositeImRepository implements ImRepository {
   final String? _primarySourceId;
   final Map<String, List<ImUser>> _userSnapshots = {};
   final Map<String, List<ImConversation>> _conversationSnapshots = {};
+  final Map<String, List<ImFriendRequest>> _friendRequestSnapshots = {};
   final Map<String, ConnectionStatus> _statusSnapshots = {};
   final List<StreamSubscription<dynamic>> _userSubscriptions = [];
   final List<StreamSubscription<dynamic>> _conversationSubscriptions = [];
+  final List<StreamSubscription<dynamic>> _friendRequestSubscriptions = [];
   final List<StreamSubscription<dynamic>> _statusSubscriptions = [];
   final _usersController = StreamController<List<ImUser>>.broadcast();
   final _conversationController =
       StreamController<List<ImConversation>>.broadcast();
+  final _friendRequestsController =
+      StreamController<List<ImFriendRequest>>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
 
   Stream<ConnectionStatus> get connectionStatus {
@@ -329,6 +341,12 @@ class CompositeImRepository implements ImRepository {
       }),
     );
     return results.expand((result) => result).toList(growable: false);
+  }
+
+  @override
+  Stream<List<ImFriendRequest>> watchFriendRequests() {
+    Future.microtask(_emitFriendRequests);
+    return _friendRequestsController.stream;
   }
 
   @override
@@ -804,6 +822,26 @@ class CompositeImRepository implements ImRepository {
     _usersController.add(List.unmodifiable(users));
   }
 
+  void _emitFriendRequests() {
+    if (_friendRequestsController.isClosed) return;
+    final requests = <ImFriendRequest>[];
+    for (final entry in _friendRequestSnapshots.entries) {
+      final registration = _registrations[entry.key];
+      if (registration == null) continue;
+      requests.addAll(
+        entry.value.map(
+          (request) => _scopeFriendRequest(registration, request),
+        ),
+      );
+    }
+    requests.sort((a, b) {
+      final aTime = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    _friendRequestsController.add(List.unmodifiable(requests));
+  }
+
   List<ImConversation> _sortConversations(List<ImConversation> conversations) {
     conversations.sort((a, b) {
       if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
@@ -837,6 +875,9 @@ class CompositeImRepository implements ImRepository {
     for (final subscription in _conversationSubscriptions) {
       unawaited(subscription.cancel());
     }
+    for (final subscription in _friendRequestSubscriptions) {
+      unawaited(subscription.cancel());
+    }
     for (final subscription in _statusSubscriptions) {
       unawaited(subscription.cancel());
     }
@@ -845,6 +886,7 @@ class CompositeImRepository implements ImRepository {
     }
     unawaited(_usersController.close());
     unawaited(_conversationController.close());
+    unawaited(_friendRequestsController.close());
     unawaited(_statusController.close());
   }
 }

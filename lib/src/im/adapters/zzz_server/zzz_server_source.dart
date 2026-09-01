@@ -12,6 +12,7 @@ import 'im_upload_bytes.dart';
 typedef ZzzAvatarResolver = String? Function(String userId);
 typedef ZzzDisplayNameResolver =
     String Function(String userId, String? nickname);
+typedef ZzzNotificationHandler = void Function(String title, String body);
 
 class ZzzServerConfig {
   const ZzzServerConfig({
@@ -46,8 +47,10 @@ class ZzzServerSource implements ImMessageSource {
     bool allowReconnect = true,
     ZzzAvatarResolver? avatarResolver,
     ZzzDisplayNameResolver? displayNameResolver,
+    ZzzNotificationHandler? onNotification,
     Future<void> Function()? onAuthenticationFailed,
   }) : _onAuthenticationFailed = onAuthenticationFailed,
+       _onNotification = onNotification,
        _avatarResolver = avatarResolver,
        _displayNameResolver = displayNameResolver,
        _allowReconnect = allowReconnect,
@@ -57,6 +60,7 @@ class ZzzServerSource implements ImMessageSource {
   final bool _allowReconnect;
   final ZzzAvatarResolver? _avatarResolver;
   final ZzzDisplayNameResolver? _displayNameResolver;
+  final ZzzNotificationHandler? _onNotification;
   final Future<void> Function()? _onAuthenticationFailed;
 
   WebSocketChannel? _channel;
@@ -77,6 +81,8 @@ class ZzzServerSource implements ImMessageSource {
   final _usersController = StreamController<List<ImUser>>.broadcast();
   final _conversationsController =
       StreamController<List<ImConversation>>.broadcast();
+  final _friendRequestsController =
+      StreamController<List<ImFriendRequest>>.broadcast();
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
 
   final _conversations = <String, ImConversation>{};
@@ -85,6 +91,7 @@ class ZzzServerSource implements ImMessageSource {
   final _loadingMessageHistory = <String>{};
   final _users = <String, ImUser>{};
   final _friendIds = <String>{};
+  List<ImFriendRequest> _friendRequests = const [];
   final _echoCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _echoCounter = 0;
   ConnectionStatus _status = ConnectionStatus.disconnected;
@@ -148,6 +155,7 @@ class ZzzServerSource implements ImMessageSource {
     unawaited(_statusController.close());
     unawaited(_usersController.close());
     unawaited(_conversationsController.close());
+    unawaited(_friendRequestsController.close());
     for (final controller in _messageControllers.values) {
       unawaited(controller.close());
     }
@@ -462,7 +470,8 @@ class ZzzServerSource implements ImMessageSource {
     final response = await _request('get_friend_requests', const {});
     _requireOk(response, 'Load friend requests');
     final requests = <ImFriendRequest>[];
-    for (final raw in response['data'] as List? ?? const []) {
+    final responseData = response['data'];
+    for (final raw in responseData is List ? responseData : const []) {
       if (raw is! Map) continue;
       final json = Map<String, dynamic>.from(raw);
       final fromData = Map<String, dynamic>.from(
@@ -497,9 +506,20 @@ class ZzzServerSource implements ImMessageSource {
         ),
       );
     }
-    return requests
+    _friendRequests = requests
         .where((request) => request.id.isNotEmpty)
         .toList(growable: false);
+    _emitFriendRequests();
+    return _friendRequests;
+  }
+
+  @override
+  Stream<List<ImFriendRequest>> watchFriendRequests() async* {
+    yield List.unmodifiable(_friendRequests);
+    if (_status == ConnectionStatus.connected) {
+      unawaited(getFriendRequests().catchError((_) => _friendRequests));
+    }
+    yield* _friendRequestsController.stream;
   }
 
   @override
@@ -512,6 +532,7 @@ class ZzzServerSource implements ImMessageSource {
       if (comment.trim().isNotEmpty) 'comment': comment.trim(),
     });
     _requireOk(response, 'Send friend request');
+    await getFriendRequests();
   }
 
   @override
@@ -528,6 +549,7 @@ class ZzzServerSource implements ImMessageSource {
       accept ? 'Accept friend request' : 'Reject friend request',
     );
     if (accept) await _syncUsers();
+    await getFriendRequests();
   }
 
   @override
@@ -948,6 +970,7 @@ class ZzzServerSource implements ImMessageSource {
 
   Future<void> _syncFromServer() async {
     await _syncUsers();
+    await getFriendRequests();
     final response = await _request('get_conversations', const {});
     _requireOk(response, 'Load conversations');
     final data = response['data'];
@@ -984,7 +1007,10 @@ class ZzzServerSource implements ImMessageSource {
         id: id,
         displayName: _resolveDisplayName(id, json['nickname'] as String?),
         isOnline: json['online'] as bool? ?? false,
-        avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
+        avatarAssetPath: _preserveAvatarRevision(
+          _users[id]?.avatarAssetPath,
+          _resolveAvatar(id, json['avatar_url'] as String?),
+        ),
         relationship: imRelationshipFromString(json['relationship'] as String?),
       );
     }
@@ -1029,21 +1055,30 @@ class ZzzServerSource implements ImMessageSource {
             .toList(growable: false) ??
         const <String>[];
     final timestamp = (json['last_timestamp'] as num?)?.toInt() ?? 0;
+    final isGroup = json['type'] == 'group';
+    ImUser? peer;
+    if (!isGroup) {
+      for (final participantID in participants) {
+        if (participantID != _selfId) {
+          peer = _users[participantID];
+          break;
+        }
+      }
+    }
     return ImConversation(
       id: id,
-      type:
-          json['type'] == 'group'
-              ? ImConversationType.group
-              : ImConversationType.direct,
-      title: '${json['title'] ?? id}',
+      type: isGroup ? ImConversationType.group : ImConversationType.direct,
+      title: peer?.displayName ?? '${json['title'] ?? id}',
       participantIds: participants,
       subtitle: json['last_message'] as String?,
-      avatarAssetPath: _resolveConversationAvatar(
-        id: id,
-        isGroup: json['type'] == 'group',
-        participantIds: participants,
-        value: json['avatar_url'] as String?,
-      ),
+      avatarAssetPath:
+          peer?.avatarAssetPath ??
+          _resolveConversationAvatar(
+            id: id,
+            isGroup: isGroup,
+            participantIds: participants,
+            value: json['avatar_url'] as String?,
+          ),
       unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
       isPinned: json['is_pinned'] as bool? ?? false,
       isMuted: json['is_muted'] as bool? ?? false,
@@ -1078,7 +1113,23 @@ class ZzzServerSource implements ImMessageSource {
       case 'notice':
         _handleNoticeEvent(json);
         break;
+      case 'request':
+        _handleRequestEvent(json);
+        break;
     }
+  }
+
+  void _handleRequestEvent(Map<String, dynamic> json) {
+    if (json['request_type'] != 'friend') return;
+    final userID = '${json['user_id'] ?? ''}';
+    final comment = '${json['comment'] ?? ''}'.trim();
+    final name =
+        _users[userID]?.displayName ?? _resolveDisplayName(userID, null);
+    _onNotification?.call(
+      'New friend request',
+      comment.isEmpty ? '$name wants to connect' : '$name: $comment',
+    );
+    unawaited(getFriendRequests().catchError((_) => _friendRequests));
   }
 
   void _handleNoticeEvent(Map<String, dynamic> json) {
@@ -1103,6 +1154,10 @@ class ZzzServerSource implements ImMessageSource {
       return;
     }
     final noticeType = json['notice_type'];
+    if (noticeType == 'profile_update') {
+      _handleProfileUpdate(json);
+      return;
+    }
     if (noticeType == 'friend_presence') {
       final userID = '${json['user_id'] ?? ''}';
       final user = _users[userID];
@@ -1114,6 +1169,27 @@ class ZzzServerSource implements ImMessageSource {
     }
     if (noticeType == 'friend_add' || noticeType == 'friend_remove') {
       unawaited(_syncUsers().catchError((_) {}));
+      unawaited(getFriendRequests().catchError((_) => _friendRequests));
+      if (noticeType == 'friend_add') {
+        final userID = '${json['user_id'] ?? ''}';
+        final name =
+            _users[userID]?.displayName ?? _resolveDisplayName(userID, null);
+        _onNotification?.call(
+          'Friend request accepted',
+          '$name accepted your friend request',
+        );
+      }
+      return;
+    }
+    if (noticeType == 'friend_request_result') {
+      unawaited(getFriendRequests().catchError((_) => _friendRequests));
+      final userID = '${json['user_id'] ?? ''}';
+      final name =
+          _users[userID]?.displayName ?? _resolveDisplayName(userID, null);
+      _onNotification?.call(
+        'Friend request updated',
+        '$name declined your friend request',
+      );
       return;
     }
     if (noticeType == 'group_dismiss') {
@@ -1152,6 +1228,51 @@ class ZzzServerSource implements ImMessageSource {
       _emitMessages(entry.key);
       break;
     }
+  }
+
+  void _handleProfileUpdate(Map<String, dynamic> json) {
+    final userID = '${json['user_id'] ?? ''}';
+    if (userID.isEmpty) return;
+    final existing = _users[userID];
+    var avatar = _resolveAvatar(userID, json['avatar_url'] as String?);
+    final version = (json['profile_version'] as num?)?.toInt() ?? 0;
+    final avatarUri = avatar == null ? null : Uri.tryParse(avatar);
+    if (version > 0 &&
+        avatarUri != null &&
+        (avatarUri.scheme == 'http' || avatarUri.scheme == 'https')) {
+      avatar =
+          avatarUri
+              .replace(
+                queryParameters: {
+                  ...avatarUri.queryParameters,
+                  'profile_v': '$version',
+                },
+              )
+              .toString();
+    }
+    final user = ImUser(
+      id: userID,
+      displayName: _resolveDisplayName(userID, json['nickname'] as String?),
+      avatarAssetPath: avatar,
+      isOnline: existing?.isOnline ?? true,
+      relationship: existing?.relationship ?? ImRelationship.none,
+    );
+    _users[userID] = user;
+    var conversationsChanged = false;
+    for (final entry in _conversations.entries.toList()) {
+      final conversation = entry.value;
+      if (!conversation.isDirect ||
+          !conversation.participantIds.contains(userID)) {
+        continue;
+      }
+      _conversations[entry.key] = conversation.copyWith(
+        title: user.displayName,
+        avatarAssetPath: user.avatarAssetPath,
+      );
+      conversationsChanged = true;
+    }
+    _emitUsers();
+    if (conversationsChanged) _emitConversations();
   }
 
   void _handleMessageReaction(Map<String, dynamic> json) {
@@ -1273,9 +1394,9 @@ class ZzzServerSource implements ImMessageSource {
           senderId,
           sender['nickname'] as String?,
         ),
-        avatarAssetPath: _resolveAvatar(
-          senderId,
-          sender['avatar_url'] as String?,
+        avatarAssetPath: _preserveAvatarRevision(
+          knownSender?.avatarAssetPath,
+          _resolveAvatar(senderId, sender['avatar_url'] as String?),
         ),
         isOnline: true,
         relationship: knownSender?.relationship ?? ImRelationship.none,
@@ -1384,7 +1505,11 @@ class ZzzServerSource implements ImMessageSource {
 
     final conversation = _conversations[message.conversationId];
     if (conversation != null) {
+      final sender = _users[message.senderId];
+      final refreshPeer = conversation.isDirect && !message.isMine;
       _conversations[message.conversationId] = conversation.copyWith(
+        title: refreshPeer ? sender?.displayName : null,
+        avatarAssetPath: refreshPeer ? sender?.avatarAssetPath : null,
         subtitle: message.text,
         updatedAt: message.sentAt,
         unreadCount:
@@ -1543,7 +1668,10 @@ class ZzzServerSource implements ImMessageSource {
     return ImUser(
       id: id,
       displayName: _resolveDisplayName(id, json['nickname'] as String?),
-      avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
+      avatarAssetPath: _preserveAvatarRevision(
+        _users[id]?.avatarAssetPath,
+        _resolveAvatar(id, json['avatar_url'] as String?),
+      ),
       isOnline: json['online'] as bool? ?? true,
       relationship: imRelationshipFromString(json['relationship'] as String?),
     );
@@ -1556,14 +1684,38 @@ class ZzzServerSource implements ImMessageSource {
     required String password,
     required String inviteCode,
     String? nickname,
+    ImMediaUpload? avatar,
+    String? avatarAssetPath,
   }) async {
-    final response = await _accountRequest(serverUrl, 'register', {
+    final params = <String, dynamic>{
       'user_id': userId,
       'password': password,
       'invite_code': inviteCode.trim(),
       if (nickname != null && nickname.trim().isNotEmpty)
         'nickname': nickname.trim(),
-    });
+      if (avatarAssetPath != null && avatarAssetPath.isNotEmpty)
+        'avatar_url': avatarAssetPath,
+    };
+    if (avatar != null && avatarAssetPath == null) {
+      final bytes = await readUploadBytes(avatar);
+      if (bytes.length > 5 * 1024 * 1024) {
+        throw StateError('Avatars must be 5 MB or smaller.');
+      }
+      params.addAll({
+        'avatar_file': base64Encode(bytes),
+        'avatar_file_name': avatar.fileName,
+        'avatar_mime_type': avatar.mimeType ?? 'application/octet-stream',
+      });
+    }
+    final response = await _accountRequest(
+      serverUrl,
+      'register',
+      params,
+      timeout:
+          avatar == null
+              ? const Duration(seconds: 12)
+              : const Duration(seconds: 30),
+    );
     return _accountResult(response);
   }
 
@@ -1595,8 +1747,9 @@ class ZzzServerSource implements ImMessageSource {
   static Future<Map<String, dynamic>> _accountRequest(
     String serverUrl,
     String action,
-    Map<String, dynamic> params,
-  ) async {
+    Map<String, dynamic> params, {
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
     final channel = WebSocketChannel.connect(Uri.parse(serverUrl));
     final echo = 'account_${DateTime.now().microsecondsSinceEpoch}';
     try {
@@ -1604,9 +1757,7 @@ class ZzzServerSource implements ImMessageSource {
       channel.sink.add(
         jsonEncode({'action': action, 'params': params, 'echo': echo}),
       );
-      await for (final raw in channel.stream.timeout(
-        const Duration(seconds: 12),
-      )) {
+      await for (final raw in channel.stream.timeout(timeout)) {
         final decoded = jsonDecode(raw as String);
         if (decoded is! Map || decoded['echo'] != echo) continue;
         final response = Map<String, dynamic>.from(decoded);
@@ -1657,6 +1808,30 @@ class ZzzServerSource implements ImMessageSource {
 
   String? _resolveAvatar(String userId, String? value) {
     return _resolveMediaUrl(value) ?? _avatarResolver?.call(userId);
+  }
+
+  String? _preserveAvatarRevision(String? previous, String? next) {
+    if (previous == null || next == null) return next;
+    final previousUri = Uri.tryParse(previous);
+    final nextUri = Uri.tryParse(next);
+    if (previousUri == null || nextUri == null) return next;
+    if (!previousUri.queryParameters.containsKey('profile_v')) return next;
+    final previousQuery = {
+      for (final entry in previousUri.queryParameters.entries)
+        if (entry.key != 'profile_v') entry.key: entry.value,
+    };
+    final sameResource =
+        previousUri.scheme == nextUri.scheme &&
+        previousUri.userInfo == nextUri.userInfo &&
+        previousUri.host == nextUri.host &&
+        previousUri.port == nextUri.port &&
+        previousUri.path == nextUri.path &&
+        previousUri.fragment == nextUri.fragment &&
+        previousQuery.length == nextUri.queryParameters.length &&
+        previousQuery.entries.every(
+          (entry) => nextUri.queryParameters[entry.key] == entry.value,
+        );
+    return sameResource ? previous : next;
   }
 
   String _resolveDisplayName(String userId, String? nickname) {
@@ -1716,6 +1891,11 @@ class ZzzServerSource implements ImMessageSource {
     if (!_usersController.isClosed) {
       _usersController.add(List.unmodifiable(_visibleUsers()));
     }
+  }
+
+  void _emitFriendRequests() {
+    if (_friendRequestsController.isClosed) return;
+    _friendRequestsController.add(List.unmodifiable(_friendRequests));
   }
 
   void _emitMessages(String conversationId) {

@@ -103,6 +103,8 @@ const (
 	NoticeTypeFriendAdd               NoticeType = "friend_add"
 	NoticeTypeFriendRemove            NoticeType = "friend_remove"
 	NoticeTypeFriendPresence          NoticeType = "friend_presence"
+	NoticeTypeFriendRequestResult     NoticeType = "friend_request_result"
+	NoticeTypeProfileUpdate           NoticeType = "profile_update"
 	NoticeTypeFriendRecall            NoticeType = "friend_recall"
 	NoticeTypeGroupRecall             NoticeType = "group_recall"
 	NoticeTypeGroupIncrease           NoticeType = "group_increase"
@@ -140,6 +142,9 @@ type NoticeEvent struct {
 	IsPinned          *bool      `json:"is_pinned,omitempty"`
 	IsMuted           *bool      `json:"is_muted,omitempty"`
 	Reactions         []Reaction `json:"reactions,omitempty"`
+	Nickname          string     `json:"nickname,omitempty"`
+	Avatar            string     `json:"avatar_url,omitempty"`
+	ProfileVersion    int64      `json:"profile_version,omitempty"`
 }
 
 // RequestType represents different request event types.
@@ -230,10 +235,14 @@ type AuthParams struct {
 
 // RegisterParams are the params for the "register" action.
 type RegisterParams struct {
-	UserID     string `json:"user_id"`
-	Password   string `json:"password"`
-	Nickname   string `json:"nickname,omitempty"`
-	InviteCode string `json:"invite_code"`
+	UserID         string `json:"user_id"`
+	Password       string `json:"password"`
+	Nickname       string `json:"nickname,omitempty"`
+	InviteCode     string `json:"invite_code"`
+	Avatar         string `json:"avatar_url,omitempty"`
+	AvatarFile     string `json:"avatar_file,omitempty"`
+	AvatarFileName string `json:"avatar_file_name,omitempty"`
+	AvatarMimeType string `json:"avatar_mime_type,omitempty"`
 }
 
 // SendMessageParams are the params for the "send_message" action.

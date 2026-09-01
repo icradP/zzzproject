@@ -92,6 +92,12 @@ abstract class ImRepository {
     );
   }
 
+  /// Live pending requests. Sources without realtime request events may emit
+  /// the current snapshot once.
+  Stream<List<ImFriendRequest>> watchFriendRequests() async* {
+    yield await getFriendRequests();
+  }
+
   Future<void> sendFriendRequest({
     required String userId,
     String comment = '',

@@ -119,6 +119,10 @@ class SourceBackedRepository implements ImRepository {
       _source.getFriendRequests();
 
   @override
+  Stream<List<ImFriendRequest>> watchFriendRequests() =>
+      _source.watchFriendRequests();
+
+  @override
   Future<void> sendFriendRequest({
     required String userId,
     String comment = '',

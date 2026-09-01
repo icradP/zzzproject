@@ -498,6 +498,9 @@ class MockImRepository implements ImRepository {
   Future<List<ImFriendRequest>> getFriendRequests() async => const [];
 
   @override
+  Stream<List<ImFriendRequest>> watchFriendRequests() => Stream.value(const []);
+
+  @override
   Future<void> sendFriendRequest({
     required String userId,
     String comment = '',

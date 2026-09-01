@@ -23,6 +23,7 @@ class _FriendCenterPanelState extends State<FriendCenterPanel> {
   final _searchController = TextEditingController();
   final _noteController = TextEditingController();
   Timer? _searchDebounce;
+  StreamSubscription<List<ImFriendRequest>>? _requestsSubscription;
   List<ImUser> _results = const [];
   List<ImFriendRequest> _requests = const [];
   bool _loading = true;
@@ -32,6 +33,7 @@ class _FriendCenterPanelState extends State<FriendCenterPanel> {
   String _query = '';
   late Future<ImUser> _selfFuture;
   bool _selfFutureInitialized = false;
+  Object? _subscribedRepository;
 
   @override
   void initState() {
@@ -42,6 +44,7 @@ class _FriendCenterPanelState extends State<FriendCenterPanel> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    unawaited(_requestsSubscription?.cancel());
     _searchController.dispose();
     _noteController.dispose();
     super.dispose();
@@ -50,9 +53,21 @@ class _FriendCenterPanelState extends State<FriendCenterPanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_selfFutureInitialized) return;
-    _selfFuture = ImScope.repositoryOf(context).getCurrentUser();
-    _selfFutureInitialized = true;
+    final repository = ImScope.repositoryOf(context);
+    if (!_selfFutureInitialized) {
+      _selfFuture = repository.getCurrentUser();
+      _selfFutureInitialized = true;
+    }
+    if (identical(repository, _subscribedRepository)) return;
+    _subscribedRepository = repository;
+    unawaited(_requestsSubscription?.cancel());
+    _requestsSubscription = repository.watchFriendRequests().listen((requests) {
+      if (!mounted) return;
+      setState(() {
+        _requests = requests;
+        _loading = false;
+      });
+    });
   }
 
   Future<void> _reload() async {

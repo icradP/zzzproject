@@ -26,6 +26,7 @@ class ContactsPanel extends StatefulWidget {
 class _ContactsPanelState extends State<ContactsPanel> {
   final _searchController = TextEditingController();
   StreamSubscription<List<ImUser>>? _usersSubscription;
+  StreamSubscription<List<ImFriendRequest>>? _friendRequestsSubscription;
   ImRepository? _subscribedRepository;
   String _query = '';
 
@@ -56,11 +57,20 @@ class _ContactsPanelState extends State<ContactsPanel> {
         _loading = false;
       });
     });
+    unawaited(_friendRequestsSubscription?.cancel());
+    _friendRequestsSubscription =
+        repository.supportsFriendManagement
+            ? repository.watchFriendRequests().listen((requests) {
+              if (!mounted) return;
+              setState(() => _friendRequests = requests);
+            })
+            : null;
   }
 
   @override
   void dispose() {
     unawaited(_usersSubscription?.cancel());
+    unawaited(_friendRequestsSubscription?.cancel());
     _searchController.dispose();
     super.dispose();
   }

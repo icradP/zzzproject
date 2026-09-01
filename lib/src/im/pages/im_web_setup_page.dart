@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../assets/app_assets.dart';
@@ -5,6 +8,7 @@ import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../adapters/zzz_server/zzz_server_source.dart';
 import '../data/im_connection_config.dart';
+import '../models/im_models.dart';
 
 class ImWebSetupPage extends StatefulWidget {
   const ImWebSetupPage({
@@ -31,6 +35,10 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
   final _inviteController = TextEditingController();
   bool _connecting = false;
   bool _registering = false;
+  Uint8List? _avatarBytes;
+  String? _avatarName;
+  String? _avatarMime;
+  String _selectedAvatarAsset = AppAssets.avatarPool.first;
   String? _error;
 
   @override
@@ -71,6 +79,17 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                 userId: userId,
                 password: password,
                 inviteCode: inviteCode,
+                avatar:
+                    _avatarBytes == null
+                        ? null
+                        : ImMediaUpload(
+                          kind: ImMessageKind.image,
+                          fileName: _avatarName ?? 'avatar.jpg',
+                          bytes: _avatarBytes,
+                          mimeType: _avatarMime,
+                        ),
+                avatarAssetPath:
+                    _avatarBytes == null ? _selectedAvatarAsset : null,
               )
               : await ZzzServerSource.loginAccount(
                 serverUrl: serverUrl,
@@ -106,6 +125,48 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
         (uri.scheme == 'ws' || uri.scheme == 'wss') &&
         uri.host.isNotEmpty;
   }
+
+  Future<void> _pickAvatar() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+      allowMultiple: false,
+    );
+    final file = result?.files.single;
+    if (file == null || file.bytes == null) return;
+    if (file.bytes!.length > 5 * 1024 * 1024) {
+      setState(() => _error = 'Avatar must be 5 MB or smaller.');
+      return;
+    }
+    setState(() {
+      _avatarBytes = file.bytes;
+      _avatarName = file.name;
+      _avatarMime = _imageMimeType(file.extension);
+      _error = null;
+    });
+  }
+
+  void _selectAvatar(String assetPath) {
+    setState(() {
+      _selectedAvatarAsset = assetPath;
+      _avatarBytes = null;
+      _avatarName = null;
+      _avatarMime = null;
+      _error = null;
+    });
+  }
+
+  String? _imageMimeType(String? extension) => switch (extension
+      ?.toLowerCase()) {
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'png' => 'image/png',
+    'webp' => 'image/webp',
+    'gif' => 'image/gif',
+    'heic' => 'image/heic',
+    'heif' => 'image/heif',
+    final value when value != null && value.isNotEmpty => 'image/$value',
+    _ => null,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -193,6 +254,98 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
                               fillColor: Colors.white.withValues(alpha: 0.06),
                               foregroundColor: Colors.white,
                               onSubmitted: (_) => _connect(),
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                ZzzAvatar(
+                                  key: const ValueKey(
+                                    'registration-avatar-preview',
+                                  ),
+                                  image:
+                                      _avatarBytes == null
+                                          ? AssetImage(_selectedAvatarAsset)
+                                          : ResizeImage(
+                                            MemoryImage(_avatarBytes!),
+                                            width: 192,
+                                            height: 192,
+                                          ),
+                                  size: 58,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    key: const ValueKey(
+                                      'registration-avatar-upload',
+                                    ),
+                                    onPressed: _connecting ? null : _pickAvatar,
+                                    icon: const Icon(Icons.upload_rounded),
+                                    label: Text(
+                                      _avatarBytes == null
+                                          ? 'Upload avatar'
+                                          : _avatarName ?? 'Image selected',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              height: 54,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: AppAssets.avatarPool.length,
+                                separatorBuilder:
+                                    (_, __) => const SizedBox(width: 8),
+                                itemBuilder: (context, index) {
+                                  final asset = AppAssets.avatarPool[index];
+                                  final selected =
+                                      _avatarBytes == null &&
+                                      _selectedAvatarAsset == asset;
+                                  return Semantics(
+                                    label: 'Built-in avatar ${index + 1}',
+                                    selected: selected,
+                                    button: true,
+                                    child: InkWell(
+                                      key: ValueKey(
+                                        'registration-avatar-option-$index',
+                                      ),
+                                      customBorder: const CircleBorder(),
+                                      onTap:
+                                          _connecting
+                                              ? null
+                                              : () => _selectAvatar(asset),
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color:
+                                                selected
+                                                    ? ZzzColors.yellow
+                                                    : Colors.white24,
+                                            width: selected ? 3 : 1,
+                                          ),
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: ClipOval(
+                                            child: Image.asset(
+                                              asset,
+                                              width: 46,
+                                              height: 46,
+                                              fit: BoxFit.cover,
+                                              cacheWidth: 92,
+                                              cacheHeight: 92,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                           ],
                           if (_error != null) ...[

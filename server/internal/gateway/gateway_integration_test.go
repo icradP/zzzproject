@@ -397,7 +397,8 @@ func TestWebSocketSharedTokenAuthenticationUsesExplicitUserID(t *testing.T) {
 
 func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
 	database := store.NewMemoryStore()
-	gateway := NewGateway(database)
+	pushSender := &fakePushSender{deliveries: make(chan pushDelivery, 2)}
+	gateway := NewGateway(database, pushSender)
 	server := httptest.NewServer(gateway)
 	t.Cleanup(server.Close)
 	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
@@ -411,6 +412,12 @@ func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
 	authenticate(t, alice, "alice")
 	authenticate(t, bob, "bob")
 	authenticate(t, eve, "eve")
+	for user, connection := range map[string]*websocket.Conn{"alice": alice, "bob": bob} {
+		assertOK(t, request(t, connection, "register_push", map[string]interface{}{
+			"endpoint": "https://push.example.test/" + user,
+			"keys":     map[string]interface{}{"p256dh": "key", "auth": "auth"},
+		}))
+	}
 
 	search := responseDataList(t, request(t, alice, "search_users", map[string]interface{}{"query": "bob"}))
 	if len(search) != 1 || search[0].(map[string]interface{})["relationship"] != "none" {
@@ -429,6 +436,10 @@ func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
 	requestEvent := readJSON(t, bob)
 	if requestEvent["post_type"] != "request" || requestEvent["flag"] != flag {
 		t.Fatalf("unexpected friend request event: %#v", requestEvent)
+	}
+	requestPush := waitForPushType(t, pushSender.deliveries, "friend_request")
+	if requestPush.subscription.UserID != "bob" || requestPush.payload["request_id"] != flag {
+		t.Fatalf("unexpected friend request push: %#v", requestPush)
 	}
 
 	duplicate := request(t, alice, "friend_request", map[string]interface{}{"user_id": "bob"})
@@ -452,6 +463,10 @@ func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
 	friendNotice := readJSON(t, alice)
 	if friendNotice["notice_type"] != "friend_add" || friendNotice["user_id"] != "bob" {
 		t.Fatalf("unexpected friend notice: %#v", friendNotice)
+	}
+	resultPush := waitForPushType(t, pushSender.deliveries, "friend_request_result")
+	if resultPush.subscription.UserID != "alice" || resultPush.payload["request_id"] != flag {
+		t.Fatalf("unexpected friend result push: %#v", resultPush)
 	}
 
 	for name, connection := range map[string]*websocket.Conn{"alice": alice, "bob": bob} {
@@ -487,6 +502,25 @@ func TestFriendRequestLifecycleAndDirectMessagePermission(t *testing.T) {
 	})
 	if blocked["status"] == "ok" {
 		t.Fatalf("new direct conversation was allowed after removal: %#v", blocked)
+	}
+}
+
+func waitForPushType(
+	t *testing.T,
+	deliveries <-chan pushDelivery,
+	eventType string,
+) pushDelivery {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case delivery := <-deliveries:
+			if delivery.payload["type"] == eventType {
+				return delivery
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s push", eventType)
+		}
 	}
 }
 

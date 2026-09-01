@@ -285,6 +285,9 @@ class NoneBotSource implements ImMessageSource {
   }
 
   @override
+  Stream<List<ImFriendRequest>> watchFriendRequests() => Stream.value(const []);
+
+  @override
   Future<void> sendFriendRequest({
     required String userId,
     String comment = '',

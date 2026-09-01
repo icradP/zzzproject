@@ -62,6 +62,24 @@ void main() {
 
     expect(find.byType(TextField), findsNWidgets(3));
     expect(find.text('Invitation code'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('registration-avatar-preview')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('registration-avatar-upload')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('registration-avatar-option-0')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('registration-avatar-option-1')),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
 
     await tester.enterText(find.byType(TextField).at(0), 'belle');
     await tester.enterText(find.byType(TextField).at(1), 'password123');

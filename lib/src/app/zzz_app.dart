@@ -125,6 +125,7 @@ class _ZzzAppState extends State<ZzzApp> {
       storageConfig: storageConfig,
       avatarResolver: _zzzAvatarResolver,
       displayNameResolver: AppAssets.displayNameForAccount,
+      onZzzNotification: _handleZzzNotification,
       onZzzAuthenticationFailed: kIsWeb ? _handleInvalidWebSession : null,
     ).build(profiles);
     final repo = runtime.repository;
@@ -157,6 +158,26 @@ class _ZzzAppState extends State<ZzzApp> {
     oldRepository?.dispose();
     if (nsfwConfig.enabled) {
       unawaited(_initializeNsfwChecker(fallbackNsfw));
+    }
+  }
+
+  void _handleZzzNotification(String title, String body) {
+    if (kIsWeb) return;
+    if (!_notifyPermissionRequested) {
+      _notifyPermissionRequested = true;
+      unawaited(ImNotificationService.requestPermission());
+    }
+    final state = WidgetsBinding.instance.lifecycleState;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      unawaited(
+        ImNotificationService.show(
+          id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+          title: title,
+          body: body,
+        ),
+      );
     }
   }
 

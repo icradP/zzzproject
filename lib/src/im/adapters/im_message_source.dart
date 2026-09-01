@@ -88,6 +88,10 @@ abstract class ImMessageSource {
     );
   }
 
+  Stream<List<ImFriendRequest>> watchFriendRequests() async* {
+    yield await getFriendRequests();
+  }
+
   Future<void> sendFriendRequest({
     required String userId,
     String comment = '',

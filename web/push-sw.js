@@ -23,14 +23,24 @@ self.addEventListener("push", (event) => {
       const target = new URL(appRoot.href);
       if (conversationId) {
         target.hash = `/chat/${encodeURIComponent(conversationId)}`;
+      } else if (typeof payload.path === "string" && payload.path.startsWith("/")) {
+        target.hash = payload.path;
       }
+
+      const notificationType = String(payload.type || "message");
+      const requestId = String(payload.request_id || "");
+      const tag = conversationId
+        ? `conversation-${conversationId}`
+        : requestId
+          ? `${notificationType}-${requestId}`
+          : notificationType;
 
       await self.registration.showNotification(payload.title || "ZZZ IM", {
         body: payload.body || "You have a new message.",
         icon: new URL("icons/Icon-192.png", appRoot).href,
         badge: new URL("icons/Icon-192.png", appRoot).href,
-        tag: conversationId ? `conversation-${conversationId}` : undefined,
-        renotify: Boolean(conversationId),
+        tag,
+        renotify: Boolean(conversationId || requestId),
         data: { url: target.href },
       });
     })(),

@@ -41,12 +41,14 @@ class ImSourceRegistry {
     required this.storageConfig,
     required this.avatarResolver,
     this.displayNameResolver,
+    this.onZzzNotification,
     this.onZzzAuthenticationFailed,
   });
 
   final ImStorageConfig storageConfig;
   final ImAvatarResolver avatarResolver;
   final ImDisplayNameResolver? displayNameResolver;
+  final ZzzNotificationHandler? onZzzNotification;
   final Future<void> Function()? onZzzAuthenticationFailed;
 
   ImClientRuntime build(ImConnectionProfiles settings) {
@@ -101,6 +103,7 @@ class ImSourceRegistry {
             ),
             avatarResolver: avatarResolver,
             displayNameResolver: displayNameResolver,
+            onNotification: onZzzNotification,
             onAuthenticationFailed: onZzzAuthenticationFailed,
           );
           zzzServerSources[profile.id] = source;
