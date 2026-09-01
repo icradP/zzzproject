@@ -28,9 +28,20 @@ if [[ ! -s ${env_file} ]]; then
     docker run --rm --entrypoint /usr/local/bin/zzz-im-vapid "${image}"
     echo "ZZZ_VAPID_SUBJECT=mailto:admin@icrad.ltd"
     echo "ZZZ_ACCESS_TOKEN=$(openssl rand -hex 32)"
+    echo "ZZZ_ADMIN_TOKEN=$(openssl rand -hex 32)"
+    echo "ZZZ_ADMIN_PUBLIC_PATH=/im/admin"
     echo "ZZZ_INVITE_CODE=diaogan"
   } >"${env_file}"
   echo "Generated ${env_file}; keep it private and backed up."
+fi
+
+if ! grep -q '^ZZZ_ADMIN_TOKEN=' "${env_file}"; then
+  umask 077
+  echo "ZZZ_ADMIN_TOKEN=$(openssl rand -hex 32)" >>"${env_file}"
+fi
+if ! grep -q '^ZZZ_ADMIN_PUBLIC_PATH=' "${env_file}"; then
+  umask 077
+  echo "ZZZ_ADMIN_PUBLIC_PATH=/im/admin" >>"${env_file}"
 fi
 
 docker rm -f "${container}" >/dev/null 2>&1 || true

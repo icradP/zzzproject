@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ZZZ IM Server</title>
+  <link rel="stylesheet" href="assets/app.css">
+  <script src="assets/app.js" defer></script>
+</head>
+<body>
+  <section id="login-view" class="login-view">
+    <form id="login-form" class="login-panel" autocomplete="off">
+      <div class="brand-mark" aria-hidden="true">Z</div>
+      <div>
+        <p class="eyebrow">ZZZ IM</p>
+        <h1>Server control</h1>
+      </div>
+      <label for="admin-token">Admin token</label>
+      <input id="admin-token" name="token" type="password" required maxlength="256" autocomplete="current-password">
+      <p id="login-error" class="form-error" role="alert"></p>
+      <button class="primary-button" type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark small" aria-hidden="true">Z</div>
+        <div>
+          <strong>ZZZ IM</strong>
+          <span>SERVER</span>
+        </div>
+      </div>
+      <nav class="navigation" aria-label="Admin sections">
+        <button class="nav-button active" type="button" data-view="dashboard">Overview</button>
+        <button class="nav-button" type="button" data-view="users">Users</button>
+        <button class="nav-button" type="button" data-view="groups">Groups</button>
+        <button class="nav-button" type="button" data-view="conversations">Conversations</button>
+        <button class="nav-button" type="button" data-view="settings">Settings</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span>Connected</span>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ADMIN CONSOLE</p>
+          <h2 id="page-title">Overview</h2>
+        </div>
+        <div class="topbar-actions">
+          <button id="refresh-button" class="secondary-button" type="button">Refresh</button>
+          <button id="logout-button" class="secondary-button" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <section id="view-dashboard" class="view active" data-section="dashboard">
+        <div id="stat-grid" class="stat-grid" aria-label="Server statistics"></div>
+        <section class="surface">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">RUNTIME</p>
+              <h3>Service status</h3>
+            </div>
+            <time id="overview-updated"></time>
+          </div>
+          <dl id="service-details" class="detail-grid"></dl>
+        </section>
+      </section>
+
+      <section id="view-users" class="view" data-section="users" hidden>
+        <section class="surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">ACCOUNTS</p>
+              <h3>Users</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="user-search" type="search" placeholder="ID or nickname">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>User</th><th>Status</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="users-body"></tbody>
+            </table>
+          </div>
+          <p id="users-empty" class="empty-state" hidden>No users found.</p>
+        </section>
+      </section>
+
+      <section id="view-groups" class="view" data-section="groups" hidden>
+        <section class="surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">COMMUNITIES</p>
+              <h3>Groups</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="group-search" type="search" placeholder="ID, name, or owner">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Group</th><th>Owner</th><th>Members</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="groups-body"></tbody>
+            </table>
+          </div>
+          <p id="groups-empty" class="empty-state" hidden>No groups found.</p>
+        </section>
+      </section>
+
+      <section id="view-conversations" class="view" data-section="conversations" hidden>
+        <section class="surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">DATA</p>
+              <h3>Conversations</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="conversation-search" type="search" placeholder="ID, title, or participant">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Conversation</th><th>Type</th><th>Participants</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="conversations-body"></tbody>
+            </table>
+          </div>
+          <p id="conversations-empty" class="empty-state" hidden>No conversations found.</p>
+        </section>
+      </section>
+
+      <section id="view-settings" class="view" data-section="settings" hidden>
+        <section class="surface settings-surface">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">ACCESS</p>
+              <h3>Registration</h3>
+            </div>
+            <span id="registration-state" class="status-badge"></span>
+          </div>
+          <form id="registration-form" class="settings-form">
+            <label class="switch-row">
+              <span>
+                <strong>Accept new accounts</strong>
+                <small>Invitation code required</small>
+              </span>
+              <input id="registration-enabled" type="checkbox" role="switch">
+            </label>
+            <label for="invite-code">New invitation code</label>
+            <input id="invite-code" type="password" minlength="4" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep the current code">
+            <div class="runtime-note">
+              <strong>Runtime setting</strong>
+              <span>Server restart restores the environment configuration.</span>
+            </div>
+            <button class="primary-button compact" type="submit">Apply registration settings</button>
+          </form>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="edit-user-dialog" class="modal">
+    <form id="edit-user-form" method="dialog">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">ACCOUNT</p>
+          <h3>Edit user</h3>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="edit-user-dialog" title="Close" aria-label="Close">&times;</button>
+      </div>
+      <p id="edit-user-id" class="mono"></p>
+      <label for="edit-user-nickname">Nickname</label>
+      <input id="edit-user-nickname" maxlength="64" required>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-close-dialog="edit-user-dialog">Cancel</button>
+        <button class="primary-button compact" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="group-dialog" class="modal wide">
+    <div class="modal-header">
+      <div>
+        <p class="eyebrow">GROUP</p>
+        <h3 id="group-dialog-title"></h3>
+      </div>
+      <button class="icon-button" type="button" data-close-dialog="group-dialog" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <dl id="group-details" class="detail-grid compact-grid"></dl>
+    <div class="member-heading"><strong>Members</strong><span id="group-member-count"></span></div>
+    <div class="table-scroll member-table">
+      <table><thead><tr><th>User ID</th><th>Role</th><th>Joined</th></tr></thead><tbody id="group-members-body"></tbody></table>
+    </div>
+    <div class="modal-actions separated">
+      <button id="delete-group-button" class="danger-button" type="button">Delete group</button>
+      <button class="secondary-button" type="button" data-close-dialog="group-dialog">Close</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -80,6 +80,14 @@ Each release is stored below `/srv/www/zzz-im/releases`; `current` is switched
 atomically, so rollback only requires repointing that symlink and reloading is
 not needed for ordinary PWA updates.
 
+The server admin console is available at `/im/admin/` when
+`ZZZ_ADMIN_TOKEN` is configured. The token is exchanged for a 12-hour,
+HttpOnly admin session and is never stored by the page. The console exposes
+service statistics, user profiles, groups, conversations, and runtime
+registration controls. Invitation-code changes made there last until the
+server restarts; update `ZZZ_INVITE_CODE` in `/etc/zzz-im/server.env` for a
+persistent change.
+
 The custom Web bootstrap keeps CanvasKit on the application origin and starts
 the versioned `app-sw.js` cache after the first Flutter frame. Web Push remains
 isolated in `push-sw.js` under the narrower `/push/` service-worker scope.

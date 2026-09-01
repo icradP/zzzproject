@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	adminserver "github.com/icradp/zzz-im-server/internal/admin"
 	"github.com/icradp/zzz-im-server/internal/gateway"
 	"github.com/icradp/zzz-im-server/internal/media"
 	pushservice "github.com/icradp/zzz-im-server/internal/push"
@@ -21,6 +23,8 @@ func main() {
 	redisPassword := flag.String("redis-password", "", "Redis password")
 	accessToken := flag.String("access-token", os.Getenv("ZZZ_ACCESS_TOKEN"), "shared access token for test deployments")
 	inviteCode := flag.String("invite-code", os.Getenv("ZZZ_INVITE_CODE"), "invite code required for account registration")
+	adminToken := flag.String("admin-token", os.Getenv("ZZZ_ADMIN_TOKEN"), "token required to access the admin console")
+	adminPublicPath := flag.String("admin-public-path", envOrDefault("ZZZ_ADMIN_PUBLIC_PATH", "/admin"), "public URL path used for admin session cookies")
 	vapidPublicKey := flag.String("vapid-public-key", os.Getenv("ZZZ_VAPID_PUBLIC_KEY"), "VAPID public key")
 	vapidPrivateKey := flag.String("vapid-private-key", os.Getenv("ZZZ_VAPID_PRIVATE_KEY"), "VAPID private key")
 	vapidSubject := flag.String("vapid-subject", envOrDefault("ZZZ_VAPID_SUBJECT", "mailto:admin@localhost"), "VAPID contact URI")
@@ -94,6 +98,21 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 	mux.Handle("/files/", mediaStore)
+	if strings.TrimSpace(*adminToken) != "" {
+		adminConsole := adminserver.New(adminserver.Config{
+			Store:         db,
+			Registration:  gw,
+			AdminToken:    *adminToken,
+			PublicPath:    *adminPublicPath,
+			StorageDriver: *dbDriver,
+			PushEnabled:   pushSender.Enabled(),
+			StartedAt:     time.Now(),
+		})
+		mux.Handle("/admin/", adminConsole)
+		log.Printf("[server] admin console: enabled at %s", *adminPublicPath)
+	} else {
+		log.Println("[server] admin console: disabled (set ZZZ_ADMIN_TOKEN)")
+	}
 
 	log.Printf("[server] listening on %s", *addr)
 	displayAddr := *addr
@@ -118,7 +137,7 @@ func main() {
 	} else {
 		log.Println("[server] shared-token authentication: disabled (development mode)")
 	}
-	if *inviteCode != "" {
+	if gw.RegistrationEnabled() {
 		log.Println("[server] invite-only registration: enabled")
 	} else {
 		log.Println("[server] registration: disabled (set ZZZ_INVITE_CODE)")

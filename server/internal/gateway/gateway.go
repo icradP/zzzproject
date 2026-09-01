@@ -64,6 +64,7 @@ type Gateway struct {
 	accessToken string
 	inviteCode  string
 	upgrader    websocket.Upgrader
+	configMu    sync.RWMutex
 
 	mu sync.RWMutex
 	// A user may be connected from several devices at once. Keep every
@@ -111,7 +112,23 @@ func (g *Gateway) SetAccessToken(token string) {
 // SetInviteCode enables account registration with a deployment-specific code.
 // Registration remains disabled when no code is configured.
 func (g *Gateway) SetInviteCode(code string) {
+	g.configMu.Lock()
+	defer g.configMu.Unlock()
 	g.inviteCode = strings.TrimSpace(code)
+}
+
+// RegistrationEnabled reports whether account registration currently accepts
+// an invitation code. The code itself is never exposed.
+func (g *Gateway) RegistrationEnabled() bool {
+	g.configMu.RLock()
+	defer g.configMu.RUnlock()
+	return g.inviteCode != ""
+}
+
+func (g *Gateway) currentInviteCode() string {
+	g.configMu.RLock()
+	defer g.configMu.RUnlock()
+	return g.inviteCode
 }
 
 // HandleWebSocket handles incoming WebSocket connections.
@@ -462,11 +479,12 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 	userID = strings.TrimSpace(userID)
 	nickname = strings.TrimSpace(nickname)
 	inviteCode = strings.TrimSpace(inviteCode)
-	if g.inviteCode == "" {
+	configuredCode := g.currentInviteCode()
+	if configuredCode == "" {
 		g.sendError(client, req.Echo, "registration is disabled")
 		return
 	}
-	configuredInvite := sha256.Sum256([]byte(g.inviteCode))
+	configuredInvite := sha256.Sum256([]byte(configuredCode))
 	providedInvite := sha256.Sum256([]byte(inviteCode))
 	if subtle.ConstantTimeCompare(configuredInvite[:], providedInvite[:]) != 1 {
 		g.sendError(client, req.Echo, "invalid invite code")

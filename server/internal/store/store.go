@@ -14,6 +14,7 @@ type Store interface {
 	SetUser(user *User) error
 	GetUsers() ([]*User, error)
 	SetUserOnline(id string, online bool) error
+	GetServerStats() (*ServerStats, error)
 
 	// ---- Account session operations ----
 	UpsertSession(session *Session) error
@@ -84,6 +85,19 @@ type Store interface {
 
 	// ---- Lifecycle ----
 	Close() error
+}
+
+// ServerStats contains aggregate operational counts for the admin console.
+type ServerStats struct {
+	Users             int   `json:"users"`
+	OnlineUsers       int   `json:"online_users"`
+	Groups            int   `json:"groups"`
+	Conversations     int   `json:"conversations"`
+	Messages          int   `json:"messages"`
+	ActiveSessions    int   `json:"active_sessions"`
+	MediaFiles        int   `json:"media_files"`
+	MediaBytes        int64 `json:"media_bytes"`
+	PushSubscriptions int   `json:"push_subscriptions"`
 }
 
 // Message represents a stored message.
