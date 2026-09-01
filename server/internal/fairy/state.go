@@ -11,10 +11,11 @@ import (
 )
 
 type persistedState struct {
-	Version    int                   `json:"version"`
-	Groups     map[string]groupState `json:"groups"`
-	QuotaDate  string                `json:"quota_date,omitempty"`
-	QuotaCalls int                   `json:"quota_calls,omitempty"`
+	Version         int                   `json:"version"`
+	Groups          map[string]groupState `json:"groups"`
+	ContextDisabled map[string]bool       `json:"context_disabled,omitempty"`
+	QuotaDate       string                `json:"quota_date,omitempty"`
+	QuotaCalls      int                   `json:"quota_calls,omitempty"`
 }
 
 type groupState struct {
@@ -82,6 +83,52 @@ func (s *StateStore) SetGroupEnabled(groupID string, enabled bool) error {
 		return err
 	}
 	return nil
+}
+
+func (s *StateStore) ContextEnabled(conversationID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.state.ContextDisabled[conversationID]
+}
+
+func (s *StateStore) SetContextEnabled(conversationID string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.ContextDisabled == nil {
+		s.state.ContextDisabled = make(map[string]bool)
+	}
+	previous, existed := s.state.ContextDisabled[conversationID]
+	if enabled {
+		delete(s.state.ContextDisabled, conversationID)
+	} else {
+		s.state.ContextDisabled[conversationID] = true
+	}
+	if err := s.saveLocked(); err != nil {
+		if existed {
+			s.state.ContextDisabled[conversationID] = previous
+		} else {
+			delete(s.state.ContextDisabled, conversationID)
+		}
+		return err
+	}
+	return nil
+}
+
+// ModelQuotaStatus reports the current UTC day's usage without reserving a call
+// or changing the persisted counter.
+func (s *StateStore) ModelQuotaStatus(now time.Time, limit int) (used, remaining int) {
+	if limit <= 0 {
+		return 0, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.QuotaDate == now.UTC().Format("2006-01-02") {
+		used = s.state.QuotaCalls
+	}
+	if used > limit {
+		used = limit
+	}
+	return used, limit - used
 }
 
 // TakeModelCall atomically reserves one call from the UTC daily quota.

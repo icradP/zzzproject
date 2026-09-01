@@ -9,6 +9,8 @@ Fairy 是独立于 ZZZ IM 服务端运行的 Bot 进程。它使用普通账号�
 - 私聊中的文本会直接触发；群聊只响应 `@Fairy`、`/fairy` 和 `/zzz`，不会读取普通群消息作为上下文。
 - 群主和管理员可用 `/fairy on`、`/fairy off` 控制群回复，状态保存在 Fairy 自己的数据目录。
 - 上下文只保存在进程内存中，默认 30 分钟过期、最多保留 12 条消息，不写入状态文件。
+- 每个会话可用 `/fairy memory on|off` 单独控制临时记忆；群聊设置仅群主和管理员可改，关闭时立即清空已有上下文，插件仍可使用。
+- 在调用外部模型前拦截高置信的私钥、Bearer、密码、API Key、Token 和 Cookie；被拦截内容不进入上下文、不消耗额度，也不会发送给模型供应商。
 - AI 使用 OpenAI-compatible Chat Completions 接口，可按供应商动态配置；模型未配置时，帮助、群管理和 ZZZ 插件仍可使用。
 - AI 调用默认每天最多 200 次，计数持久化并按 UTC 日期重置。
 - `/zzz <UID>` 通过 Enka.Network 查询游戏内公开展示资料，按上游 TTL 缓存；不需要也不接收米游社 Cookie。
@@ -24,6 +26,10 @@ Fairy 是独立于 ZZZ IM 服务端运行的 Bot 进程。它使用普通账号�
 | `/fairy help` | 查看帮助 |
 | `/fairy status` | 查看当前群开关和 AI 配置状态 |
 | `/fairy clear` | 清除当前会话的临时上下文 |
+| `/fairy privacy` | 查看上下文与外部模型隐私说明 |
+| `/fairy memory on` | 开启当前会话的临时记忆；群聊仅管理员可改 |
+| `/fairy memory off` | 关闭记忆并立即清除当前会话上下文 |
+| `/fairy quota` | 查看今日模型调用次数和剩余额度 |
 | `/fairy on` | 群主或管理员开启群回复 |
 | `/fairy off` | 群主或管理员关闭群回复 |
 | `/zzz <UID>` | 查询绝区零公开展示资料 |

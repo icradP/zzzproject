@@ -47,6 +47,12 @@ func TestStateStorePersistsSwitchesAndDailyQuota(t *testing.T) {
 	if err := state.SetGroupEnabled("group_a", false); err != nil {
 		t.Fatal(err)
 	}
+	if !state.ContextEnabled("private_alice_fairy") {
+		t.Fatal("memory was disabled by default")
+	}
+	if err := state.SetContextEnabled("private_alice_fairy", false); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	for expected := 1; expected <= 2; expected++ {
 		used, allowed, err := state.TakeModelCall(now, 2)
@@ -57,6 +63,12 @@ func TestStateStorePersistsSwitchesAndDailyQuota(t *testing.T) {
 	if used, allowed, err := state.TakeModelCall(now, 2); err != nil || allowed || used != 2 {
 		t.Fatalf("exhausted quota = used %d allowed %v err %v", used, allowed, err)
 	}
+	if used, remaining := state.ModelQuotaStatus(now, 2); used != 2 || remaining != 0 {
+		t.Fatalf("quota status = used %d remaining %d", used, remaining)
+	}
+	if used, remaining := state.ModelQuotaStatus(now.Add(24*time.Hour), 2); used != 0 || remaining != 2 {
+		t.Fatalf("next-day quota status = used %d remaining %d", used, remaining)
+	}
 
 	reopened, err := OpenStateStore(path, true)
 	if err != nil {
@@ -64,6 +76,15 @@ func TestStateStorePersistsSwitchesAndDailyQuota(t *testing.T) {
 	}
 	if reopened.GroupEnabled("group_a") {
 		t.Fatal("group switch was not persisted")
+	}
+	if reopened.ContextEnabled("private_alice_fairy") {
+		t.Fatal("memory switch was not persisted")
+	}
+	if err := reopened.SetContextEnabled("private_alice_fairy", true); err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.ContextEnabled("private_alice_fairy") {
+		t.Fatal("memory switch was not re-enabled")
 	}
 	if used, allowed, err := reopened.TakeModelCall(now.Add(24*time.Hour), 2); err != nil || !allowed || used != 1 {
 		t.Fatalf("next-day quota = used %d allowed %v err %v", used, allowed, err)
@@ -92,6 +113,12 @@ func TestStateStoreRollsBackWhenPersistenceFails(t *testing.T) {
 	}
 	if !state.GroupEnabled("group_a") {
 		t.Fatal("failed group write changed in-memory state")
+	}
+	if err := state.SetContextEnabled("private_alice_fairy", false); err == nil {
+		t.Fatal("state write unexpectedly succeeded")
+	}
+	if !state.ContextEnabled("private_alice_fairy") {
+		t.Fatal("failed memory write changed in-memory state")
 	}
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	if _, allowed, err := state.TakeModelCall(now, 2); err == nil || allowed {

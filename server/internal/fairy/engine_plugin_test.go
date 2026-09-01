@@ -131,6 +131,90 @@ func TestEngineModelContextQuotaAndClear(t *testing.T) {
 	}
 }
 
+func TestEngineMemoryPrivacyQuotaAndGroupPermissions(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ModelDailyLimit = 10
+	state, err := OpenStateStore(cfg.StateFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &fakeModel{response: "收到。"}
+	engine := NewEngine(cfg, state, model)
+	messenger := &fakeMessenger{}
+
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "第一条"))
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/fairy memory off"))
+	if state.ContextEnabled("private_alice_fairy") {
+		t.Fatal("private memory stayed enabled")
+	}
+	second := testMessage("private_alice_fairy", "private", "alice", "第二条")
+	second.MessageID = "message_2"
+	engine.HandleMessage(context.Background(), messenger, second)
+	if len(model.requests) != 2 || len(model.requests[1]) != 2 || model.requests[1][1].Content != "第二条" {
+		t.Fatalf("memory-disabled model request = %#v", model.requests)
+	}
+
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/fairy privacy"))
+	if reply := messenger.lastReply().text; !strings.Contains(reply, "不保存消息正文") || !strings.Contains(reply, "30 分钟") {
+		t.Fatalf("privacy reply = %q", reply)
+	}
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/fairy quota"))
+	if reply := messenger.lastReply().text; !strings.Contains(reply, "已用 2 次") || !strings.Contains(reply, "剩余 8 次") {
+		t.Fatalf("quota reply = %q", reply)
+	}
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/fairy status"))
+	if reply := messenger.lastReply().text; !strings.Contains(reply, "临时记忆已关闭") || !strings.Contains(reply, "剩余 8 次") {
+		t.Fatalf("status reply = %q", reply)
+	}
+
+	messenger.members = []protocol.GroupMember{{UserID: "alice", Role: "member"}}
+	engine.HandleMessage(context.Background(), messenger, testMessage("group_room", "group", "alice", "/fairy memory off"))
+	if !state.ContextEnabled("group_room") || !strings.Contains(messenger.lastReply().text, "群主或管理员") {
+		t.Fatalf("member changed group memory: %q", messenger.lastReply().text)
+	}
+	messenger.members[0].Role = "admin"
+	engine.HandleMessage(context.Background(), messenger, testMessage("group_room", "group", "alice", "/fairy memory off"))
+	if state.ContextEnabled("group_room") {
+		t.Fatal("admin could not disable group memory")
+	}
+}
+
+func TestEngineBlocksSensitiveCredentialsBeforeContextAndQuota(t *testing.T) {
+	tests := []string{
+		"-----BEGIN PRIVATE KEY-----\nnot-a-real-key",
+		"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
+		"password = hunter2-secret",
+		"api_key: sk-1234567890abcdef",
+		"access_token=abcdef1234567890",
+		"Cookie: sessionid=1234567890abcdef; theme=dark",
+		"ltoken_v2=abcdef1234567890; ltuid_v2=123456789",
+	}
+	for _, secret := range tests {
+		t.Run(secret[:min(20, len(secret))], func(t *testing.T) {
+			cfg := testConfig(t)
+			state, err := OpenStateStore(cfg.StateFile, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := &fakeModel{response: "safe"}
+			engine := NewEngine(cfg, state, model)
+			messenger := &fakeMessenger{}
+			conversationID := "private_alice_fairy"
+			engine.HandleMessage(context.Background(), messenger, testMessage(conversationID, "private", "alice", secret))
+			if len(model.requests) != 0 || !strings.Contains(messenger.lastReply().text, "未发送给 AI") {
+				t.Fatalf("credential was not blocked: calls=%d reply=%q", len(model.requests), messenger.lastReply().text)
+			}
+			if used, remaining := state.ModelQuotaStatus(time.Now(), cfg.ModelDailyLimit); used != 0 || remaining != cfg.ModelDailyLimit {
+				t.Fatalf("blocked credential consumed quota: used=%d remaining=%d", used, remaining)
+			}
+			engine.HandleMessage(context.Background(), messenger, testMessage(conversationID, "private", "alice", "如何安全地读取 password 变量？"))
+			if len(model.requests) != 1 || len(model.requests[0]) != 2 || model.requests[0][1].Content != "如何安全地读取 password 变量？" {
+				t.Fatalf("blocked credential entered context: %#v", model.requests)
+			}
+		})
+	}
+}
+
 func TestZZZPluginFormatsAndCachesPublicProfile(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0

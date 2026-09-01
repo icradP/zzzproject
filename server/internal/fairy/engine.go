@@ -15,7 +15,10 @@ import (
 const helpText = `Fairy 可用指令
 /fairy help - 查看帮助
 /fairy clear - 清除当前会话的临时上下文
-/fairy status - 查看群内开关和 AI 状态
+/fairy status - 查看群开关、记忆和 AI 状态
+/fairy privacy - 查看隐私说明
+/fairy memory on|off - 开启或关闭当前会话的临时记忆
+/fairy quota - 查看今日 AI 调用额度
 /fairy on|off - 群主或管理员开启/关闭群回复
 /zzz <UID> - 查询绝区零公开展示资料
 
@@ -99,6 +102,14 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		e.reply(ctx, messenger, event, "Fairy 的 AI 对话尚未配置；ZZZ 查询和管理指令仍可使用。发送 /fairy help 查看帮助。")
 		return
 	}
+	prompt := limitRunes(strings.TrimSpace(request.Text), 2000)
+	if prompt == "" {
+		return
+	}
+	if containsSensitiveCredential(request.Text) {
+		e.reply(ctx, messenger, event, "检测到疑似密码、密钥、Token 或 Cookie。该内容未发送给 AI、未写入临时上下文，也未消耗调用额度。请移除敏感凭据后再试。")
+		return
+	}
 	_, allowed, err := e.state.TakeModelCall(e.now(), e.cfg.ModelDailyLimit)
 	if err != nil {
 		log.Printf("[fairy] reserve model quota: %v", err)
@@ -109,12 +120,12 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		e.reply(ctx, messenger, event, "Fairy 今天的 AI 调用额度已经用完，明天再来找我吧。")
 		return
 	}
-	prompt := limitRunes(strings.TrimSpace(request.Text), 2000)
-	if prompt == "" {
-		return
-	}
 	contextKey := event.ConversationID
-	history := e.contexts.Append(contextKey, e.now(), ChatMessage{Role: "user", Content: prompt})
+	memoryEnabled := e.state.ContextEnabled(contextKey)
+	history := []ChatMessage{{Role: "user", Content: prompt}}
+	if memoryEnabled {
+		history = e.contexts.Append(contextKey, e.now(), history...)
+	}
 	messages := make([]ChatMessage, 0, len(history)+1)
 	messages = append(messages, ChatMessage{Role: "system", Content: e.cfg.SystemPrompt})
 	messages = append(messages, history...)
@@ -128,7 +139,9 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 	if response == "" {
 		return
 	}
-	e.contexts.Append(contextKey, e.now(), ChatMessage{Role: "assistant", Content: response})
+	if memoryEnabled {
+		e.contexts.Append(contextKey, e.now(), ChatMessage{Role: "assistant", Content: response})
+	}
 	e.reply(ctx, messenger, event, response)
 }
 
@@ -151,6 +164,51 @@ func (e *Engine) handleManagement(
 		e.contexts.Clear(event.ConversationID)
 		e.reply(ctx, messenger, event, "当前会话的 Fairy 临时上下文已清除。")
 		return true
+	case "privacy", "隐私":
+		e.reply(ctx, messenger, event, fmt.Sprintf(
+			"只有私聊中直接发送给 Fairy 的内容，以及群聊中明确 @Fairy 或使用指令的内容才会进入处理流程。临时上下文只保存在 Fairy 进程内存中，最多 %d 条，%s 后自动过期；状态文件只保存开关和额度计数，不保存消息正文。发送 /fairy memory off 可关闭当前会话记忆。",
+			e.cfg.ContextMessages,
+			formatDuration(e.cfg.ContextTTL),
+		))
+		return true
+	case "quota", "额度":
+		used, remaining := e.state.ModelQuotaStatus(e.now(), e.cfg.ModelDailyLimit)
+		modelStatus := "AI 已配置"
+		if e.model == nil {
+			modelStatus = "AI 未配置"
+		}
+		e.reply(ctx, messenger, event, fmt.Sprintf("%s；今日已用 %d 次，剩余 %d 次（按 UTC 日期重置）。", modelStatus, used, remaining))
+		return true
+	case "memory", "记忆":
+		enabled, valid := parseSwitch(argument)
+		if !valid {
+			e.reply(ctx, messenger, event, "请使用 /fairy memory on 或 /fairy memory off。")
+			return true
+		}
+		if isGroup {
+			admin, err := e.isGroupAdmin(ctx, messenger, event.ConversationID, event.Sender.UserID)
+			if err != nil {
+				log.Printf("[fairy] load group role: %v", err)
+				e.reply(ctx, messenger, event, "暂时无法确认群权限，请稍后再试。")
+				return true
+			}
+			if !admin {
+				e.reply(ctx, messenger, event, "只有群主或管理员可以修改 Fairy 群记忆设置。")
+				return true
+			}
+		}
+		if err := e.state.SetContextEnabled(event.ConversationID, enabled); err != nil {
+			log.Printf("[fairy] persist memory switch: %v", err)
+			e.reply(ctx, messenger, event, "保存 Fairy 记忆设置失败，请稍后再试。")
+			return true
+		}
+		if !enabled {
+			e.contexts.Clear(event.ConversationID)
+			e.reply(ctx, messenger, event, "当前会话的临时记忆已关闭，已有上下文已立即清除；指令和插件仍可使用。")
+		} else {
+			e.reply(ctx, messenger, event, "当前会话的临时记忆已开启；只会记住明确触发 Fairy 的对话，并按时自动过期。")
+		}
+		return true
 	case "status", "状态":
 		groupStatus := "仅私聊"
 		if isGroup {
@@ -160,11 +218,16 @@ func (e *Engine) handleManagement(
 				groupStatus = "群回复已关闭"
 			}
 		}
-		modelStatus := "AI 未配置"
-		if e.model != nil {
-			modelStatus = fmt.Sprintf("AI 已配置，每日上限 %d 次", e.cfg.ModelDailyLimit)
+		memoryStatus := "临时记忆已关闭"
+		if e.state.ContextEnabled(event.ConversationID) {
+			memoryStatus = "临时记忆已开启"
 		}
-		e.reply(ctx, messenger, event, groupStatus+"；"+modelStatus+"。")
+		used, remaining := e.state.ModelQuotaStatus(e.now(), e.cfg.ModelDailyLimit)
+		modelStatus := fmt.Sprintf("AI 未配置，今日额度已用 %d 次、剩余 %d 次", used, remaining)
+		if e.model != nil {
+			modelStatus = fmt.Sprintf("AI 已配置，今日额度已用 %d 次、剩余 %d 次", used, remaining)
+		}
+		e.reply(ctx, messenger, event, groupStatus+"；"+memoryStatus+"；"+modelStatus+"。")
 		return true
 	case "on", "off", "开启", "关闭":
 		if !isGroup {
@@ -292,6 +355,27 @@ func fairyCommand(text string) (command string, argument string, ok bool) {
 		return "help", "", true
 	}
 	return strings.ToLower(fields[1]), strings.Join(fields[2:], " "), true
+}
+
+func parseSwitch(value string) (enabled bool, valid bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "开启", "开":
+		return true, true
+	case "off", "关闭", "关":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func formatDuration(value time.Duration) string {
+	if value%time.Hour == 0 {
+		return fmt.Sprintf("%d 小时", int(value/time.Hour))
+	}
+	if value%time.Minute == 0 {
+		return fmt.Sprintf("%d 分钟", int(value/time.Minute))
+	}
+	return value.String()
 }
 
 func decodePostType(payload json.RawMessage) string {
