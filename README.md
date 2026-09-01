@@ -15,6 +15,7 @@ A Flutter-based instant messaging client styled after Zenless Zone Zero. It supp
 - **Contact & group management** — Friend list, group member list, avatar caching
 - **Customizable UI** — ZZZ-style animated backgrounds, configurable backdrop text, animation toggles
 - **Storage control** — Configurable media/database directories with data migration
+- **Independent Fairy bot** — Ordinary ZZZ account with private/group triggers, bounded context, plugins, quotas, and optional model provider
 - **Desktop-first** — Windows support via `sqflite_common_ffi`
 
 ## Getting Started
@@ -140,6 +141,13 @@ on the login page. For GitHub Actions, set the repository Actions variable
 `ZZZ_SERVER_URL`; local builds fall back to `ws://localhost:8080/ws`.
 
 Web Push on iOS requires iOS 16.4 or later, HTTPS, and installation to the Home Screen. The GitHub Actions workflow tests Flutter and Go on pull requests and deploys the PWA after a successful push to `master`. Deploying the Go server requires a separate HTTPS/WSS hosting target.
+
+Fairy runs as a separate process and ordinary ZZZ account. Build and deploy it
+after the IM server; the deployment script provisions an isolated system user,
+state directory, password, systemd unit, and local health endpoint. Model
+credentials are optional and remain in Fairy's own environment file. See
+[`docs/FAIRY.md`](docs/FAIRY.md) for commands, privacy limits, configuration,
+and deployment instructions.
 
 The ZZZ Server is intentionally platform-agnostic. It owns only ZZZ users,
 devices, conversations, messages, media, and Web Push subscriptions. QQ and

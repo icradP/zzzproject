@@ -85,7 +85,8 @@ jobs:
 
       - run: go test ./...
       - run: go vet ./...
-      - run: go test -race ./internal/admin ./internal/gateway ./internal/store ./internal/media
+      - run: go build -o /tmp/zzz-im-fairy ./cmd/fairy
+      - run: go test -race ./internal/admin ./internal/fairy ./internal/gateway ./internal/store ./internal/media
 
       - name: Validate admin console assets
         run: node --check internal/admin/assets/app.js
