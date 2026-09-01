@@ -4,6 +4,8 @@ import 'package:onebot_flutter/onebot_flutter.dart'
     show OneBotConfig, OneBotWsMode;
 
 import '../data/im_connection_config.dart';
+import '../data/im_image_hosting_config.dart';
+import '../data/im_image_hosting_uploader.dart';
 import '../data/im_repository.dart';
 import '../data/im_storage_config_web.dart'
     if (dart.library.io) '../data/im_storage_config.dart';
@@ -40,6 +42,7 @@ class ImSourceRegistry {
   const ImSourceRegistry({
     required this.storageConfig,
     required this.avatarResolver,
+    this.imageHostingConfig = const ImImageHostingConfig(),
     this.displayNameResolver,
     this.onZzzNotification,
     this.onZzzAuthenticationFailed,
@@ -47,6 +50,7 @@ class ImSourceRegistry {
 
   final ImStorageConfig storageConfig;
   final ImAvatarResolver avatarResolver;
+  final ImImageHostingConfig imageHostingConfig;
   final ImDisplayNameResolver? displayNameResolver;
   final ZzzNotificationHandler? onZzzNotification;
   final Future<void> Function()? onZzzAuthenticationFailed;
@@ -104,6 +108,10 @@ class ImSourceRegistry {
             avatarResolver: avatarResolver,
             displayNameResolver: displayNameResolver,
             onNotification: onZzzNotification,
+            imageHostingUploader:
+                imageHostingConfig.enabled
+                    ? ImImageHostingUploader(config: imageHostingConfig)
+                    : null,
             onAuthenticationFailed: onZzzAuthenticationFailed,
           );
           zzzServerSources[profile.id] = source;

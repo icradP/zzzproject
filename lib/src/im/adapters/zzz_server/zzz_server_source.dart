@@ -6,6 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../models/im_models.dart';
 import '../../models/im_source_address.dart';
+import '../../data/im_image_hosting_uploader.dart';
 import '../im_message_source.dart';
 import 'im_upload_bytes.dart';
 
@@ -48,9 +49,11 @@ class ZzzServerSource implements ImMessageSource {
     ZzzAvatarResolver? avatarResolver,
     ZzzDisplayNameResolver? displayNameResolver,
     ZzzNotificationHandler? onNotification,
+    ImImageHostingUploader? imageHostingUploader,
     Future<void> Function()? onAuthenticationFailed,
   }) : _onAuthenticationFailed = onAuthenticationFailed,
        _onNotification = onNotification,
+       _imageHostingUploader = imageHostingUploader,
        _avatarResolver = avatarResolver,
        _displayNameResolver = displayNameResolver,
        _allowReconnect = allowReconnect,
@@ -61,6 +64,7 @@ class ZzzServerSource implements ImMessageSource {
   final ZzzAvatarResolver? _avatarResolver;
   final ZzzDisplayNameResolver? _displayNameResolver;
   final ZzzNotificationHandler? _onNotification;
+  final ImImageHostingUploader? _imageHostingUploader;
   final Future<void> Function()? _onAuthenticationFailed;
 
   WebSocketChannel? _channel;
@@ -150,6 +154,7 @@ class ZzzServerSource implements ImMessageSource {
     _heartbeatTimer?.cancel();
     _reconnectTimer?.cancel();
     _failPending(StateError('ZZZ Server connection closed'));
+    _imageHostingUploader?.close();
     unawaited(_closeChannel());
     _setStatus(ConnectionStatus.disconnected);
     unawaited(_statusController.close());
@@ -351,6 +356,25 @@ class ZzzServerSource implements ImMessageSource {
     }
     final fileType = _segmentType(upload.kind);
     if (fileType == null) throw StateError('Unsupported media type.');
+    if (upload.kind == ImMessageKind.image && _imageHostingUploader != null) {
+      final hosted = await _imageHostingUploader.upload(
+        bytes: bytes,
+        fileName: upload.fileName,
+        mimeType: upload.mimeType,
+      );
+      return _sendMessage(conversationId, [
+        {
+          'type': fileType,
+          'data': {
+            'url': hosted.url,
+            'name': upload.fileName,
+            'mime_type': upload.mimeType,
+            'size': hosted.size,
+            'sha256': hosted.sha256,
+          },
+        },
+      ]);
+    }
     final response = await _request('upload_file', {
       'file': base64Encode(bytes),
       'file_name': upload.fileName,

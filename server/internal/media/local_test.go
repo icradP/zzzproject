@@ -1,10 +1,13 @@
 package media
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/icradp/zzz-im-server/internal/store"
@@ -42,6 +45,104 @@ func TestLocalStoreSaveAndServe(t *testing.T) {
 	}
 }
 
+func TestLocalStoreDeduplicatesWithinUploader(t *testing.T) {
+	database := store.NewMemoryStore()
+	media, err := NewLocalStore(t.TempDir(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("same image")
+	first, err := media.Save("first.png", "image", "image/png", payload, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := media.Save("second.png", "image", "image/png", payload, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID || first.URL != second.URL {
+		t.Fatalf("duplicate upload was not reused: first=%#v second=%#v", first, second)
+	}
+	files, err := database.GetMediaFiles(10)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("stored media=%d err=%v", len(files), err)
+	}
+	plainHash := sha256.Sum256(payload)
+	if first.ID == hex.EncodeToString(plainHash[:]) {
+		t.Fatal("media ID must include the uploader namespace")
+	}
+}
+
+func TestLocalStoreDoesNotDeduplicateAcrossUploaders(t *testing.T) {
+	database := store.NewMemoryStore()
+	media, err := NewLocalStore(t.TempDir(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("shared bytes")
+	alice, err := media.Save("image.png", "image", "image/png", payload, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := media.Save("image.png", "image", "image/png", payload, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alice.ID == bob.ID {
+		t.Fatalf("different uploaders shared media ID %q", alice.ID)
+	}
+}
+
+func TestLocalStoreDeduplicatesConcurrentUploads(t *testing.T) {
+	database := store.NewMemoryStore()
+	media, err := NewLocalStore(t.TempDir(), database)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const uploads = 12
+	ids := make(chan string, uploads)
+	errors := make(chan error, uploads)
+	var workers sync.WaitGroup
+	for i := 0; i < uploads; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			file, saveErr := media.Save(
+				"concurrent.png",
+				"image",
+				"image/png",
+				[]byte("concurrent payload"),
+				"alice",
+			)
+			if saveErr != nil {
+				errors <- saveErr
+				return
+			}
+			ids <- file.ID
+		}()
+	}
+	workers.Wait()
+	close(ids)
+	close(errors)
+	for saveErr := range errors {
+		t.Fatal(saveErr)
+	}
+	var expected string
+	for id := range ids {
+		if expected == "" {
+			expected = id
+		}
+		if id != expected {
+			t.Fatalf("concurrent upload IDs differ: got %q want %q", id, expected)
+		}
+	}
+	files, err := database.GetMediaFiles(10)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("stored media=%d err=%v", len(files), err)
+	}
+}
+
 func TestLocalStoreRejectsInvalidIDs(t *testing.T) {
 	media, err := NewLocalStore(t.TempDir(), store.NewMemoryStore())
 	if err != nil {
@@ -52,6 +153,15 @@ func TestLocalStoreRejectsInvalidIDs(t *testing.T) {
 	media.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", response.Code)
+	}
+}
+
+func TestValidIDAcceptsLegacyAndHashedMediaIDs(t *testing.T) {
+	if !validID(strings.Repeat("a", 32)) {
+		t.Fatal("legacy 32-character ID was rejected")
+	}
+	if !validID(strings.Repeat("b", 64)) {
+		t.Fatal("hashed 64-character ID was rejected")
 	}
 }
 

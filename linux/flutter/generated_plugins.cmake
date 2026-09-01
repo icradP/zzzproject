@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_linux
   flutter_onnxruntime
+  flutter_secure_storage_linux
   pasteboard
   url_launcher_linux
 )

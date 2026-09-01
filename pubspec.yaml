@@ -52,6 +52,10 @@ dependencies:
   web_socket_channel: ^3.0.3
   onebot_flutter:
     path: packages/onebot_flutter
+  http: ^1.6.0
+  http_parser: ^4.1.2
+  crypto: ^3.0.7
+  flutter_secure_storage: ^10.3.1
 
 dev_dependencies:
   flutter_test:

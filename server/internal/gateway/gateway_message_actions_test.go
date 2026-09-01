@@ -170,6 +170,29 @@ func TestWebSocketReplyAndRecallLifecycle(t *testing.T) {
 	}
 }
 
+func TestValidateImageSegmentURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "hosted HTTPS", url: "https://cdn.example.test/image.png"},
+		{name: "server media", url: "/files/0123456789abcdef0123456789abcdef/image.png"},
+		{name: "insecure external", url: "http://cdn.example.test/image.png", wantErr: true},
+		{name: "credentials", url: "https://token@cdn.example.test/image.png", wantErr: true},
+		{name: "protocol relative", url: "//cdn.example.test/image.png", wantErr: true},
+		{name: "leading whitespace", url: " https://cdn.example.test/image.png", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateImageSegmentURL(protocol.ImageSegment("", test.url))
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateImageSegmentURL() err=%v wantErr=%v", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestWebSocketMessageReactionLifecycle(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)

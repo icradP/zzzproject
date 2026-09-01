@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   flutter_onnxruntime
+  flutter_secure_storage_windows
   pasteboard
   share_plus
   url_launcher_windows

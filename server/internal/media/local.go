@@ -1,7 +1,7 @@
 package media
 
 import (
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"mime"
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icradp/zzz-im-server/internal/store"
@@ -19,6 +20,7 @@ import (
 type LocalStore struct {
 	directory string
 	metadata  store.Store
+	mu        sync.Mutex
 }
 
 func NewLocalStore(directory string, metadata store.Store) (*LocalStore, error) {
@@ -37,13 +39,26 @@ func (s *LocalStore) Save(
 	data []byte,
 	uploaderID string,
 ) (*store.MediaFile, error) {
-	id, err := randomID()
-	if err != nil {
-		return nil, err
-	}
+	id := contentID(uploaderID, data)
 	if _, _, err := mime.ParseMediaType(contentType); err != nil ||
 		contentType == "application/octet-stream" {
 		contentType = http.DetectContentType(data)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, err := s.metadata.GetMedia(id)
+	if err != nil {
+		return nil, fmt.Errorf("load media metadata: %w", err)
+	}
+	if existing != nil {
+		if existing.UploaderID != uploaderID {
+			return nil, fmt.Errorf("media hash belongs to another uploader")
+		}
+		if _, err := os.Stat(filepath.Join(s.directory, id)); err != nil {
+			return nil, fmt.Errorf("deduplicated media bytes are unavailable: %w", err)
+		}
+		return existing, nil
 	}
 
 	temporary, err := os.CreateTemp(s.directory, ".upload-*")
@@ -169,16 +184,16 @@ func (s *LocalStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, metadata.FileName, info.ModTime(), file)
 }
 
-func randomID() (string, error) {
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw), nil
+func contentID(uploaderID string, data []byte) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(uploaderID))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(data)
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func validID(id string) bool {
-	if len(id) != 32 {
+	if len(id) != 32 && len(id) != 64 {
 		return false
 	}
 	_, err := hex.DecodeString(id)

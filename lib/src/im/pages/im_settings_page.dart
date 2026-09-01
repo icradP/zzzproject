@@ -8,6 +8,7 @@ import '../../widgets/zzz_widgets.dart';
 import '../data/im_animation_config.dart';
 import '../data/im_backdrop_config.dart';
 import '../data/im_connection_config.dart';
+import '../data/im_image_hosting_config.dart';
 import '../data/im_message_display_config.dart';
 import '../data/im_nsfw_config.dart';
 import '../data/im_push_manager.dart';
@@ -35,6 +36,12 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   final _selfIdController = TextEditingController();
   final _serverUrlController = TextEditingController();
   final _storagePathController = TextEditingController();
+  final _imageHostEndpointController = TextEditingController();
+  final _imageHostFileFieldController = TextEditingController();
+  final _imageHostAuthHeaderController = TextEditingController();
+  final _imageHostAuthSchemeController = TextEditingController();
+  final _imageHostTokenController = TextEditingController();
+  final _imageHostResponsePathController = TextEditingController();
   List<ImConnectionProfile> _profiles = const [];
   String? _selectedProfileId;
   String? _primaryProfileId;
@@ -51,6 +58,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   ImBackdropConfig _backdropConfig = ImBackdropConfig();
   final _backdropControllers = <TextEditingController>[];
   ImNsfwConfig _nsfwConfig = ImNsfwConfig();
+  bool _imageHostingEnabled = false;
   late final AnimationController _bgController;
 
   final _platformItems = const [
@@ -103,6 +111,12 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     _selfIdController.dispose();
     _serverUrlController.dispose();
     _storagePathController.dispose();
+    _imageHostEndpointController.dispose();
+    _imageHostFileFieldController.dispose();
+    _imageHostAuthHeaderController.dispose();
+    _imageHostAuthSchemeController.dispose();
+    _imageHostTokenController.dispose();
+    _imageHostResponsePathController.dispose();
     _bgController.dispose();
     for (final c in _nsfwControllers) {
       c.dispose();
@@ -134,6 +148,8 @@ class _ImSettingsPageState extends State<ImSettingsPage>
     final nsfw = await ImNsfwConfig.load();
     _nsfwConfig = nsfw;
     _refreshNsfwControllers();
+    final imageHosting = await ImImageHostingConfig.load();
+    _loadImageHostingConfig(imageHosting);
     setState(() {
       _profiles = [...profiles.profiles];
       _primaryProfileId = profiles.primaryProfileId ?? _profiles.first.id;
@@ -144,6 +160,28 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       _showMessageStatus = showMessageStatus;
       _loaded = true;
     });
+  }
+
+  void _loadImageHostingConfig(ImImageHostingConfig config) {
+    _imageHostingEnabled = config.enabled;
+    _imageHostEndpointController.text = config.endpoint;
+    _imageHostFileFieldController.text = config.fileField;
+    _imageHostAuthHeaderController.text = config.authorizationHeader;
+    _imageHostAuthSchemeController.text = config.authorizationScheme;
+    _imageHostTokenController.text = config.token;
+    _imageHostResponsePathController.text = config.responseUrlPath;
+  }
+
+  ImImageHostingConfig _imageHostingConfigFromEditor() {
+    return ImImageHostingConfig(
+      enabled: _imageHostingEnabled,
+      endpoint: _imageHostEndpointController.text.trim(),
+      fileField: _imageHostFileFieldController.text.trim(),
+      authorizationHeader: _imageHostAuthHeaderController.text.trim(),
+      authorizationScheme: _imageHostAuthSchemeController.text.trim(),
+      token: _imageHostTokenController.text.trim(),
+      responseUrlPath: _imageHostResponsePathController.text.trim(),
+    );
   }
 
   void _loadProfileIntoEditor(ImConnectionProfile profile) {
@@ -230,6 +268,18 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   }
 
   Future<void> _save() async {
+    final imageHosting = _imageHostingConfigFromEditor();
+    final imageHostingError = imageHosting.validationError();
+    if (imageHostingError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(imageHostingError),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     setState(() => _saving = true);
     try {
       _commitProfileEditor();
@@ -248,6 +298,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
       await _animConfig.save();
       await _backdropConfig.save();
       await _nsfwConfig.save();
+      await imageHosting.save();
       if (mounted) await ImScope.reloadConnections(context);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -257,6 +308,16 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           ),
         );
         Navigator.of(context).pop();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Settings could not be saved on this device.'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -449,6 +510,13 @@ class _ImSettingsPageState extends State<ImSettingsPage>
                           subtitle: 'Background message alerts',
                           initiallyExpanded: false,
                           child: _buildNotificationFields(),
+                        ),
+                        const SizedBox(height: 12),
+                        ZzzExpandableSection(
+                          title: 'Image hosting',
+                          subtitle: 'Direct HTTPS upload from this client',
+                          initiallyExpanded: false,
+                          child: _buildImageHostingFields(),
                         ),
                         const SizedBox(height: 12),
                         ZzzExpandableSection(
@@ -783,6 +851,79 @@ class _ImSettingsPageState extends State<ImSettingsPage>
           ],
         );
       },
+    );
+  }
+
+  Widget _buildImageHostingFields() {
+    const fill = Color(0x0FFFFFFF);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ZzzSwitchTile(
+          value: _imageHostingEnabled,
+          title: 'Use custom hosting for images',
+          subtitle:
+              _imageHostingEnabled
+                  ? 'Images upload directly; messages contain only the HTTPS URL.'
+                  : 'Images use ZZZ server storage.',
+          onChanged: (value) {
+            setState(() => _imageHostingEnabled = value);
+          },
+        ),
+        if (_imageHostingEnabled) ...[
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            key: const Key('image-host-endpoint'),
+            controller: _imageHostEndpointController,
+            hintText: 'HTTPS upload endpoint',
+            prefixIcon: const Icon(Icons.cloud_upload_outlined),
+            fillColor: fill,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            controller: _imageHostFileFieldController,
+            hintText: 'Multipart file field (for example: file)',
+            prefixIcon: const Icon(Icons.attach_file_rounded),
+            fillColor: fill,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            controller: _imageHostAuthHeaderController,
+            hintText: 'Authorization header',
+            prefixIcon: const Icon(Icons.http_rounded),
+            fillColor: fill,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            controller: _imageHostAuthSchemeController,
+            hintText: 'Authorization scheme (for example: Bearer)',
+            prefixIcon: const Icon(Icons.shield_outlined),
+            fillColor: fill,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            key: const Key('image-host-token'),
+            controller: _imageHostTokenController,
+            hintText: 'API token (optional)',
+            obscureText: true,
+            prefixIcon: const Icon(Icons.key_outlined),
+            fillColor: fill,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 10),
+          ZzzTextInput(
+            controller: _imageHostResponsePathController,
+            hintText: 'JSON URL path (for example: data.url)',
+            prefixIcon: const Icon(Icons.data_object_rounded),
+            fillColor: fill,
+            foregroundColor: Colors.white,
+          ),
+        ],
+      ],
     );
   }
 

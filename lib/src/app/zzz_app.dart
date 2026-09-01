@@ -20,6 +20,7 @@ import '../im/data/im_connection_config.dart';
 import '../im/data/im_storage_config_web.dart'
     if (dart.library.io) '../im/data/im_storage_config.dart';
 import '../im/data/im_interaction_handler.dart';
+import '../im/data/im_image_hosting_config.dart';
 import '../im/data/im_logger.dart';
 import '../im/data/im_message_display_config.dart';
 import '../im/data/im_notification_service.dart';
@@ -92,6 +93,7 @@ class _ZzzAppState extends State<ZzzApp> {
     await ImBackdropConfig.load();
     await ImMessageDisplayConfig.load();
     final nsfwConfig = await ImNsfwConfig.load();
+    final imageHostingConfig = await ImImageHostingConfig.load();
     final hasWebServer = profiles.enabledProfiles.any((profile) {
       final config = profile.config;
       if (!config.isZzzServer ||
@@ -124,6 +126,7 @@ class _ZzzAppState extends State<ZzzApp> {
     final runtime = ImSourceRegistry(
       storageConfig: storageConfig,
       avatarResolver: _zzzAvatarResolver,
+      imageHostingConfig: imageHostingConfig,
       displayNameResolver: AppAssets.displayNameForAccount,
       onZzzNotification: _handleZzzNotification,
       onZzzAuthenticationFailed: kIsWeb ? _handleInvalidWebSession : null,

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -897,6 +898,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	}
 	replyCount := 0
 	for _, segment := range segments {
+		if err := validateImageSegmentURL(segment); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
 		if segment.Type != "reply" {
 			continue
 		}
@@ -968,6 +973,31 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	g.pushToConversation(convID, msg, client.userID)
 
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
+}
+
+func validateImageSegmentURL(segment protocol.MessageSegment) error {
+	if segment.Type != "image" {
+		return nil
+	}
+	rawURL, _ := segment.Data["url"].(string)
+	if rawURL == "" {
+		return nil
+	}
+	if len(rawURL) > 2048 || rawURL != strings.TrimSpace(rawURL) {
+		return fmt.Errorf("image URL is invalid")
+	}
+	if strings.HasPrefix(rawURL, "/files/") {
+		parsed, err := url.ParseRequestURI(rawURL)
+		if err != nil || parsed.IsAbs() || parsed.Host != "" {
+			return fmt.Errorf("image URL is invalid")
+		}
+		return nil
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("external image URL must use HTTPS")
+	}
+	return nil
 }
 
 func (g *Gateway) handleReactMessage(client *Client, req *protocol.Request) {
