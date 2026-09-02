@@ -463,11 +463,13 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 从本机 CC Switch 向单次测试进程注入 MiMo 凭据完成 `mimo-v2.5-pro` 复测，密钥未回显或落盘。256 Token 探针约 3.7 秒并通过；5/5 质量 Case 通过，总计 1576 input / 291 output tokens，P50 约 3.4 秒、P95 约 8.2 秒。该结果不代表生产已启用模型。
 - 自动行为学习继续关闭；当前未提交、推送或部署，M8 继续暂停。
 
-当前进度（M7 Agent 化 F5.14，候选模型启动配置完善、待发布）：
+当前进度（M7 Agent 化 F5.14，候选模型启动配置完善，已发布）：
 
 - 旧版单模型环境配置新增 `FAIRY_MODEL_PROTOCOL`，默认 `openai-compatible`，也可直接选择 `anthropic-compatible`；这样无需把 API Key 写入受管配置即可启动 Anthropic-compatible Provider（包括 MiMo）。
 - 回归测试覆盖旧版配置迁移到 Anthropic Messages `/v1/messages`、`x-api-key` 和 `anthropic-version` 头，并确认 MiMo 的 `thinking` 块不会泄露到最终回复。
-- 当前仍只完成本地代码与验证，未提交、推送或部署；生产是否启用 MiMo 仍需明确月度额度和内容安全策略，M8 继续暂停。
+- 提交 `a787ce8` 已推送到 `origin/master`；GitHub Actions CI/CD 运行 `33680330700` 已通过，包含 Go、Flutter/PWA、Docker 和 Pages 发布。
+- `release-native.sh deploy root@119.23.212.96` 已从该提交构建静态 Linux x86_64 制品，在 Alpine 完成 SQLite/Fairy lifecycle smoke，并通过远端校验和与回滚保护部署；生产 `zzz-im`、`zzz-fairy` 均为 active，Fairy `/ready` 和管理 API schema v7 已验收。
+- 生产仍未启用 MiMo 或其他外部模型；候选模型只完成隔离评测，启用前仍需明确月度额度、内容安全策略和正式授权。M8 继续暂停。
 
 ### M1-M7 使用体验修复批次（已完成并上线）
 
@@ -524,7 +526,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | 基础 Bot 已上线；Agent F0-F5.13 核心已本地完成、待发布；AI 待配置 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | 基础 Bot 与 Agent F0-F5.14 已部署；生产 AI 待配置 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

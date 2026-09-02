@@ -585,6 +585,11 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 按 Task、Provider 和 Model 聚合的 24 小时健康观测。（F5.11 已本地实现、待发布）；只读取脱敏 Model Attempt Trace。
 - 最近 24 小时 Model、Tool、Admission 和 Turn 脱敏失败摘要。（F5.12 已本地实现、待发布）；最多 20 条且不返回可关联身份。
 - 配置 revision、生效状态与脱敏变更审计。（F5.13 已本地实现、待发布）；区分期望配置与实际运行配置。
+- 旧版单模型环境变量支持 `FAIRY_MODEL_PROTOCOL`，可直接选择 OpenAI-compatible 或 Anthropic-compatible Provider（F5.14）。
+
+### 发布状态（2026-09-03）
+
+F0-F5.14 已随提交 `a787ce8` 推送并部署到 `icrad.ltd`。本地静态 Linux x86_64 构建、Alpine SQLite/Fairy lifecycle smoke、GitHub Actions CI/CD（Go、Flutter/PWA、Docker、Pages）和远端 `/ready`、管理 API schema v7 验收均通过。生产 Fairy 当前保持无模型配置；MiMo `mimo-v2.5-pro` 只作为隔离候选模型完成质量评测，未写入生产环境。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
