@@ -588,7 +588,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 旧版单模型环境变量支持 `FAIRY_MODEL_PROTOCOL`，可直接选择 OpenAI-compatible 或 Anthropic-compatible Provider（F5.14）。
 - 显式生产 AI 总开关、v8 配置迁移和固定启停审计（F5.17 已部署）；候选模型诊断与用户回复运行态分离。
 - 生产模型准入资格、v9 配置迁移和配置绑定失效（F5.18 已部署）；每个 `replyer` fallback 都必须通过当前质量语料后才能首次启用或变更生产路由。
-- `off / allowlist / all` 生产灰度、v10 配置迁移和模型前账号门控（F5.19 已本地实现、待发布）；未获准账号仍可使用管理指令和确定性插件。
+- `off / allowlist / all` 生产灰度、v10 配置迁移和模型前账号门控（F5.19 已部署）；未获准账号仍可使用管理指令和确定性插件。
 
 ### 发布状态（2026-09-03）
 
@@ -604,7 +604,7 @@ F5.18 将固定质量评测提升为生产准入条件：评测通过后持久�
 
 F5.18 实现提交 `b2f7009` 与兼容修复 `ed900ef` 已通过 GitHub Actions 运行 `33690542568`、`33691267095`，并以本地构建的静态 Linux x86_64 制品部署 `ed900ef79667` 到 `icrad.ltd`。生产已保存 MiMo `mimo-v2.5-pro` 候选和 `replyer` 路由；256 Token 探针约 3.6 秒通过，固定语料 5/5 Case 通过，P50 约 3.89 秒、P95 约 10.80 秒，共使用 1256 input / 518 output tokens。资格已持久化到 schema v9 revision 2，`production_ready=true`；`ai_enabled=false`，生产用户回复仍未启用。管理 API 与日志未暴露密钥或配置摘要，配置文件保持 `0600`。套餐单价未知，成本门禁未启用；M8 继续暂停。
 
-F5.19 将生产 AI 开关扩展为 `off / allowlist / all`：灰度名单最多 128 个合法账号并去重，空名单 fail closed；未获准账号的私聊模型请求返回固定提示，群聊模型请求静默忽略，管理指令与确定性插件不受影响。门控位于任何媒体下载、Planner、Replyer、Vision 或 Transcriber 调用前。受管配置升级为 v10 并兼容 v1-v9，旧 `ai_enabled` 稳定迁移为 `off` 或 `all`，矛盾的 v10 状态拒绝加载；名单不进入日志和审计。管理页、全量 Go test/vet/race、Linux x86_64 构建及 Alpine lifecycle smoke 均已本地通过，尚未提交或部署；生产继续保持 schema v9 revision 2 和 AI 关闭，M8 继续暂停。
+F5.19 将生产 AI 开关扩展为 `off / allowlist / all`：灰度名单最多 128 个合法账号并去重，空名单 fail closed；未获准账号的私聊模型请求返回固定提示，群聊模型请求静默忽略，管理指令与确定性插件不受影响。门控位于任何媒体下载、Planner、Replyer、Vision 或 Transcriber 调用前。受管配置升级为 v10 并兼容 v1-v9，旧 `ai_enabled` 稳定迁移为 `off` 或 `all`，矛盾的 v10 状态拒绝加载；名单不进入日志和审计。实现提交 `0ad94dc` 已通过 GitHub Actions CI/CD 运行 `33694897420`，本地构建的 release `0ad94dc3ffe5` 已部署到 `icrad.ltd`，生产机未编译源码。生产管理 API 为 schema v10 revision 2 active，MiMo 资格 1/1 保留且 `production_ready=true`；rollout 仍为 `off`、名单为空、Model Router 未启动。磁盘配置保持 v9 与 `0600`，下一次管理员保存时才写为 v10；M8 继续暂停。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
