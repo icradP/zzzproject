@@ -172,8 +172,10 @@ class ImUser {
     this.relationship = ImRelationship.none,
     this.bio = '',
     this.cardBackgroundUrl,
+    this.cardBackgroundColor,
     this.cardBackgroundSensitive = false,
     this.showMutualGroups = true,
+    this.showAccountId = true,
     this.titles = const [],
     this.mutualGroups = const [],
     this.sourceId,
@@ -192,8 +194,10 @@ class ImUser {
   final ImRelationship relationship;
   final String bio;
   final String? cardBackgroundUrl;
+  final String? cardBackgroundColor;
   final bool cardBackgroundSensitive;
   final bool showMutualGroups;
+  final bool showAccountId;
   final List<ImUserTitle> titles;
   final List<ImMutualGroup> mutualGroups;
   final String? sourceId;
@@ -225,9 +229,11 @@ class ImUser {
     ImRelationship? relationship,
     String? bio,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool clearCardBackground = false,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
     List<ImUserTitle>? titles,
     List<ImMutualGroup>? mutualGroups,
     String? sourceId,
@@ -247,9 +253,14 @@ class ImUser {
           clearCardBackground
               ? null
               : (cardBackgroundUrl ?? this.cardBackgroundUrl),
+      cardBackgroundColor:
+          clearCardBackground
+              ? null
+              : (cardBackgroundColor ?? this.cardBackgroundColor),
       cardBackgroundSensitive:
           cardBackgroundSensitive ?? this.cardBackgroundSensitive,
       showMutualGroups: showMutualGroups ?? this.showMutualGroups,
+      showAccountId: showAccountId ?? this.showAccountId,
       titles: titles ?? this.titles,
       mutualGroups: mutualGroups ?? this.mutualGroups,
       sourceId: sourceId ?? this.sourceId,
@@ -566,6 +577,7 @@ class ImMessage {
     required this.senderId,
     required this.text,
     required this.sentAt,
+    this.senderDisplayName,
     this.kind = ImMessageKind.text,
     this.status = ImMessageStatus.sent,
     this.readCount = 0,
@@ -591,6 +603,7 @@ class ImMessage {
   final String id;
   final String conversationId;
   final String senderId;
+  final String? senderDisplayName;
 
   /// Human-readable display text (already resolved, e.g. `@Alice hi`).
   final String text;
@@ -648,6 +661,7 @@ class ImMessage {
   ImMessage copyWith({
     String? id,
     String? text,
+    String? senderDisplayName,
     ImMessageStatus? status,
     int? readCount,
     int? recipientCount,
@@ -663,6 +677,7 @@ class ImMessage {
       id: id ?? this.id,
       conversationId: conversationId,
       senderId: senderId,
+      senderDisplayName: senderDisplayName ?? this.senderDisplayName,
       text: text ?? this.text,
       sentAt: sentAt,
       kind: kind,

@@ -451,6 +451,7 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 			ID:               userID,
 			Nickname:         userID,
 			ShowMutualGroups: true,
+			ShowAccountID:    true,
 			Online:           false,
 		}
 		if err := g.store.SetUser(user); err != nil {
@@ -476,8 +477,10 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	responseData := map[string]interface{}{
 		"user_id": user.ID, "nickname": user.Nickname, "avatar_url": user.Avatar,
 		"bio": user.Bio, "card_background_url": user.CardBackgroundURL,
+		"card_background_color":     user.CardBackgroundColor,
 		"card_background_sensitive": user.CardBackgroundSensitive,
 		"show_mutual_groups":        user.ShowMutualGroups,
+		"show_account_id":           user.ShowAccountID,
 	}
 	if password != "" {
 		if session, err := g.issueSession(userID); err == nil {
@@ -595,7 +598,8 @@ func (g *Gateway) handleRegister(client *Client, req *protocol.Request) {
 	}
 	user := &store.User{
 		ID: userID, Nickname: nickname, Avatar: avatarURL,
-		ShowMutualGroups: true, PasswordHash: string(hash), Online: true, CreatedAt: time.Now(),
+		ShowMutualGroups: true, ShowAccountID: true,
+		PasswordHash: string(hash), Online: true, CreatedAt: time.Now(),
 	}
 	if err := g.store.SetUser(user); err != nil {
 		g.sendError(client, req.Echo, "failed to create account")
@@ -661,6 +665,15 @@ func (g *Gateway) handleUpdateProfile(client *Client, req *protocol.Request) {
 		}
 		user.CardBackgroundURL = value
 	}
+	if backgroundColor, exists := params["card_background_color"]; exists {
+		value, ok := backgroundColor.(string)
+		value = strings.TrimSpace(value)
+		if !ok || !validProfileBackgroundColor(value) {
+			g.sendError(client, req.Echo, "card background color must use #RRGGBB")
+			return
+		}
+		user.CardBackgroundColor = strings.ToUpper(value)
+	}
 	if sensitive, exists := params["card_background_sensitive"]; exists {
 		value, ok := sensitive.(bool)
 		if !ok {
@@ -676,6 +689,14 @@ func (g *Gateway) handleUpdateProfile(client *Client, req *protocol.Request) {
 			return
 		}
 		user.ShowMutualGroups = value
+	}
+	if visible, exists := params["show_account_id"]; exists {
+		value, ok := visible.(bool)
+		if !ok {
+			g.sendError(client, req.Echo, "account ID privacy is invalid")
+			return
+		}
+		user.ShowAccountID = value
 	}
 	if err := g.store.SetUser(user); err != nil {
 		g.sendError(client, req.Echo, "failed to update profile")

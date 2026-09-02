@@ -805,8 +805,10 @@ class ZzzServerSource implements ImMessageSource {
     String? bio,
     ImMediaUpload? cardBackground,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
   }) async {
     String? avatarUrl;
     if (avatar != null && avatarAssetPath == null) {
@@ -825,20 +827,26 @@ class ZzzServerSource implements ImMessageSource {
     }
     var effectiveBackgroundUrl = cardBackgroundUrl;
     if (cardBackground != null) {
-      final uploader = _imageHostingUploader;
-      if (uploader == null) {
-        throw StateError(
-          'Configure custom image hosting in Settings before uploading a card background.',
-        );
-      }
       final rawBytes = await readUploadBytes(cardBackground);
       final prepared = await prepareImProfileBackground(rawBytes);
-      final hosted = await uploader.upload(
-        bytes: prepared.bytes,
-        fileName: prepared.fileName,
-        mimeType: prepared.mimeType,
-      );
-      effectiveBackgroundUrl = hosted.url;
+      final uploader = _imageHostingUploader;
+      if (uploader != null) {
+        final hosted = await uploader.upload(
+          bytes: prepared.bytes,
+          fileName: prepared.fileName,
+          mimeType: prepared.mimeType,
+        );
+        effectiveBackgroundUrl = hosted.url;
+      } else {
+        final upload = await _request('upload_file', {
+          'file': base64Encode(prepared.bytes),
+          'file_name': prepared.fileName,
+          'file_type': 'image',
+          'mime_type': prepared.mimeType,
+        });
+        _requireOk(upload, 'Upload card background');
+        effectiveBackgroundUrl = (upload['data'] as Map?)?['url'] as String?;
+      }
     }
     final params = <String, dynamic>{};
     if (nickname != null) params['nickname'] = nickname.trim();
@@ -851,12 +859,16 @@ class ZzzServerSource implements ImMessageSource {
     if (effectiveBackgroundUrl != null) {
       params['card_background_url'] = effectiveBackgroundUrl.trim();
     }
+    if (cardBackgroundColor != null) {
+      params['card_background_color'] = cardBackgroundColor.trim();
+    }
     if (cardBackgroundSensitive != null) {
       params['card_background_sensitive'] = cardBackgroundSensitive;
     }
     if (showMutualGroups != null) {
       params['show_mutual_groups'] = showMutualGroups;
     }
+    if (showAccountId != null) params['show_account_id'] = showAccountId;
     if (params.isEmpty) return getCurrentUser();
     final response = await _request('update_profile', params);
     _requireOk(response, 'Update profile');
@@ -919,8 +931,10 @@ class ZzzServerSource implements ImMessageSource {
       _users[localId] = existing.copyWith(
         relationship: blocked ? ImRelationship.blocked : ImRelationship.none,
       );
-      _emitUsers();
     }
+    _friendIds.remove(localId);
+    _emitUsers();
+    await _syncUsers();
   }
 
   @override
@@ -1647,6 +1661,14 @@ class ZzzServerSource implements ImMessageSource {
       isOnline: existing?.isOnline ?? true,
       isBot: existing?.isBot ?? config.presetBotIds.contains(userID),
       relationship: existing?.relationship ?? ImRelationship.none,
+      bio: existing?.bio ?? '',
+      cardBackgroundUrl: existing?.cardBackgroundUrl,
+      cardBackgroundColor: existing?.cardBackgroundColor,
+      cardBackgroundSensitive: existing?.cardBackgroundSensitive ?? false,
+      showMutualGroups: existing?.showMutualGroups ?? true,
+      showAccountId: existing?.showAccountId ?? true,
+      titles: existing?.titles ?? const [],
+      mutualGroups: existing?.mutualGroups ?? const [],
     );
     _users[userID] = user;
     var conversationsChanged = false;
@@ -1779,12 +1801,13 @@ class ZzzServerSource implements ImMessageSource {
       final myReactionIds = _stringList(json['my_reactions']);
 
       final knownSender = _users[senderId];
+      final senderDisplayName = _resolveDisplayName(
+        senderId,
+        sender['nickname'] as String?,
+      );
       _users[senderId] = ImUser(
         id: senderId,
-        displayName: _resolveDisplayName(
-          senderId,
-          sender['nickname'] as String?,
-        ),
+        displayName: senderDisplayName,
         avatarAssetPath: _preserveAvatarRevision(
           knownSender?.avatarAssetPath,
           _resolveAvatar(senderId, sender['avatar_url'] as String?),
@@ -1800,6 +1823,7 @@ class ZzzServerSource implements ImMessageSource {
         id: '${json['message_id']}',
         conversationId: conversationId,
         senderId: senderId,
+        senderDisplayName: senderDisplayName,
         text: segments.map(_segmentDisplayText).join().trim(),
         sentAt: DateTime.fromMillisecondsSinceEpoch(
           ((json['timestamp'] as num?)?.toInt() ?? 0) * 1000,
@@ -2099,9 +2123,14 @@ class ZzzServerSource implements ImMessageSource {
           '${json['card_background_url'] ?? ''}'.trim().isEmpty
               ? null
               : '${json['card_background_url']}',
+      cardBackgroundColor:
+          '${json['card_background_color'] ?? ''}'.trim().isEmpty
+              ? null
+              : '${json['card_background_color']}',
       cardBackgroundSensitive:
           json['card_background_sensitive'] as bool? ?? false,
       showMutualGroups: json['show_mutual_groups'] as bool? ?? true,
+      showAccountId: json['show_account_id'] as bool? ?? true,
       titles: (json['titles'] as List? ?? const [])
           .whereType<Map>()
           .map((value) => _titleFromJson(Map<String, dynamic>.from(value)))

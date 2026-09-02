@@ -29,8 +29,10 @@ class _ImProfilePageState extends State<ImProfilePage> {
   late final TextEditingController _nicknameController;
   late final TextEditingController _bioController;
   late final TextEditingController _backgroundController;
+  late final TextEditingController _backgroundColorController;
   bool _backgroundSensitive = false;
   bool _showMutualGroups = true;
+  bool _showAccountId = true;
   bool _loading = true;
   bool _saving = false;
   bool _signingOut = false;
@@ -42,6 +44,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
     _nicknameController = TextEditingController();
     _bioController = TextEditingController();
     _backgroundController = TextEditingController();
+    _backgroundColorController = TextEditingController();
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
@@ -50,6 +53,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
     _nicknameController.dispose();
     _bioController.dispose();
     _backgroundController.dispose();
+    _backgroundColorController.dispose();
     super.dispose();
   }
 
@@ -64,8 +68,10 @@ class _ImProfilePageState extends State<ImProfilePage> {
         _nicknameController.text = user.displayName;
         _bioController.text = user.bio;
         _backgroundController.text = user.cardBackgroundUrl ?? '';
+        _backgroundColorController.text = user.cardBackgroundColor ?? '';
         _backgroundSensitive = user.cardBackgroundSensitive;
         _showMutualGroups = user.showMutualGroups;
+        _showAccountId = user.showAccountId;
         _selectedAvatarAsset =
             AppAssets.avatarPool.contains(user.avatarAssetPath)
                 ? user.avatarAssetPath
@@ -132,6 +138,8 @@ class _ImProfilePageState extends State<ImProfilePage> {
           file.extension == null
               ? null
               : 'image/${file.extension!.toLowerCase()}';
+      _backgroundController.clear();
+      _backgroundColorController.clear();
       _error = null;
     });
   }
@@ -151,11 +159,17 @@ class _ImProfilePageState extends State<ImProfilePage> {
       return;
     }
     final background = _backgroundController.text.trim();
+    final backgroundColor = _backgroundColorController.text.trim();
     final backgroundUri = background.isEmpty ? null : Uri.tryParse(background);
     if (_backgroundBytes == null &&
         backgroundUri != null &&
         (backgroundUri.scheme != 'https' || backgroundUri.host.isEmpty)) {
       setState(() => _error = 'Card background must be an HTTPS image URL.');
+      return;
+    }
+    if (backgroundColor.isNotEmpty &&
+        !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(backgroundColor)) {
+      setState(() => _error = 'Background color must use #RRGGBB.');
       return;
     }
     if (_bioController.text.trim().characters.length > 280) {
@@ -190,8 +204,10 @@ class _ImProfilePageState extends State<ImProfilePage> {
                   mimeType: _backgroundMime,
                 ),
         cardBackgroundUrl: background,
+        cardBackgroundColor: backgroundColor.toUpperCase(),
         cardBackgroundSensitive: _backgroundSensitive,
         showMutualGroups: _showMutualGroups,
+        showAccountId: _showAccountId,
       );
       if (!mounted) return;
       setState(() {
@@ -203,6 +219,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
         _backgroundName = null;
         _backgroundMime = null;
         _backgroundController.text = user.cardBackgroundUrl ?? '';
+        _backgroundColorController.text = user.cardBackgroundColor ?? '';
         _selectedAvatarAsset =
             AppAssets.avatarPool.contains(user.avatarAssetPath)
                 ? user.avatarAssetPath
@@ -401,6 +418,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
                                 _backgroundName = null;
                                 _backgroundMime = null;
                               }
+                              _backgroundColorController.clear();
                               setState(() {});
                             },
                           ),
@@ -413,8 +431,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
                                   onPressed: _saving ? null : _pickBackground,
                                   icon: const Icon(Icons.cloud_upload_outlined),
                                   label: Text(
-                                    _backgroundName ??
-                                        'Upload with configured image host',
+                                    _backgroundName ?? 'Upload image',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -429,6 +446,47 @@ class _ImProfilePageState extends State<ImProfilePage> {
                                   icon: const Icon(Icons.close_rounded),
                                 ),
                               ],
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color:
+                                      _parseHexColor(
+                                        _backgroundColorController.text,
+                                      ) ??
+                                      const Color(0xFF17191D),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.white24),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: ZzzTextInput(
+                                  controller: _backgroundColorController,
+                                  hintText: 'Solid color #RRGGBB',
+                                  prefixIcon: const Icon(
+                                    Icons.palette_outlined,
+                                  ),
+                                  fillColor: Colors.white.withValues(
+                                    alpha: 0.06,
+                                  ),
+                                  foregroundColor: Colors.white,
+                                  onChanged: (value) {
+                                    if (value.trim().isNotEmpty) {
+                                      _backgroundController.clear();
+                                      _backgroundBytes = null;
+                                      _backgroundName = null;
+                                      _backgroundMime = null;
+                                    }
+                                    setState(() {});
+                                  },
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 10),
@@ -464,6 +522,22 @@ class _ImProfilePageState extends State<ImProfilePage> {
                                       ),
                               secondary: const Icon(Icons.groups_outlined),
                               title: const Text('Show mutual groups'),
+                            ),
+                          ),
+                          Material(
+                            color: Colors.transparent,
+                            child: SwitchListTile(
+                              key: const Key('show-account-id'),
+                              contentPadding: EdgeInsets.zero,
+                              value: _showAccountId,
+                              onChanged:
+                                  _saving
+                                      ? null
+                                      : (value) => setState(
+                                        () => _showAccountId = value,
+                                      ),
+                              secondary: const Icon(Icons.fingerprint_rounded),
+                              title: const Text('Show account ID on my card'),
                             ),
                           ),
                           if (user?.titles.isNotEmpty ?? false) ...[
@@ -539,6 +613,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
     final raw = _backgroundController.text.trim();
     final uri = Uri.tryParse(raw);
     final valid = uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
+    final solidColor = _parseHexColor(_backgroundColorController.text);
     return AspectRatio(
       aspectRatio: 16 / 6,
       child: ClipRRect(
@@ -554,9 +629,17 @@ class _ImProfilePageState extends State<ImProfilePage> {
                       (_, __, ___) =>
                           _backgroundPlaceholder(Icons.broken_image_outlined),
                 )
+                : solidColor != null
+                ? ColoredBox(color: solidColor)
                 : _backgroundPlaceholder(Icons.image_outlined),
       ),
     );
+  }
+
+  Color? _parseHexColor(String raw) {
+    final value = raw.trim();
+    if (!RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) return null;
+    return Color(int.parse('FF${value.substring(1)}', radix: 16));
   }
 
   Widget _backgroundPlaceholder(IconData icon) => ColoredBox(

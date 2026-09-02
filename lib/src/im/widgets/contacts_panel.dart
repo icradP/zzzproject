@@ -161,6 +161,10 @@ class _ContactsPanelState extends State<ContactsPanel> {
   }
 
   Future<void> _onUserTap(ImUser user) async {
+    await _openConversationWithUser(user);
+  }
+
+  Future<void> _openUserProfile(ImUser user) async {
     await showZzzModalPanel<void>(
       context: context,
       builder:
@@ -367,7 +371,7 @@ class _ContactsPanelState extends State<ContactsPanel> {
                 user: user,
                 adding: _addingSuggestedUserIds.contains(user.id),
                 requested: user.relationship == ImRelationship.outgoing,
-                onTap: () => _onUserTap(user),
+                onTap: () => _openUserProfile(user),
                 onAdd: () => _addSuggestedContact(user),
               ),
             ),
@@ -379,7 +383,11 @@ class _ContactsPanelState extends State<ContactsPanel> {
           ...users.map(
             (user) => Padding(
               padding: const EdgeInsets.only(bottom: 2),
-              child: ContactTile(user: user, onTap: () => _onUserTap(user)),
+              child: ContactTile(
+                user: user,
+                onTap: () => _onUserTap(user),
+                onProfile: () => _openUserProfile(user),
+              ),
             ),
           ),
         ],

@@ -590,8 +590,10 @@ class MockImRepository extends ImRepository {
     String? bio,
     ImMediaUpload? cardBackground,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
   }) async {
     final current = _users[_currentUserId]!;
     final updated = ImUser(
@@ -613,9 +615,11 @@ class MockImRepository extends ImRepository {
       relationship: current.relationship,
       bio: bio ?? current.bio,
       cardBackgroundUrl: cardBackgroundUrl ?? current.cardBackgroundUrl,
+      cardBackgroundColor: cardBackgroundColor ?? current.cardBackgroundColor,
       cardBackgroundSensitive:
           cardBackgroundSensitive ?? current.cardBackgroundSensitive,
       showMutualGroups: showMutualGroups ?? current.showMutualGroups,
+      showAccountId: showAccountId ?? current.showAccountId,
       titles: current.titles,
       mutualGroups: current.mutualGroups,
       sourceId: current.sourceId,

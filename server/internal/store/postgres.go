@@ -44,8 +44,10 @@ func (s *PostgresStore) initSchema() error {
 		password_hash TEXT DEFAULT '',
 		bio TEXT DEFAULT '',
 		card_background_url TEXT DEFAULT '',
+		card_background_color TEXT DEFAULT '',
 		card_background_sensitive BOOLEAN DEFAULT FALSE,
 		show_mutual_groups BOOLEAN DEFAULT TRUE,
+		show_account_id BOOLEAN DEFAULT TRUE,
 		online BOOLEAN DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT NOW()
 	);
@@ -259,8 +261,10 @@ func (s *PostgresStore) initSchema() error {
 	for _, statement := range []string{
 		"ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT ''",
 		"ALTER TABLE users ADD COLUMN IF NOT EXISTS card_background_url TEXT DEFAULT ''",
+		"ALTER TABLE users ADD COLUMN IF NOT EXISTS card_background_color TEXT DEFAULT ''",
 		"ALTER TABLE users ADD COLUMN IF NOT EXISTS card_background_sensitive BOOLEAN DEFAULT FALSE",
 		"ALTER TABLE users ADD COLUMN IF NOT EXISTS show_mutual_groups BOOLEAN DEFAULT TRUE",
+		"ALTER TABLE users ADD COLUMN IF NOT EXISTS show_account_id BOOLEAN DEFAULT TRUE",
 		"ALTER TABLE conversation_preferences ADD COLUMN IF NOT EXISTS notification_level VARCHAR(20) DEFAULT 'normal'",
 		"ALTER TABLE groups ADD COLUMN IF NOT EXISTS announcement TEXT DEFAULT ''",
 		"ALTER TABLE groups ADD COLUMN IF NOT EXISTS mute_all BOOLEAN DEFAULT FALSE",
@@ -338,9 +342,9 @@ func (s *PostgresStore) Close() error {
 func (s *PostgresStore) GetUser(id string) (*User, error) {
 	user := &User{}
 	err := s.db.QueryRow(
-		"SELECT id, nickname, avatar_url, bio, card_background_url, card_background_sensitive, show_mutual_groups, online, password_hash, created_at FROM users WHERE id = $1",
+		"SELECT id, nickname, avatar_url, bio, card_background_url, card_background_color, card_background_sensitive, show_mutual_groups, show_account_id, online, password_hash, created_at FROM users WHERE id = $1",
 		id,
-	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.Online, &user.PasswordHash, &user.CreatedAt)
+	).Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundColor, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.ShowAccountID, &user.Online, &user.PasswordHash, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -352,16 +356,16 @@ func (s *PostgresStore) GetUser(id string) (*User, error) {
 
 func (s *PostgresStore) SetUser(user *User) error {
 	_, err := s.db.Exec(
-		`INSERT INTO users (id, nickname, avatar_url, bio, card_background_url, card_background_sensitive, show_mutual_groups, online, password_hash)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 ON CONFLICT (id) DO UPDATE SET nickname = $2, avatar_url = $3, bio = $4, card_background_url = $5, card_background_sensitive = $6, show_mutual_groups = $7, online = $8, password_hash = $9`,
-		user.ID, user.Nickname, user.Avatar, user.Bio, user.CardBackgroundURL, user.CardBackgroundSensitive, user.ShowMutualGroups, user.Online, user.PasswordHash,
+		`INSERT INTO users (id, nickname, avatar_url, bio, card_background_url, card_background_color, card_background_sensitive, show_mutual_groups, show_account_id, online, password_hash)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (id) DO UPDATE SET nickname = $2, avatar_url = $3, bio = $4, card_background_url = $5, card_background_color = $6, card_background_sensitive = $7, show_mutual_groups = $8, show_account_id = $9, online = $10, password_hash = $11`,
+		user.ID, user.Nickname, user.Avatar, user.Bio, user.CardBackgroundURL, user.CardBackgroundColor, user.CardBackgroundSensitive, user.ShowMutualGroups, user.ShowAccountID, user.Online, user.PasswordHash,
 	)
 	return err
 }
 
 func (s *PostgresStore) GetUsers() ([]*User, error) {
-	rows, err := s.db.Query("SELECT id, nickname, avatar_url, bio, card_background_url, card_background_sensitive, show_mutual_groups, online, password_hash, created_at FROM users")
+	rows, err := s.db.Query("SELECT id, nickname, avatar_url, bio, card_background_url, card_background_color, card_background_sensitive, show_mutual_groups, show_account_id, online, password_hash, created_at FROM users")
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +374,7 @@ func (s *PostgresStore) GetUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		user := &User{}
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundColor, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.ShowAccountID, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -1094,7 +1098,7 @@ func (s *PostgresStore) GetGroupMembers(groupID string) ([]*GroupMember, error) 
 
 func (s *PostgresStore) GetFriends(userID string) ([]*User, error) {
 	rows, err := s.db.Query(`
-		SELECT u.id, u.nickname, u.avatar_url, u.bio, u.card_background_url, u.card_background_sensitive, u.show_mutual_groups, u.online, u.password_hash, u.created_at
+			SELECT u.id, u.nickname, u.avatar_url, u.bio, u.card_background_url, u.card_background_color, u.card_background_sensitive, u.show_mutual_groups, u.show_account_id, u.online, u.password_hash, u.created_at
 		FROM friendships f
 		JOIN users u ON u.id = f.friend_id
 		WHERE f.user_id = $1
@@ -1106,7 +1110,7 @@ func (s *PostgresStore) GetFriends(userID string) ([]*User, error) {
 	users := make([]*User, 0)
 	for rows.Next() {
 		user := &User{}
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.Avatar, &user.Bio, &user.CardBackgroundURL, &user.CardBackgroundColor, &user.CardBackgroundSensitive, &user.ShowMutualGroups, &user.ShowAccountID, &user.Online, &user.PasswordHash, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)

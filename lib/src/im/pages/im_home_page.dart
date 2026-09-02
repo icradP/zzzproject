@@ -16,6 +16,7 @@ import '../models/im_models.dart';
 import '../widgets/conversation_list_view.dart';
 import '../widgets/contacts_panel.dart';
 import '../widgets/im_chat_room_view.dart';
+import '../widgets/im_conversation_avatar.dart';
 import '../widgets/im_group_details_panel.dart';
 
 class ImHomePage extends StatefulWidget {
@@ -218,10 +219,9 @@ class _ImHomePageState extends State<ImHomePage>
                           color: Colors.transparent,
                           child: ListTile(
                             key: ValueKey('forward-target-${conversation.id}'),
-                            leading: CircleAvatar(
-                              backgroundImage: conversation.avatarImage(
-                                AppAssets.fallbackAvatarForId(conversation.id),
-                              ),
+                            leading: ImConversationAvatar(
+                              conversation: conversation,
+                              size: 40,
                             ),
                             title: Text(
                               conversation.title,

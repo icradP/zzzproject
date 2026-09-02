@@ -412,19 +412,23 @@ type UpdateProfileParams struct {
 	Avatar                  string `json:"avatar_url,omitempty"`
 	Bio                     string `json:"bio,omitempty"`
 	CardBackgroundURL       string `json:"card_background_url,omitempty"`
+	CardBackgroundColor     string `json:"card_background_color,omitempty"`
 	CardBackgroundSensitive bool   `json:"card_background_sensitive,omitempty"`
 	ShowMutualGroups        bool   `json:"show_mutual_groups,omitempty"`
+	ShowAccountID           bool   `json:"show_account_id,omitempty"`
 }
 
 // User represents a user in API responses.
 type User struct {
-	UserID                  string      `json:"user_id"`
+	UserID                  string      `json:"user_id,omitempty"`
 	Nickname                string      `json:"nickname"`
 	Avatar                  string      `json:"avatar_url,omitempty"`
 	Bio                     string      `json:"bio,omitempty"`
 	CardBackgroundURL       string      `json:"card_background_url,omitempty"`
+	CardBackgroundColor     string      `json:"card_background_color,omitempty"`
 	CardBackgroundSensitive bool        `json:"card_background_sensitive"`
 	ShowMutualGroups        bool        `json:"show_mutual_groups"`
+	ShowAccountID           bool        `json:"show_account_id"`
 	Online                  bool        `json:"online"`
 	Relationship            string      `json:"relationship,omitempty"`
 	Titles                  []UserTitle `json:"titles,omitempty"`

@@ -5,71 +5,149 @@ import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
 import 'im_bot_badge.dart';
+import 'im_conversation_avatar.dart';
 import 'im_source_badge.dart';
 
-class ContactTile extends StatelessWidget {
-  const ContactTile({required this.user, required this.onTap, super.key});
+class ContactTile extends StatefulWidget {
+  const ContactTile({
+    required this.user,
+    required this.onTap,
+    required this.onProfile,
+    super.key,
+  });
 
   final ImUser user;
   final VoidCallback onTap;
+  final VoidCallback onProfile;
+
+  @override
+  State<ContactTile> createState() => _ContactTileState();
+}
+
+class _ContactTileState extends State<ContactTile> {
+  static const _actionWidth = 76.0;
+  double _dragOffset = 0;
+
+  void _updateDrag(DragUpdateDetails details) {
+    setState(() {
+      _dragOffset = (_dragOffset + details.delta.dx).clamp(-_actionWidth, 0);
+    });
+  }
+
+  void _finishDrag(DragEndDetails details) {
+    final shouldOpen =
+        details.primaryVelocity != null && details.primaryVelocity! < -250 ||
+        _dragOffset < -_actionWidth / 2;
+    setState(() => _dragOffset = shouldOpen ? -_actionWidth : 0);
+  }
+
+  void _openProfile() {
+    setState(() => _dragOffset = 0);
+    widget.onProfile();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final avatarImage = user.avatarImage(
-      AppAssets.fallbackAvatarForId(user.id),
+    final avatarImage = widget.user.avatarImage(
+      AppAssets.fallbackAvatarForId(widget.user.id),
     );
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              ZzzAvatar(image: avatarImage, size: 46),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            user.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        height: 66,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: SizedBox(
+                  width: _actionWidth,
+                  child: Material(
+                    color: ZzzColors.blue,
+                    child: InkWell(
+                      key: ValueKey('profile-${widget.user.id}'),
+                      onTap: _openProfile,
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.badge_outlined, size: 21),
+                          SizedBox(height: 2),
+                          Text('Profile', style: TextStyle(fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOut,
+              transform: Matrix4.translationValues(_dragOffset, 0, 0),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragUpdate: _updateDrag,
+                onHorizontalDragEnd: _finishDrag,
+                child: Material(
+                  color: const Color(0xFF111216),
+                  child: InkWell(
+                    onTap: widget.onTap,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          ZzzAvatar(image: avatarImage, size: 46),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.user.displayName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (widget.user.sourceLabel != null) ...[
+                                  const SizedBox(width: 6),
+                                  ImSourceBadge(
+                                    sourceLabel: widget.user.sourceLabel!,
+                                  ),
+                                ],
+                                if (widget.user.isBot) ...[
+                                  const SizedBox(width: 6),
+                                  const ImBotBadge(compact: true),
+                                ],
+                              ],
                             ),
                           ),
-                        ),
-                        if (user.sourceLabel != null) ...[
-                          const SizedBox(width: 6),
-                          ImSourceBadge(sourceLabel: user.sourceLabel!),
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color:
+                                  widget.user.isOnline
+                                      ? ZzzColors.yellow
+                                      : Colors.white24,
+                            ),
+                          ),
                         ],
-                        if (user.isBot) ...[
-                          const SizedBox(width: 6),
-                          const ImBotBadge(compact: true),
-                        ],
-                      ],
+                      ),
                     ),
-                  ],
+                  ),
                 ),
               ),
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: user.isOnline ? ZzzColors.yellow : Colors.white24,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -172,10 +250,6 @@ class GroupTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarImage = conversation.avatarImage(
-      AppAssets.fallbackAvatarForId(conversation.id),
-    );
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -188,7 +262,7 @@ class GroupTile extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  ZzzAvatar(image: avatarImage, size: 46),
+                  ImConversationAvatar(conversation: conversation, size: 46),
                   Positioned(
                     right: -2,
                     bottom: -2,

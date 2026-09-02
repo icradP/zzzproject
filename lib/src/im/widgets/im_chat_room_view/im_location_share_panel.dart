@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -33,16 +34,18 @@ class _ImLocationSharePanelState extends State<ImLocationSharePanel> {
       _error = null;
     });
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        throw StateError('Location services are disabled.');
-      }
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        throw StateError('Location permission was not granted.');
+      if (!kIsWeb) {
+        if (!await Geolocator.isLocationServiceEnabled()) {
+          throw StateError('Location services are disabled.');
+        }
+        var permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+        }
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          throw StateError('Location permission was not granted.');
+        }
       }
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -56,8 +59,13 @@ class _ImLocationSharePanelState extends State<ImLocationSharePanel> {
       if (_name.text.trim().isEmpty) _name.text = 'Current location';
     } catch (error) {
       if (mounted) {
+        final message = error.toString().replaceFirst('Bad state: ', '');
         setState(
-          () => _error = error.toString().replaceFirst('Bad state: ', ''),
+          () =>
+              _error =
+                  kIsWeb
+                      ? '$message Allow location access in the browser and use HTTPS.'
+                      : message,
         );
       }
     } finally {

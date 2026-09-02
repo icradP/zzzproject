@@ -551,8 +551,10 @@ class CompositeImRepository implements ImRepository {
     String? bio,
     ImMediaUpload? cardBackground,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
   }) async {
     final registration = _registrationForValue('', sourceId: _primarySourceId);
     final user = await registration.repository.updateProfile(
@@ -562,8 +564,10 @@ class CompositeImRepository implements ImRepository {
       bio: bio,
       cardBackground: cardBackground,
       cardBackgroundUrl: cardBackgroundUrl,
+      cardBackgroundColor: cardBackgroundColor,
       cardBackgroundSensitive: cardBackgroundSensitive,
       showMutualGroups: showMutualGroups,
+      showAccountId: showAccountId,
     );
     return _scopeUser(registration, user);
   }
@@ -925,8 +929,10 @@ class CompositeImRepository implements ImRepository {
       relationship: user.relationship,
       bio: user.bio,
       cardBackgroundUrl: user.cardBackgroundUrl,
+      cardBackgroundColor: user.cardBackgroundColor,
       cardBackgroundSensitive: user.cardBackgroundSensitive,
       showMutualGroups: user.showMutualGroups,
+      showAccountId: user.showAccountId,
       titles: user.titles,
       mutualGroups: user.mutualGroups
           .map(
@@ -1031,6 +1037,7 @@ class CompositeImRepository implements ImRepository {
         message.conversationId,
       ),
       senderId: ImSourceAddress.scope(registration.id, message.senderId),
+      senderDisplayName: message.senderDisplayName,
       text: message.text,
       sentAt: message.sentAt,
       kind: message.kind,

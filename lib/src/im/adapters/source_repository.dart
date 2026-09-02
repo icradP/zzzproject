@@ -201,8 +201,10 @@ class SourceBackedRepository implements ImRepository {
     String? bio,
     ImMediaUpload? cardBackground,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
   }) => _source.updateProfile(
     nickname: nickname,
     avatar: avatar,
@@ -210,8 +212,10 @@ class SourceBackedRepository implements ImRepository {
     bio: bio,
     cardBackground: cardBackground,
     cardBackgroundUrl: cardBackgroundUrl,
+    cardBackgroundColor: cardBackgroundColor,
     cardBackgroundSensitive: cardBackgroundSensitive,
     showMutualGroups: showMutualGroups,
+    showAccountId: showAccountId,
   );
 
   @override

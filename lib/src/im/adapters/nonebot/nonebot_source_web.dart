@@ -101,8 +101,10 @@ class NoneBotSource extends ImMessageSource {
     String? bio,
     ImMediaUpload? cardBackground,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
   }) async {
     throw UnsupportedError('NoneBot does not own the user profile.');
   }

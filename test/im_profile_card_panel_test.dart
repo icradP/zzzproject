@@ -104,16 +104,55 @@ void main() {
     expect(find.text('Block'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('hidden account ID is omitted and avatar is not upscaled', (
+    tester,
+  ) async {
+    final repository = _ProfileRepository(showAccountId: false);
+    addTearDown(repository.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder:
+              (context) => Scaffold(
+                body: TextButton(
+                  onPressed:
+                      () => showZzzModalPanel<void>(
+                        context: context,
+                        builder:
+                            (_) => ImProfileCardPanel(
+                              userId: 'profile-target',
+                              repository: repository,
+                            ),
+                      ),
+                  child: const Text('Open hidden profile'),
+                ),
+              ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open hidden profile'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('profile-target'), findsNothing);
+    final avatar = tester
+        .widgetList<Image>(find.byType(Image))
+        .firstWhere((image) => image.fit == BoxFit.scaleDown);
+    expect(avatar.fit, BoxFit.scaleDown);
+  });
 }
 
 class _ProfileRepository extends MockImRepository {
   _ProfileRepository({
     this.relationship = ImRelationship.friend,
     this.isBot = false,
+    this.showAccountId = true,
   });
 
   final ImRelationship relationship;
   final bool isBot;
+  final bool showAccountId;
 
   @override
   Future<ImUser?> getProfileCard(String userId, {String? groupId}) async {
@@ -124,6 +163,7 @@ class _ProfileRepository extends MockImRepository {
       isOnline: true,
       isBot: isBot,
       relationship: relationship,
+      showAccountId: showAccountId,
       titles: const [
         ImUserTitle(
           id: 'title-one',

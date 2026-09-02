@@ -36,8 +36,9 @@ class _ImForwardBubbleState extends State<ImForwardBubble> {
     final id = _forwardId;
     if (id.isEmpty) return;
     try {
-      final group = await ImScope.interactionsOf(context)
-          .getForwardMessages(id);
+      final group = await ImScope.interactionsOf(
+        context,
+      ).getForwardMessages(id);
       if (!mounted) return;
       final lines = _collectPreview(group, 3);
       if (!mounted) return;
@@ -50,7 +51,10 @@ class _ImForwardBubbleState extends State<ImForwardBubble> {
     for (final msg in g.messages) {
       if (lines.length >= max) break;
       if (msg.text.isNotEmpty) {
-        final sender = msg.senderId.isNotEmpty ? msg.senderId : '';
+        final sender =
+            msg.senderDisplayName?.trim().isNotEmpty == true
+                ? msg.senderDisplayName!
+                : msg.senderId;
         lines.add(sender.isNotEmpty ? '$sender: ${msg.text}' : msg.text);
       }
     }
@@ -90,8 +94,11 @@ class _ImForwardBubbleState extends State<ImForwardBubble> {
                         const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.forward_rounded,
-                                size: 13, color: ZzzColors.yellow),
+                            Icon(
+                              Icons.forward_rounded,
+                              size: 13,
+                              color: ZzzColors.yellow,
+                            ),
                             SizedBox(width: 4),
                             Flexible(
                               child: Text(
@@ -117,7 +124,9 @@ class _ImForwardBubbleState extends State<ImForwardBubble> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                    color: Colors.white54, fontSize: 11),
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
                               ),
                             ),
                           ),
@@ -165,8 +174,9 @@ class _ImForwardDialogState extends State<ImForwardDialog> {
 
   Future<void> _load() async {
     try {
-      final g = await ImScope.interactionsOf(context)
-          .getForwardMessages(widget.forwardId);
+      final g = await ImScope.interactionsOf(
+        context,
+      ).getForwardMessages(widget.forwardId);
       if (mounted) setState(() => _group = g);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -185,10 +195,7 @@ class _ImForwardDialogState extends State<ImForwardDialog> {
         side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 420,
-          maxHeight: 560,
-        ),
+        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 560),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -197,8 +204,11 @@ class _ImForwardDialogState extends State<ImForwardDialog> {
               padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
               child: Row(
                 children: [
-                  const Icon(Icons.forward_rounded,
-                      size: 20, color: Colors.white54),
+                  const Icon(
+                    Icons.forward_rounded,
+                    size: 20,
+                    color: Colors.white54,
+                  ),
                   const SizedBox(width: 8),
                   const Text(
                     'Chat records',
@@ -220,42 +230,51 @@ class _ImForwardDialogState extends State<ImForwardDialog> {
             const Divider(height: 1, color: Colors.white10),
             // Message list
             Flexible(
-              child: _error != null
-                  ? Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.error_outline,
-                              size: 32, color: Colors.white24),
-                          const SizedBox(height: 8),
-                          Text(_error!,
+              child:
+                  _error != null
+                      ? Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 32,
+                              color: Colors.white24,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _error!,
                               textAlign: TextAlign.center,
                               style: const TextStyle(
-                                  color: Colors.white38, fontSize: 12)),
-                        ],
-                      ),
-                    )
-                  : _group == null
-                      ? const Padding(
-                          padding: EdgeInsets.all(32),
-                          child:
-                              Center(child: CircularProgressIndicator()),
-                        )
-                      : _group!.isEmpty
-                          ? const Padding(
-                              padding: EdgeInsets.all(32),
-                              child: Text('Empty',
-                                  style:
-                                      TextStyle(color: Colors.white38)),
-                            )
-                          : ListView(
-                              shrinkWrap: true,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
-                              children:
-                                  _buildForwardChildren(_group!, 0),
+                                color: Colors.white38,
+                                fontSize: 12,
+                              ),
                             ),
+                          ],
+                        ),
+                      )
+                      : _group == null
+                      ? const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                      : _group!.isEmpty
+                      ? const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text(
+                          'Empty',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                      )
+                      : ListView(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        children: _buildForwardChildren(_group!, 0),
+                      ),
             ),
           ],
         ),
@@ -292,7 +311,10 @@ class _ImNestedForwardGroupState extends State<ImNestedForwardGroup> {
     for (final msg in g.messages) {
       if (lines.length >= max) break;
       if (msg.text.isNotEmpty) {
-        final sender = msg.senderId.isNotEmpty ? msg.senderId : '';
+        final sender =
+            msg.senderDisplayName?.trim().isNotEmpty == true
+                ? msg.senderDisplayName!
+                : msg.senderId;
         lines.add(sender.isNotEmpty ? '$sender: ${msg.text}' : msg.text);
       }
     }
@@ -308,8 +330,7 @@ class _ImNestedForwardGroupState extends State<ImNestedForwardGroup> {
     _msgCount ??= _countAll(widget.group);
     _previewLines ??= _buildPreview(widget.group);
     return Padding(
-      padding:
-          EdgeInsets.only(left: 16.0 * widget.depth, top: 6, bottom: 2),
+      padding: EdgeInsets.only(left: 16.0 * widget.depth, top: 6, bottom: 2),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -337,8 +358,11 @@ class _ImNestedForwardGroupState extends State<ImNestedForwardGroup> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  const Icon(Icons.forward_rounded,
-                      size: 14, color: Colors.white38),
+                  const Icon(
+                    Icons.forward_rounded,
+                    size: 14,
+                    color: Colors.white38,
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Column(
@@ -348,10 +372,14 @@ class _ImNestedForwardGroupState extends State<ImNestedForwardGroup> {
                         Text(
                           'Chat records ($_msgCount msg${_msgCount == 1 ? '' : 's'})',
                           style: const TextStyle(
-                              color: Colors.white38, fontSize: 11),
+                            color: Colors.white38,
+                            fontSize: 11,
+                          ),
                         ),
                         if (!_expanded && _previewLines!.isNotEmpty)
-                          ..._previewLines!.take(3).map(
+                          ..._previewLines!
+                              .take(3)
+                              .map(
                                 (l) => Padding(
                                   padding: const EdgeInsets.only(top: 2),
                                   child: Text(
@@ -359,8 +387,9 @@ class _ImNestedForwardGroupState extends State<ImNestedForwardGroup> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
-                                        color: Colors.white24,
-                                        fontSize: 10),
+                                      color: Colors.white24,
+                                      fontSize: 10,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -400,8 +429,9 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
   }
 
   Future<void> _loadAvatar() async {
-    final path = await ImScope.interactionsOf(context)
-        .getUserAvatarPath(widget.msg.senderId);
+    final path = await ImScope.interactionsOf(
+      context,
+    ).getUserAvatarPath(widget.msg.senderId);
     if (!mounted) return;
     if (path != null) {
       setState(() => _avatar = FileImage(File(path)));
@@ -423,8 +453,8 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
               height: 32,
               child: CircleAvatar(
                 radius: 16,
-                backgroundImage: _avatar ??
-                    const AssetImage(AppAssets.iconAgentProfile),
+                backgroundImage:
+                    _avatar ?? const AssetImage(AppAssets.iconAgentProfile),
               ),
             ),
           ),
@@ -435,18 +465,22 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  msg.senderId,
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
+                  msg.senderDisplayName?.trim().isNotEmpty == true
+                      ? msg.senderDisplayName!
+                      : msg.senderId,
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
                 const SizedBox(height: 4),
-                ...msg.segments
-                        ?.map((s) => _renderSegment(context, s)) ??
-                    [Text(msg.text,
+                ...msg.segments?.map((s) => _renderSegment(context, s)) ??
+                    [
+                      Text(
+                        msg.text,
                         style: const TextStyle(
-                            color: Colors.white70, fontSize: 13))],
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
               ],
             ),
           ),
@@ -472,8 +506,12 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
                   File(localPath),
                   width: 180,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(
-                      Icons.broken_image, size: 32, color: Colors.white24),
+                  errorBuilder:
+                      (_, __, ___) => const Icon(
+                        Icons.broken_image,
+                        size: 32,
+                        color: Colors.white24,
+                      ),
                 ),
               ),
             ),
@@ -484,9 +522,17 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
             padding: const EdgeInsets.only(bottom: 4),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.network(url, width: 180, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(
-                      Icons.broken_image, size: 32, color: Colors.white24)),
+              child: Image.network(
+                url,
+                width: 180,
+                fit: BoxFit.cover,
+                errorBuilder:
+                    (_, __, ___) => const Icon(
+                      Icons.broken_image,
+                      size: 32,
+                      color: Colors.white24,
+                    ),
+              ),
             ),
           );
         }
@@ -507,12 +553,12 @@ class _ImForwardMsgTileState extends State<ImForwardMsgTile> {
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.forward_rounded,
-                  size: 14, color: Colors.white38),
+              Icon(Icons.forward_rounded, size: 14, color: Colors.white38),
               SizedBox(width: 6),
-              Text('Chat records',
-                  style:
-                      TextStyle(color: Colors.white38, fontSize: 11)),
+              Text(
+                'Chat records',
+                style: TextStyle(color: Colors.white38, fontSize: 11),
+              ),
             ],
           ),
         );

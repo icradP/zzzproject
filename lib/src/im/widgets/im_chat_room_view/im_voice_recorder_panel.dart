@@ -29,6 +29,8 @@ class _ImVoiceRecorderPanelState extends State<ImVoiceRecorderPanel>
   bool _working = false;
   String? _error;
   ImMediaUpload? _preview;
+  String _recordingExtension = 'm4a';
+  String _recordingMime = 'audio/mp4';
 
   @override
   void initState() {
@@ -64,11 +66,24 @@ class _ImVoiceRecorderPanelState extends State<ImVoiceRecorderPanel>
       if (!await _recorder.hasPermission()) {
         throw StateError('Microphone permission is required to record.');
       }
-      final supportsAac = await _recorder.isEncoderSupported(
-        AudioEncoder.aacLc,
-      );
-      final encoder = supportsAac ? AudioEncoder.aacLc : AudioEncoder.opus;
-      final extension = supportsAac ? 'm4a' : (kIsWeb ? 'webm' : 'ogg');
+      late final AudioEncoder encoder;
+      late final String extension;
+      late final String mimeType;
+      if (kIsWeb && await _recorder.isEncoderSupported(AudioEncoder.opus)) {
+        encoder = AudioEncoder.opus;
+        extension = 'webm';
+        mimeType = 'audio/webm';
+      } else if (await _recorder.isEncoderSupported(AudioEncoder.aacLc)) {
+        encoder = AudioEncoder.aacLc;
+        extension = 'm4a';
+        mimeType = 'audio/mp4';
+      } else if (await _recorder.isEncoderSupported(AudioEncoder.wav)) {
+        encoder = AudioEncoder.wav;
+        extension = 'wav';
+        mimeType = 'audio/wav';
+      } else {
+        throw StateError('This browser has no supported recording format.');
+      }
       final name = 'voice_${DateTime.now().millisecondsSinceEpoch}.$extension';
       final path = kIsWeb ? name : '${Directory.systemTemp.path}/$name';
       await _recorder.start(
@@ -82,6 +97,8 @@ class _ImVoiceRecorderPanelState extends State<ImVoiceRecorderPanel>
       );
       if (!mounted) return;
       setState(() {
+        _recordingExtension = extension;
+        _recordingMime = mimeType;
         _isRecording = true;
         _working = false;
       });
@@ -109,22 +126,12 @@ class _ImVoiceRecorderPanelState extends State<ImVoiceRecorderPanel>
       if (path == null || path.isEmpty) {
         throw StateError('Recording did not produce an audio file.');
       }
-      final extension =
-          path.toLowerCase().endsWith('.ogg')
-              ? 'ogg'
-              : path.toLowerCase().endsWith('.webm') ||
-                  (kIsWeb && path.startsWith('blob:'))
-              ? 'webm'
-              : 'm4a';
       final upload = ImMediaUpload(
         kind: ImMessageKind.record,
-        fileName: 'voice_${DateTime.now().millisecondsSinceEpoch}.$extension',
+        fileName:
+            'voice_${DateTime.now().millisecondsSinceEpoch}.$_recordingExtension',
         filePath: path,
-        mimeType: switch (extension) {
-          'ogg' => 'audio/ogg',
-          'webm' => 'audio/webm',
-          _ => 'audio/mp4',
-        },
+        mimeType: _recordingMime,
         duration: _elapsed,
       );
       if (!mounted) return;

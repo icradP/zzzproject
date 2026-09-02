@@ -43,6 +43,22 @@ func validProfileBackgroundURL(raw string) bool {
 	return true
 }
 
+func validProfileBackgroundColor(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if len(raw) != 7 || raw[0] != '#' {
+		return false
+	}
+	for _, char := range raw[1:] {
+		if !((char >= '0' && char <= '9') ||
+			(char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func protocolTitle(title *store.UserTitle) protocol.UserTitle {
 	result := protocol.UserTitle{
 		TitleID: title.ID, ScopeType: title.ScopeType, ScopeID: title.ScopeID,
@@ -56,11 +72,17 @@ func protocolTitle(title *store.UserTitle) protocol.UserTitle {
 }
 
 func (g *Gateway) profileUser(viewerID string, user *store.User, groupID string) protocol.User {
+	visibleUserID := user.ID
+	if viewerID != user.ID && !user.ShowAccountID {
+		visibleUserID = ""
+	}
 	result := protocol.User{
-		UserID: user.ID, Nickname: user.Nickname, Avatar: user.Avatar,
+		UserID: visibleUserID, Nickname: user.Nickname, Avatar: user.Avatar,
 		Bio: user.Bio, CardBackgroundURL: user.CardBackgroundURL,
+		CardBackgroundColor:     user.CardBackgroundColor,
 		CardBackgroundSensitive: user.CardBackgroundSensitive,
-		ShowMutualGroups:        user.ShowMutualGroups, Online: user.Online,
+		ShowMutualGroups:        user.ShowMutualGroups,
+		ShowAccountID:           user.ShowAccountID, Online: user.Online,
 	}
 	if blocked, _ := g.store.IsUserBlocked(viewerID, user.ID); blocked {
 		result.Relationship = "blocked"
@@ -140,7 +162,13 @@ func (g *Gateway) handleSetUserBlocked(client *Client, req *protocol.Request) {
 		return
 	}
 	if blocked {
-		_, _ = g.store.RemoveFriend(client.userID, targetID)
+		if removed, _ := g.store.RemoveFriend(client.userID, targetID); removed {
+			g.sendToUser(targetID, protocol.NoticeEvent{
+				PostType:   "notice",
+				NoticeType: protocol.NoticeTypeFriendRemove,
+				UserID:     client.userID,
+			})
+		}
 	}
 	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo,
 		Data: map[string]interface{}{"user_id": targetID, "blocked": blocked}})

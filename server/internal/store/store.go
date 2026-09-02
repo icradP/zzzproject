@@ -183,8 +183,10 @@ type User struct {
 	Avatar                  string    `json:"avatar_url,omitempty"`
 	Bio                     string    `json:"bio,omitempty"`
 	CardBackgroundURL       string    `json:"card_background_url,omitempty"`
+	CardBackgroundColor     string    `json:"card_background_color,omitempty"`
 	CardBackgroundSensitive bool      `json:"card_background_sensitive"`
 	ShowMutualGroups        bool      `json:"show_mutual_groups"`
+	ShowAccountID           bool      `json:"show_account_id"`
 	Online                  bool      `json:"online"`
 	PasswordHash            string    `json:"-"`
 	CreatedAt               time.Time `json:"created_at"`

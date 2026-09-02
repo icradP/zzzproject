@@ -28,7 +28,9 @@ func TestProfileCardStoreContract(t *testing.T) {
 			user := &User{
 				ID: "alice", Nickname: "Alice", Bio: "Hollows investigator",
 				CardBackgroundURL:       "https://images.example/alice.webp",
+				CardBackgroundColor:     "#123ABC",
 				CardBackgroundSensitive: true, ShowMutualGroups: true,
+				ShowAccountID: true,
 			}
 			if err := database.SetUser(user); err != nil {
 				t.Fatal(err)
@@ -36,7 +38,9 @@ func TestProfileCardStoreContract(t *testing.T) {
 			loaded, err := database.GetUser(user.ID)
 			if err != nil || loaded == nil || loaded.Bio != user.Bio ||
 				loaded.CardBackgroundURL != user.CardBackgroundURL ||
-				!loaded.CardBackgroundSensitive || !loaded.ShowMutualGroups {
+				loaded.CardBackgroundColor != user.CardBackgroundColor ||
+				!loaded.CardBackgroundSensitive || !loaded.ShowMutualGroups ||
+				!loaded.ShowAccountID {
 				t.Fatalf("profile fields were not persisted: user=%#v err=%v", loaded, err)
 			}
 
@@ -129,7 +133,7 @@ func TestSQLiteMigratesLegacyUserProfileColumns(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	user, err := database.GetUser("legacy")
-	if err != nil || user == nil || !user.ShowMutualGroups {
+	if err != nil || user == nil || !user.ShowMutualGroups || !user.ShowAccountID {
 		t.Fatalf("legacy profile defaults were not migrated: user=%#v err=%v", user, err)
 	}
 }

@@ -39,9 +39,11 @@ func TestProfileCardsTitlesBlockingAndReports(t *testing.T) {
 
 	profileUpdate := responseData(t, request(t, member, "update_profile", map[string]interface{}{
 		"bio": "Always online", "card_background_url": "https://images.example/card.webp",
-		"card_background_sensitive": true, "show_mutual_groups": true,
+		"card_background_color": "#123abc", "card_background_sensitive": true,
+		"show_mutual_groups": true, "show_account_id": false,
 	}))
-	if profileUpdate["bio"] != "Always online" || profileUpdate["card_background_url"] == "" {
+	if profileUpdate["bio"] != "Always online" || profileUpdate["card_background_url"] == "" ||
+		profileUpdate["card_background_color"] != "#123ABC" || profileUpdate["show_account_id"] != false {
 		t.Fatalf("profile fields missing: %#v", profileUpdate)
 	}
 	_ = readJSON(t, owner)
@@ -50,6 +52,12 @@ func TestProfileCardsTitlesBlockingAndReports(t *testing.T) {
 	})
 	if invalid["status"] == "ok" {
 		t.Fatalf("insecure profile background accepted: %#v", invalid)
+	}
+	invalidColor := request(t, member, "update_profile", map[string]interface{}{
+		"card_background_color": "red",
+	})
+	if invalidColor["status"] == "ok" {
+		t.Fatalf("invalid profile background color accepted: %#v", invalidColor)
 	}
 	for _, privateURL := range []string{
 		"https://localhost/card.png",
@@ -67,6 +75,9 @@ func TestProfileCardsTitlesBlockingAndReports(t *testing.T) {
 	profile := responseData(t, request(t, owner, "get_user", map[string]interface{}{
 		"user_id": "member", "group_id": groupID,
 	}))
+	if _, exposed := profile["user_id"]; exposed {
+		t.Fatalf("hidden account ID was exposed in profile response: %#v", profile)
+	}
 	titles := profile["titles"].([]interface{})
 	if len(titles) != 1 || len(profile["mutual_groups"].([]interface{})) != 1 {
 		t.Fatalf("profile context missing titles or mutual groups: %#v", profile)
@@ -83,10 +94,23 @@ func TestProfileCardsTitlesBlockingAndReports(t *testing.T) {
 	assertOK(t, request(t, owner, "set_user_blocked", map[string]interface{}{
 		"user_id": "member", "blocked": true,
 	}))
+	removeNotice := readJSON(t, member)
+	if removeNotice["notice_type"] != "friend_remove" || removeNotice["user_id"] != "owner" {
+		t.Fatalf("unexpected remove notice after blocking: %#v", removeNotice)
+	}
 	blockedRequest := request(t, member, "friend_request", map[string]interface{}{
 		"user_id": "owner",
 	})
 	if blockedRequest["status"] == "ok" {
 		t.Fatalf("blocked friend request was accepted: %#v", blockedRequest)
+	}
+	if friends, _ := database.AreFriends("owner", "member"); friends {
+		t.Fatal("blocking did not remove the friendship")
+	}
+	assertOK(t, request(t, owner, "set_user_blocked", map[string]interface{}{
+		"user_id": "member", "blocked": false,
+	}))
+	if friends, _ := database.AreFriends("owner", "member"); friends {
+		t.Fatal("unblocking unexpectedly restored the friendship")
 	}
 }

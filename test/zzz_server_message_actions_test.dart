@@ -201,6 +201,19 @@ void main() {
           ],
           'get_messages' => <Object?>[],
           'create_forward' => {'forward_id': 'forward-1'},
+          'get_forward_msg' => [
+            {
+              'message_id': 'forward-message-1',
+              'sender': {'user_id': 'bob-uuid', 'nickname': 'Bob Nick'},
+              'message': [
+                {
+                  'type': 'text',
+                  'data': {'text': 'Forwarded text'},
+                },
+              ],
+              'timestamp': 200,
+            },
+          ],
           'send_message' => {'message_id': 'sent-${++sentMessageId}'},
           _ => <String, Object?>{},
         };
@@ -264,6 +277,8 @@ void main() {
         ),
       ],
     );
+    final forward = await source.getForwardMessages('forward-1');
+    expect(forward.messages.single.senderDisplayName, 'Bob Nick');
 
     final sendRequests =
         requests

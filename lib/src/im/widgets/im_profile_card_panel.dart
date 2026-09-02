@@ -75,19 +75,17 @@ class _ImTitleBadgeState extends State<ImTitleBadge>
     return AnimatedBuilder(
       animation: _controller,
       builder:
-          (context, child) => Container(
-            constraints: const BoxConstraints(minHeight: 26, maxWidth: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(4),
-              gradient: LinearGradient(
-                colors: colors,
-                transform: GradientRotation(
-                  widget.title.isAnimated ? _controller.value * math.pi * 2 : 0,
-                ),
-              ),
-              border: Border.all(color: Colors.white24),
-            ),
+          (context, child) => ShaderMask(
+            blendMode: BlendMode.srcIn,
+            shaderCallback:
+                (bounds) => LinearGradient(
+                  colors: colors,
+                  transform: GradientRotation(
+                    widget.title.isAnimated
+                        ? _controller.value * math.pi * 2
+                        : 0,
+                  ),
+                ).createShader(bounds),
             child: child,
           ),
       child: Text(
@@ -95,8 +93,8 @@ class _ImTitleBadgeState extends State<ImTitleBadge>
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(
-          color: Colors.black,
-          fontSize: 11,
+          color: Colors.white,
+          fontSize: 12,
           fontWeight: FontWeight.w900,
         ),
       ),
@@ -326,7 +324,10 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
   Widget build(BuildContext context) {
     return ZzzModalPanel(
       title: 'Profile card',
-      subtitle: _user?.id ?? widget.userId,
+      subtitle:
+          _user != null && (_user!.showAccountId || _user!.id == _selfId)
+              ? _user!.id
+              : null,
       icon: Icons.badge_outlined,
       maxWidth: 680,
       maxHeight: 760,
@@ -451,10 +452,11 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
 
   Widget _buildCover(ImUser user) {
     final background = user.cardBackgroundUrl;
+    final backgroundColor = _parseHexColor(user.cardBackgroundColor);
     Widget content = Container(
       height: 210,
       decoration: BoxDecoration(
-        color: const Color(0xFF17191D),
+        color: backgroundColor ?? const Color(0xFF17191D),
         image:
             background == null
                 ? null
@@ -465,7 +467,7 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
                 ),
       ),
       child:
-          background == null
+          background == null && backgroundColor == null
               ? const Align(
                 alignment: Alignment.topRight,
                 child: Padding(
@@ -512,14 +514,20 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
   }
 
   Widget _buildIdentity(ImUser user) => Container(
+    width: 96,
+    height: 96,
     padding: const EdgeInsets.all(4),
-    decoration: const BoxDecoration(
+    decoration: BoxDecoration(
       color: Colors.black,
       shape: BoxShape.circle,
+      border: Border.all(color: Colors.white24),
     ),
-    child: ZzzAvatar(
-      image: user.avatarImage(AppAssets.fallbackAvatarForId(user.id)),
-      size: 88,
+    child: ClipOval(
+      child: Image(
+        image: user.avatarImage(AppAssets.fallbackAvatarForId(user.id)),
+        fit: BoxFit.scaleDown,
+        gaplessPlayback: true,
+      ),
     ),
   );
 
@@ -539,10 +547,18 @@ class _ImProfileCardPanelState extends State<ImProfileCardPanel> {
           if (user.isBot) ...[const SizedBox(width: 8), const ImBotBadge()],
         ],
       ),
-      const SizedBox(height: 3),
-      Text(user.id, style: const TextStyle(color: Colors.white54)),
+      if (user.showAccountId || user.id == _selfId) ...[
+        const SizedBox(height: 3),
+        Text(user.id, style: const TextStyle(color: Colors.white54)),
+      ],
     ],
   );
+
+  Color? _parseHexColor(String? raw) {
+    final value = raw?.trim() ?? '';
+    if (!RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) return null;
+    return Color(int.parse('FF${value.substring(1)}', radix: 16));
+  }
 
   Widget _buildActions(ImUser user) {
     final blocked = user.relationship == ImRelationship.blocked;

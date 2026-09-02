@@ -10,6 +10,7 @@ import '../../widgets/zzz_widgets.dart';
 import '../data/im_repository.dart';
 import '../models/im_models.dart';
 import '../models/im_source_address.dart';
+import 'im_conversation_avatar.dart';
 import 'im_profile_card_panel.dart';
 
 class ImGroupDetailsPanel extends StatefulWidget {
@@ -623,10 +624,11 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
   Widget _buildSummary(ImGroupDetails details) {
     return Row(
       children: [
-        ZzzAvatar(
-          image: details.conversation.avatarImage(
-            AppAssets.fallbackAvatarForId(details.conversation.id),
-          ),
+        ImConversationAvatar(
+          conversation: details.conversation,
+          memberUsers: details.members
+              .map((member) => member.user)
+              .toList(growable: false),
           size: 52,
         ),
         const SizedBox(width: 12),
@@ -920,17 +922,16 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
           if (details.supportsAvatarEditing) ...[
             Row(
               children: [
-                ZzzAvatar(
-                  image:
-                      _avatarBytes == null
-                          ? details.conversation.avatarImage(
-                            AppAssets.fallbackAvatarForId(
-                              details.conversation.id,
-                            ),
-                          )
-                          : MemoryImage(_avatarBytes!),
-                  size: 52,
-                ),
+                if (_avatarBytes == null)
+                  ImConversationAvatar(
+                    conversation: details.conversation,
+                    memberUsers: details.members
+                        .map((member) => member.user)
+                        .toList(growable: false),
+                    size: 52,
+                  )
+                else
+                  ZzzAvatar(image: MemoryImage(_avatarBytes!), size: 52),
                 const SizedBox(width: 12),
                 Flexible(
                   child: OutlinedButton.icon(

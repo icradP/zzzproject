@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
-import '../../widgets/zzz_widgets.dart';
 import '../models/im_models.dart';
+import 'im_conversation_avatar.dart';
 import 'im_source_badge.dart';
 
 class ConversationTile extends StatefulWidget {
@@ -288,9 +287,6 @@ class _ConversationTileState extends State<ConversationTile>
   }
 
   Widget _buildTileContent() {
-    final avatarImage = widget.conversation.avatarImage(
-      AppAssets.characterWise,
-    );
     final timeLabel = _formatTime(widget.conversation.updatedAt);
     final selected = widget.selected;
 
@@ -321,7 +317,10 @@ class _ConversationTileState extends State<ConversationTile>
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  ZzzAvatar(image: avatarImage, size: 52),
+                  ImConversationAvatar(
+                    conversation: widget.conversation,
+                    size: 52,
+                  ),
                   if (widget.conversation.isGroup)
                     Positioned(
                       right: -2,

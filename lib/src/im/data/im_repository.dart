@@ -183,8 +183,10 @@ abstract class ImRepository {
     String? bio,
     ImMediaUpload? cardBackground,
     String? cardBackgroundUrl,
+    String? cardBackgroundColor,
     bool? cardBackgroundSensitive,
     bool? showMutualGroups,
+    bool? showAccountId,
   }) async {
     throw UnsupportedError('Profile editing is not supported by this source.');
   }
