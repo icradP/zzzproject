@@ -497,14 +497,18 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 已从本机 CCSwitch 向单次测试进程注入 MiMo `mimo-v2.5-pro` 配置：256 Token 探针约 2.26 秒并通过；5/5 固定质量 Case 通过，1256 input / 457 output tokens，P50 约 4.2 秒、P95 约 9.6 秒。凭据未回显或写入仓库、日志和生产配置。
 - 提交 `79b7eab` 已推送，GitHub Actions CI/CD 运行 `33686827904` 已通过；本地静态 Linux x86_64 构建和 Alpine SQLite/Fairy lifecycle smoke 均通过。
 - `release-native.sh deploy root@119.23.212.96` 已从提交 `79b7eab` 构建并部署静态制品，生产服务器未参与编译；本地/远端 Server、Fairy 和 VAPID 制品哈希一致，`zzz-im`、`zzz-fairy` 均为 active，`/ready` 和管理页新资产验收通过。
-- 生产管理 API 为 schema v8，`ai_enabled=false`、`model_configured=false`、外部工具为 0，密钥不回显且自动行为学习关闭。生产 MiMo 仍未配置或启用，M8 继续暂停。
+- F5.17 部署检查点的生产管理 API 为 schema v8，`ai_enabled=false`、`model_configured=false`、外部工具为 0，密钥不回显且自动行为学习关闭；当时生产 MiMo 尚未配置或启用。M8 继续暂停。
 
-当前进度（M7 Agent 化 F5.18，生产模型准入资格本地实现、待发布）：
+当前进度（M7 Agent 化 F5.18，生产模型准入资格已部署并完成首个生产候选验收）：
 
 - 受管配置升级为 v9；质量评测通过后持久化模型资格，并绑定当前语料版本以及 Provider/Model 的精确配置摘要。摘要包含 API Key 以保证换钥即失效，但摘要和密钥都不通过管理 API 返回。
 - 首次开启生产 AI，以及 AI 已开启时修改模型路由，都要求 `replyer` 的所有 fallback 候选通过当前质量语料；URL、协议、密钥、超时/重试、远端模型名、上下文窗口或价格变化会自动清除不再匹配的资格。
 - 异步评测使用启动时快照；完成前配置发生变化返回 `configuration_changed`，资格持久化失败返回 `qualification_store`。资格写入使用独立 `model_validation` 审计分类，并保持热更新与重启修订状态的一致性。
 - v8 已启用部署升级后保持运行兼容，但取得资格前不能修改生产模型路由；新部署仍默认关闭 AI。M8 继续暂停。
+- 实现提交 `b2f7009` 与空集合兼容修复 `ed900ef` 已推送；GitHub Actions CI/CD 运行 `33690542568`、`33691267095` 均通过。`release-native.sh` 从本地构建并验证静态 Linux x86_64 制品后部署 `ed900ef79667`，生产服务器未参与编译；本地与远端 Server/Fairy 制品 SHA-256 一致，两个服务均为 active。
+- 生产已保存 MiMo `mimo-v2.5-pro` Anthropic-compatible 候选及 `replyer` 路由，Provider 超时 45 秒、重试 1 次、退避 500ms，Model 上下文 128000，Task 最大输出 600 Token、日额度 200；`ai_enabled=false`，不会处理真实用户对话。
+- 生产 256 Token 安全探针约 3.6 秒通过，使用 25 input / 44 output tokens；固定质量语料 5/5 Case 通过，使用 1256 input / 518 output tokens，P50 约 3.89 秒、P95 约 10.80 秒。资格已持久化到 schema v9 revision 2，`production_ready=true`、无未取得资格的 `replyer` 候选。
+- 管理 API 未返回 API Key 或资格摘要，Fairy 日志未发现敏感字段，受管配置权限保持 `0600`。套餐单价未知，输入/输出价格暂记为 0，成本门禁未启用；在明确启用生产回复前仍需确认预算与运行策略。M8 继续暂停。
 
 ### M1-M7 使用体验修复批次（已完成并上线）
 
@@ -561,7 +565,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.17 已部署，F5.18 待发布；生产 AI 待配置 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.18 已部署；MiMo 候选已配置并取得资格，生产回复仍关闭 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

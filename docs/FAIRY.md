@@ -142,7 +142,7 @@ JSON 报告只包含固定 Case ID、通过状态、固定失败码、调用次�
 
 同一套质量门禁也接入服务器管理页的 Fairy Model 行。`Quality` 只能评测已保存的 Model，POST 异步启动后由页面轮询最近任务；连通性 `Test` 与质量评测共享一个诊断并发槽，冲突返回 `429` 和 `Retry-After: 1`。管理端任务使用启动时的配置快照并随 Fairy 进程取消，只返回任务状态、固定 Case 状态/失败码、P50/P95、汇总 Token 和可选费用；不返回 Provider、远端模型名、逐请求细节或模型正文。通过后写入的资格绑定质量语料版本以及 Provider/Model 的精确配置摘要，摘要包含 API Key 但摘要与密钥均不通过 API 返回；协议、URL、密钥、超时/重试、远端模型名、上下文窗口或价格变化都会自动使资格失效。评测期间配置发生变化时任务返回固定 `configuration_changed`，资格无法安全落盘时返回 `qualification_store`。
 
-MiMo `mimo-v2.5-pro` 已于 2026-09-03 多次通过该 Anthropic-compatible 质量门禁，均为 5/5 Case 且每 Case 单次调用。最近一次从本机 CC Switch 向单次测试进程注入凭据的复测为 1576 input / 291 output tokens，P50 约 3.4 秒、P95 约 8.2 秒；同轮 256 Token 安全探针约 3.7 秒，使用 25 input / 37 output tokens。此前 64 Token 探针可能只产生 `thinking` 而没有可见文本，因而被正确归类为 `invalid_response`。套餐响应不提供可直接换算的单价，因此成本门禁保持关闭；凭据未写入仓库、配置或日志，这些结果只代表本地候选验证，不代表生产已启用。其他真实模型评测也必须使用专用测试配置，不得直接对生产用户试跑。
+MiMo `mimo-v2.5-pro` 已于 2026-09-03 多次通过该 Anthropic-compatible 质量门禁，均为 5/5 Case 且每 Case 单次调用。生产候选验收的 256 Token 安全探针约 3.6 秒，使用 25 input / 44 output tokens；固定质量语料使用 1256 input / 518 output tokens，P50 约 3.89 秒、P95 约 10.80 秒。通过后资格已绑定 schema v9 当前 Provider/Model 配置并持久化，管理状态为 `production_ready=true`；生产回复开关仍为 `ai_enabled=false`，因此不会处理真实用户对话。此前 64 Token 探针可能只产生 `thinking` 而没有可见文本，因而被正确归类为 `invalid_response`。套餐响应不提供可直接换算的单价，生产配置价格暂记为 0，成本门禁保持关闭。凭据只保存在生产 Fairy 的 `0600` 受管配置中，未写入仓库、管理 API 或日志。其他真实模型评测也必须使用固定合成语料，不得直接对生产用户试跑。
 
 ## 主要配置
 

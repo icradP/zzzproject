@@ -534,7 +534,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 已完成 OpenAI-compatible 与 Anthropic-compatible Adapter、不可变调用快照和结构化 Failure。
 - 已完成可取消 Retry、`sequential` fallback、Token / cost Trace 及字段校验。
 - 已完成管理面板的 Provider、Model、Task 编辑、候选模型顺序调整和只写密钥。
-- MiMo `mimo-v2.5-pro` 已完成一次本地隔离回归；尚待完成 CI 制品发布、生产外部模型配置和费用预算确认。
+- MiMo `mimo-v2.5-pro` 已完成本地隔离回归，并在生产以关闭状态保存为候选、通过固定质量门禁；费用预算与正式启用仍待确认。
 - 管理页已增加只针对已保存 Model 的安全探测；固定 Prompt、单请求、单并发和 30 秒硬超时，不接触用户上下文且不返回模型正文。
 
 验收：主模型故障可控切换；安全拒绝不切换；在途请求不受配置更新污染。
@@ -587,11 +587,11 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 配置 revision、生效状态与脱敏变更审计。（F5.13 已本地实现、待发布）；区分期望配置与实际运行配置。
 - 旧版单模型环境变量支持 `FAIRY_MODEL_PROTOCOL`，可直接选择 OpenAI-compatible 或 Anthropic-compatible Provider（F5.14）。
 - 显式生产 AI 总开关、v8 配置迁移和固定启停审计（F5.17 已部署）；候选模型诊断与用户回复运行态分离。
-- 生产模型准入资格、v9 配置迁移和配置绑定失效（F5.18）；每个 `replyer` fallback 都必须通过当前质量语料后才能首次启用或变更生产路由。
+- 生产模型准入资格、v9 配置迁移和配置绑定失效（F5.18 已部署）；每个 `replyer` fallback 都必须通过当前质量语料后才能首次启用或变更生产路由。
 
 ### 发布状态（2026-09-03）
 
-F0-F5.14 已随提交 `a787ce8` 推送并部署到 `icrad.ltd`。本地静态 Linux x86_64 构建、Alpine SQLite/Fairy lifecycle smoke、GitHub Actions CI/CD（Go、Flutter/PWA、Docker、Pages）和远端 `/ready`、管理 API schema v7 验收均通过。生产 Fairy 当前保持无模型配置；MiMo `mimo-v2.5-pro` 只作为隔离候选模型完成质量评测，未写入生产环境。
+F0-F5.14 已随提交 `a787ce8` 推送并部署到 `icrad.ltd`。本地静态 Linux x86_64 构建、Alpine SQLite/Fairy lifecycle smoke、GitHub Actions CI/CD（Go、Flutter/PWA、Docker、Pages）和远端 `/ready`、管理 API schema v7 验收均通过。在该发布检查点，生产 Fairy 尚无模型配置；MiMo `mimo-v2.5-pro` 只作为隔离候选模型完成质量评测，未写入生产环境。
 
 F5.15 完善连接恢复退避：拨号或认证持续失败仍按指数退避并封顶；已完成认证的会话断开后，下一次重连从最小延迟重新开始，避免历史故障延迟短暂断线恢复。退避倍增在到达上限前显式截断，避免时长溢出。提交 `5778987` 已通过 CI/CD、本地静态制品 smoke 和生产部署验收；生产日志确认已认证连接断开后按最小 `2s` 重连。
 
@@ -600,6 +600,8 @@ F5.16 将好友请求与不可重放的聊天事件分开处理：聊天 Event I
 F5.17 将候选模型配置与生产 AI 激活分离：新配置默认关闭生产回复，管理员必须显式开启且配置 `replyer` Task；开关变化受控重启并记录固定 `ai_activation` 分类。Provider / Model 可在关闭状态且没有 Task 时保存，安全探测和固定质量评测继续可用。v1-v7 已配置 `replyer` 的部署迁移时保持原有启用行为，避免静默停服。提交 `79b7eab` 已通过 CI/CD 运行 `33686827904`、静态 Linux smoke 和生产部署验收；生产 AI 仍保持关闭且未配置模型。
 
 F5.18 将固定质量评测提升为生产准入条件：评测通过后持久化与语料版本、Provider 协议/URL/密钥/超时/重试和 Model 远端名/上下文/价格精确绑定的不可逆摘要；管理 API 只展示模型 ID、语料版本和通过时间，不返回摘要或密钥。首次开启 AI 以及已开启状态下修改模型路由时，`replyer` 的全部 fallback 候选都必须持有当前资格；配置变化自动删除不再匹配的资格，评测并发变化和落盘失败使用固定脱敏错误码。v8 已启用部署升级后保持运行兼容，但取得资格前不能更改生产路由。
+
+F5.18 实现提交 `b2f7009` 与兼容修复 `ed900ef` 已通过 GitHub Actions 运行 `33690542568`、`33691267095`，并以本地构建的静态 Linux x86_64 制品部署 `ed900ef79667` 到 `icrad.ltd`。生产已保存 MiMo `mimo-v2.5-pro` 候选和 `replyer` 路由；256 Token 探针约 3.6 秒通过，固定语料 5/5 Case 通过，P50 约 3.89 秒、P95 约 10.80 秒，共使用 1256 input / 518 output tokens。资格已持久化到 schema v9 revision 2，`production_ready=true`；`ai_enabled=false`，生产用户回复仍未启用。管理 API 与日志未暴露密钥或配置摘要，配置文件保持 `0600`。套餐单价未知，成本门禁未启用；M8 继续暂停。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
