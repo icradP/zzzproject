@@ -845,7 +845,12 @@ class ZzzServerSource implements ImMessageSource {
           'mime_type': prepared.mimeType,
         });
         _requireOk(upload, 'Upload card background');
-        effectiveBackgroundUrl = (upload['data'] as Map?)?['url'] as String?;
+        effectiveBackgroundUrl = _resolveMediaUrl(
+          (upload['data'] as Map?)?['url'] as String?,
+        );
+        if (effectiveBackgroundUrl == null) {
+          throw StateError('Upload card background returned no URL.');
+        }
       }
     }
     final params = <String, dynamic>{};

@@ -25,9 +25,7 @@ void main() {
           'get_friends' => <Object?>[],
           'get_friend_requests' => <Object?>[],
           'get_conversations' => <Object?>[],
-          'upload_file' => {
-            'url': 'https://icrad.ltd/files/profile-background.jpg',
-          },
+          'upload_file' => {'url': '/files/profile-background.jpg'},
           'update_profile' => {
             'user_id': 'me',
             'nickname': 'Me',
@@ -79,9 +77,10 @@ void main() {
       'update_profile',
     ]);
     final update = requests.last['params'] as Map;
-    expect(
-      update['card_background_url'],
-      'https://icrad.ltd/files/profile-background.jpg',
-    );
+    final backgroundUrl = Uri.parse(update['card_background_url'] as String);
+    expect(backgroundUrl.scheme, 'http');
+    expect(backgroundUrl.host, '127.0.0.1');
+    expect(backgroundUrl.port, server.port);
+    expect(backgroundUrl.path, '/files/profile-background.jpg');
   });
 }
