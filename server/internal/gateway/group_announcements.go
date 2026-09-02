@@ -195,6 +195,7 @@ func (g *Gateway) publishGroupAnnouncement(authorID string, announcement *store.
 			ConversationID: announcement.GroupID,
 			Sender:         protocol.Sender{UserID: authorID, Nickname: nickname, Avatar: avatar},
 			Message:        segments, Timestamp: message.Timestamp.Unix(),
+			TimestampMS: message.Timestamp.UnixMilli(),
 		}, "")
 		g.pushToConversation(announcement.GroupID, message, authorID, true)
 	}

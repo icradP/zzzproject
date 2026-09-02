@@ -32,6 +32,9 @@ jobs:
       - name: Test
         run: flutter test
 
+      - name: Test Web plugin registration
+        run: flutter test --platform chrome test/im_web_plugin_registration_test.dart
+
       - name: Validate PWA assets
         run: |
           node --check web/app-sw.js
@@ -60,6 +63,8 @@ jobs:
           node --check build/web/loading.js
           node -e "JSON.parse(require('fs').readFileSync('build/web/startup-assets.json', 'utf8'))"
           grep -Fq 'canvasKitBaseUrl: "canvaskit/"' build/web/flutter_bootstrap.js
+          grep -Fq 'record.worklet.js' build/web/main.dart.js
+          grep -Fq 'geolocation' build/web/main.dart.js
           test -f build/web/canvaskit/canvaskit.wasm
 
       - uses: actions/upload-artifact@v4

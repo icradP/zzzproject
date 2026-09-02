@@ -308,7 +308,7 @@ packages:
     source: sdk
     version: "0.0.0"
   flutter_web_plugins:
-    dependency: transitive
+    dependency: "direct main"
     description: flutter
     source: sdk
     version: "0.0.0"
@@ -361,7 +361,7 @@ packages:
     source: hosted
     version: "4.3.0"
   geolocator_web:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: geolocator_web
       sha256: "19e485a0f8d6a88abcf9c53cba3a4105e14b7435ed8ac1c108c067b938fe8429"
@@ -704,7 +704,7 @@ packages:
     source: hosted
     version: "0.6.0"
   record_web:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: record_web
       sha256: "7e9846981c1f2d111d86f0ae3309071f5bba8b624d1c977316706f08fc31d16d"

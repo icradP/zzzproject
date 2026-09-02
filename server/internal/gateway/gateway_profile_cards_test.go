@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/websocket"
 	"github.com/icradp/zzz-im-server/internal/store"
 )
 
@@ -90,6 +91,13 @@ func TestProfileCardsTitlesBlockingAndReports(t *testing.T) {
 	if err != nil || len(reports) != 1 || reports[0].TargetID != "member" {
 		t.Fatalf("report was not persisted: reports=%#v err=%v", reports, err)
 	}
+	assertOK(t, request(t, owner, "ensure_conversation", map[string]interface{}{
+		"conversation_id": "private_member_owner", "type": "private",
+		"participants": []string{"member", "owner"},
+	}))
+	if conversations := responseDataList(t, request(t, owner, "get_conversations", map[string]interface{}{})); countConversationType(conversations, "private") != 1 {
+		t.Fatalf("direct conversation missing before blocking: %#v", conversations)
+	}
 
 	assertOK(t, request(t, owner, "set_user_blocked", map[string]interface{}{
 		"user_id": "member", "blocked": true,
@@ -107,10 +115,29 @@ func TestProfileCardsTitlesBlockingAndReports(t *testing.T) {
 	if friends, _ := database.AreFriends("owner", "member"); friends {
 		t.Fatal("blocking did not remove the friendship")
 	}
+	for name, connection := range map[string]*websocket.Conn{"owner": owner, "member": member} {
+		if conversations := responseDataList(t, request(t, connection, "get_conversations", map[string]interface{}{})); countConversationType(conversations, "private") != 0 {
+			t.Fatalf("%s retained a blocked direct conversation: %#v", name, conversations)
+		}
+	}
 	assertOK(t, request(t, owner, "set_user_blocked", map[string]interface{}{
 		"user_id": "member", "blocked": false,
 	}))
 	if friends, _ := database.AreFriends("owner", "member"); friends {
 		t.Fatal("unblocking unexpectedly restored the friendship")
 	}
+	if conversations := responseDataList(t, request(t, owner, "get_conversations", map[string]interface{}{})); countConversationType(conversations, "private") != 0 {
+		t.Fatalf("unblocking without re-friending restored the conversation: %#v", conversations)
+	}
+}
+
+func countConversationType(conversations []interface{}, conversationType string) int {
+	count := 0
+	for _, raw := range conversations {
+		conversation, ok := raw.(map[string]interface{})
+		if ok && conversation["type"] == conversationType {
+			count++
+		}
+	}
+	return count
 }

@@ -350,7 +350,12 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 	}
 	if convType == "private" {
 		existing, _ := g.store.GetConversation(id)
-		if existing == nil {
+		if existing != nil {
+			if !g.canAccessConversation(client.userID, id) {
+				g.sendError(client, req.Echo, "direct messages require a friend relationship")
+				return
+			}
+		} else {
 			otherUserID := ""
 			for _, participant := range participants {
 				if participant != client.userID {
@@ -779,12 +784,23 @@ func (g *Gateway) canAccessConversation(userID, conversationID string) bool {
 	if err != nil || conversation == nil {
 		return false
 	}
-	for _, participant := range conversation.Participants {
-		if participant == userID {
-			return true
+	participant := false
+	otherUserID := ""
+	for _, candidate := range conversation.Participants {
+		if candidate == userID {
+			participant = true
+		} else if otherUserID == "" {
+			otherUserID = candidate
 		}
 	}
-	return false
+	if !participant {
+		return false
+	}
+	if conversation.Type == "private" {
+		friends, err := g.store.AreFriends(userID, otherUserID)
+		return err == nil && friends && !g.isEitherBlocked(userID, otherUserID)
+	}
+	return true
 }
 
 func (g *Gateway) isGroupAdmin(groupID, userID string) bool {
@@ -1071,7 +1087,8 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		Status:  "ok",
 		RetCode: 0,
 		Data: map[string]interface{}{
-			"message_id": msg.ID,
+			"message_id":   msg.ID,
+			"timestamp_ms": msg.Timestamp.UnixMilli(),
 		},
 		Echo: req.Echo,
 	})
@@ -1087,9 +1104,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			Nickname: nickname,
 			Avatar:   avatar,
 		},
-		Message:   segments,
-		Reactions: msg.Reactions,
-		Timestamp: msg.Timestamp.Unix(),
+		Message:     segments,
+		Reactions:   msg.Reactions,
+		Timestamp:   msg.Timestamp.Unix(),
+		TimestampMS: msg.Timestamp.UnixMilli(),
 	}
 	g.broadcastToConversation(convID, event, client.userID)
 	g.pushToConversation(convID, msg, client.userID, false)
@@ -1435,10 +1453,14 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 		g.sendError(client, req.Echo, "failed to load conversations")
 		return
 	}
-	result := make([]protocol.Conversation, len(convs))
-	for i, conv := range convs {
+	result := make([]protocol.Conversation, 0, len(convs))
+	for _, conv := range convs {
+		if !g.canAccessConversation(client.userID, conv.ID) {
+			continue
+		}
 		lastMsg := ""
 		var lastTs int64
+		var lastTsMS int64
 		title := conv.Title
 		avatar := conv.Avatar
 		if conv.Type == "private" {
@@ -1463,6 +1485,7 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 				lastMsg, _ = msgs[0].Segments[0].Data["text"].(string)
 			}
 			lastTs = msgs[0].Timestamp.Unix()
+			lastTsMS = msgs[0].Timestamp.UnixMilli()
 		}
 		unreadCount, err := g.store.CountUnreadMessages(conv.ID, client.userID)
 		if err != nil {
@@ -1474,7 +1497,7 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 			g.sendError(client, req.Echo, "failed to load conversation preferences")
 			return
 		}
-		result[i] = protocol.Conversation{
+		result = append(result, protocol.Conversation{
 			ConversationID:    conv.ID,
 			Type:              conv.Type,
 			Title:             title,
@@ -1485,8 +1508,9 @@ func (g *Gateway) handleGetConversations(client *Client, req *protocol.Request) 
 			NotificationLevel: conversationNotificationLevel(preference),
 			LastMessage:       lastMsg,
 			LastTimestamp:     lastTs,
+			LastTimestampMS:   lastTsMS,
 			Participants:      conv.Participants,
-		}
+		})
 	}
 
 	g.sendJSON(client, protocol.Response{
@@ -1641,6 +1665,7 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 			},
 			"message":         msg.Segments,
 			"timestamp":       msg.Timestamp.Unix(),
+			"timestamp_ms":    msg.Timestamp.UnixMilli(),
 			"recalled":        msg.Recalled,
 			"reactions":       msg.Reactions,
 			"my_reactions":    myReactions,
@@ -2834,8 +2859,9 @@ func (g *Gateway) handleGetForwardMessage(client *Client, req *protocol.Request)
 				"user_id":  msg.SenderID,
 				"nickname": msg.SenderNickname,
 			},
-			"message":   msg.Segments,
-			"timestamp": msg.Timestamp.Unix(),
+			"message":      msg.Segments,
+			"timestamp":    msg.Timestamp.Unix(),
+			"timestamp_ms": msg.Timestamp.UnixMilli(),
 		}
 	}
 

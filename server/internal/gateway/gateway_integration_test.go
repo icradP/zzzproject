@@ -88,15 +88,17 @@ func TestWebSocketChatHistoryAndPush(t *testing.T) {
 		},
 	})
 	assertOK(t, sendResponse)
-	messageID, _ := responseData(t, sendResponse)["message_id"].(string)
-	if messageID == "" {
-		t.Fatal("send_message returned an empty message_id")
+	sendData := responseData(t, sendResponse)
+	messageID, _ := sendData["message_id"].(string)
+	if messageID == "" || sendData["timestamp_ms"].(float64) <= 0 {
+		t.Fatalf("send_message returned incomplete timing data: %#v", sendData)
 	}
 
 	event := readJSON(t, bob)
 	if event["post_type"] != "message" ||
 		event["conversation_id"] != conversationID ||
-		event["message_id"] != messageID {
+		event["message_id"] != messageID ||
+		event["timestamp_ms"].(float64) <= 0 {
 		t.Fatalf("unexpected realtime message event: %#v", event)
 	}
 

@@ -938,6 +938,7 @@ class ZzzServerSource implements ImMessageSource {
       );
     }
     _friendIds.remove(localId);
+    if (blocked) _removeDirectConversationsWith(localId);
     _emitUsers();
     await _syncUsers();
   }
@@ -1362,9 +1363,12 @@ class ZzzServerSource implements ImMessageSource {
       _conversations[conversation.id] = conversation;
       await _syncMessages(conversation.id);
     }
-    _conversations.removeWhere(
-      (id, _) => !remoteIds.contains(id) && !_messages.containsKey(id),
-    );
+    final removedIds = _conversations.keys
+        .where((id) => !remoteIds.contains(id))
+        .toList(growable: false);
+    for (final id in removedIds) {
+      _removeConversationLocally(id);
+    }
     _emitConversations();
   }
 
@@ -1419,7 +1423,7 @@ class ZzzServerSource implements ImMessageSource {
       if (message != null) merged[message.id] = message;
     }
     final sorted =
-        merged.values.toList()..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+        merged.values.toList()..sort(_compareMessagesChronologically);
     _messages[conversationId] = sorted;
     _emitMessages(conversationId);
   }
@@ -1432,7 +1436,6 @@ class ZzzServerSource implements ImMessageSource {
             ?.map((value) => '$value')
             .toList(growable: false) ??
         const <String>[];
-    final timestamp = (json['last_timestamp'] as num?)?.toInt() ?? 0;
     final isGroup = json['type'] == 'group';
     ImUser? peer;
     if (!isGroup) {
@@ -1463,10 +1466,11 @@ class ZzzServerSource implements ImMessageSource {
         json['notification_level'] as String?,
         legacyMuted: json['is_muted'] as bool? ?? false,
       ),
-      updatedAt:
-          timestamp > 0
-              ? DateTime.fromMillisecondsSinceEpoch(timestamp * 1000)
-              : null,
+      updatedAt: _timestampFromJson(
+        json,
+        secondsKey: 'last_timestamp',
+        millisecondsKey: 'last_timestamp_ms',
+      ),
     );
   }
 
@@ -1577,6 +1581,9 @@ class ZzzServerSource implements ImMessageSource {
       return;
     }
     if (noticeType == 'friend_add' || noticeType == 'friend_remove') {
+      if (noticeType == 'friend_remove') {
+        _removeDirectConversationsWith('${json['user_id'] ?? ''}');
+      }
       unawaited(_syncUsers().catchError((_) {}));
       unawaited(getFriendRequests().catchError((_) => _friendRequests));
       if (noticeType == 'friend_add') {
@@ -1830,9 +1837,8 @@ class ZzzServerSource implements ImMessageSource {
         senderId: senderId,
         senderDisplayName: senderDisplayName,
         text: segments.map(_segmentDisplayText).join().trim(),
-        sentAt: DateTime.fromMillisecondsSinceEpoch(
-          ((json['timestamp'] as num?)?.toInt() ?? 0) * 1000,
-        ),
+        sentAt:
+            _timestampFromJson(json) ?? DateTime.fromMillisecondsSinceEpoch(0),
         kind: _kindForSegment(first?['type'] as String?),
         status: _statusFromJson(json['status']),
         readCount: (json['read_count'] as num?)?.toInt() ?? 0,
@@ -1940,7 +1946,7 @@ class ZzzServerSource implements ImMessageSource {
     final messages = _messages.putIfAbsent(message.conversationId, () => []);
     if (messages.any((existing) => existing.id == message.id)) return;
     messages.add(message);
-    messages.sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    messages.sort(_compareMessagesChronologically);
     _emitMessages(message.conversationId);
 
     final conversation = _conversations[message.conversationId];
@@ -1972,6 +1978,33 @@ class ZzzServerSource implements ImMessageSource {
     _emitConversations();
   }
 
+  void _removeDirectConversationsWith(String userId) {
+    if (userId.isEmpty) return;
+    final removedIds = _conversations.values
+        .where(
+          (conversation) =>
+              conversation.isDirect &&
+              conversation.participantIds.contains(userId),
+        )
+        .map((conversation) => conversation.id)
+        .toList(growable: false);
+    if (removedIds.isEmpty) return;
+    for (final id in removedIds) {
+      _removeConversationLocally(id);
+    }
+    _emitConversations();
+  }
+
+  void _removeConversationLocally(String conversationId) {
+    _conversations.remove(conversationId);
+    _messages.remove(conversationId);
+    _hasMoreMessages.remove(conversationId);
+    final controller = _messageControllers[conversationId];
+    if (controller != null && !controller.isClosed) {
+      controller.add(const <ImMessage>[]);
+    }
+  }
+
   Future<ImMessage> _sendMessage(
     String conversationId,
     List<Map<String, dynamic>> segments,
@@ -1983,7 +2016,9 @@ class ZzzServerSource implements ImMessageSource {
       'message': segments,
     });
     _requireOk(response, 'Send message');
-    final responseData = response['data'] as Map?;
+    final responseData = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
     final first = segments.firstWhere(
       (segment) => segment['type'] != 'reply',
       orElse: () => segments.first,
@@ -1995,11 +2030,11 @@ class ZzzServerSource implements ImMessageSource {
     final mediaUrl = firstData?['url'] as String?;
     final thumbnailUrl = firstData?['thumbnail_url'] as String?;
     final message = ImMessage(
-      id: '${responseData?['message_id']}',
+      id: '${responseData['message_id']}',
       conversationId: conversationId,
       senderId: _selfId,
       text: segments.map(_segmentDisplayText).join().trim(),
-      sentAt: DateTime.now(),
+      sentAt: _timestampFromJson(responseData) ?? DateTime.now(),
       kind: _kindForSegment(first['type'] as String?),
       status: ImMessageStatus.sent,
       recipientCount:
@@ -2036,6 +2071,40 @@ class ZzzServerSource implements ImMessageSource {
       if (predicate(segment)) return segment;
     }
     return null;
+  }
+
+  DateTime? _timestampFromJson(
+    Map<String, dynamic> json, {
+    String secondsKey = 'timestamp',
+    String millisecondsKey = 'timestamp_ms',
+  }) {
+    final milliseconds = (json[millisecondsKey] as num?)?.toInt() ?? 0;
+    if (milliseconds > 0) {
+      return DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    }
+    final seconds = (json[secondsKey] as num?)?.toInt() ?? 0;
+    if (seconds > 0) {
+      return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+    }
+    return null;
+  }
+
+  int _compareMessagesChronologically(ImMessage left, ImMessage right) {
+    final byTimestamp = left.sentAt.compareTo(right.sentAt);
+    if (byTimestamp != 0) return byTimestamp;
+    final leftSequence = _messageSequence(left.id);
+    final rightSequence = _messageSequence(right.id);
+    if (leftSequence != null && rightSequence != null) {
+      final bySequence = leftSequence.compareTo(rightSequence);
+      if (bySequence != 0) return bySequence;
+    }
+    return left.id.compareTo(right.id);
+  }
+
+  BigInt? _messageSequence(String messageId) {
+    final separator = messageId.lastIndexOf('_');
+    if (separator < 0 || separator == messageId.length - 1) return null;
+    return BigInt.tryParse(messageId.substring(separator + 1));
   }
 
   String? _replyMessageId(Map<String, dynamic>? reply) {

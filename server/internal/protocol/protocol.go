@@ -88,6 +88,7 @@ type MessageEvent struct {
 	Message        []MessageSegment `json:"message"`
 	Reactions      []Reaction       `json:"reactions,omitempty"`
 	Timestamp      int64            `json:"timestamp"`
+	TimestampMS    int64            `json:"timestamp_ms"`
 }
 
 // Reaction is an aggregate reaction count attached to a message.
@@ -480,5 +481,6 @@ type Conversation struct {
 	NotificationLevel string   `json:"notification_level"`
 	LastMessage       string   `json:"last_message,omitempty"`
 	LastTimestamp     int64    `json:"last_timestamp"`
+	LastTimestampMS   int64    `json:"last_timestamp_ms"`
 	Participants      []string `json:"participants,omitempty"`
 }
