@@ -336,7 +336,7 @@ fail() {
   exit 1
 }
 
-for command_name in sha256sum systemctl curl jq openssl; do
+for command_name in sha256sum systemctl curl grep openssl; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "missing ${command_name}"
 done
 [[ $(uname -m) == x86_64 ]] || fail 'production host is not x86_64'
@@ -405,11 +405,9 @@ fairy_token=$(sed -n 's/^FAIRY_ADMIN_TOKEN=//p' /etc/zzz-im/fairy.env | head -n 
 fairy_payload=$(curl --fail --silent --show-error \
   -H "Authorization: Bearer ${fairy_token}" \
   http://127.0.0.1:18081/admin/config)
-jq -e '
-  .connected == true and
-  (.config | has("model_api_key") | not) and
-  any(.plugins[]; .id == "zzz-profile")
-' <<<"${fairy_payload}" >/dev/null
+grep -Fq '"connected":true' <<<"${fairy_payload}"
+! grep -Fq '"model_api_key":' <<<"${fairy_payload}"
+grep -Fq '"id":"zzz-profile"' <<<"${fairy_payload}"
 [[ $(systemctl is-active zzz-im.service) == active ]]
 [[ $(systemctl is-active zzz-fairy.service) == active ]]
 
