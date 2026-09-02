@@ -23,8 +23,10 @@ fi
 
 install -d -m 0700 /etc/zzz-im
 install -d -m 0750 -o zzz-im -g zzz-im "${data_dir}" "${data_dir}/media"
-install -m 0755 "${server_binary}" /usr/local/bin/zzz-im-server
-install -m 0755 "${vapid_binary}" /usr/local/bin/zzz-im-vapid
+install -m 0755 "${server_binary}" /usr/local/bin/zzz-im-server.next
+install -m 0755 "${vapid_binary}" /usr/local/bin/zzz-im-vapid.next
+mv -f /usr/local/bin/zzz-im-server.next /usr/local/bin/zzz-im-server
+mv -f /usr/local/bin/zzz-im-vapid.next /usr/local/bin/zzz-im-vapid
 
 if [[ ! -s ${env_file} ]]; then
   umask 077

@@ -96,6 +96,13 @@ jobs:
       - name: Validate admin console assets
         run: node --check internal/admin/assets/app.js
 
+      - name: Validate native release scripts
+        run: |
+          bash -n \
+            ../deploy/zzz-im/release-native.sh \
+            ../deploy/zzz-im/deploy-native.sh \
+            ../deploy/zzz-im/deploy-fairy-native.sh
+
       - name: Build server container
         run: docker build -t zzz-im-server:test .
 

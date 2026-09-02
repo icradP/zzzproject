@@ -109,24 +109,29 @@ only cold/warm aggregates in the authenticated admin overview. The targets are
 8 seconds for a cold start and 2 seconds for a cache-backed warm start; compare
 results using a fixed device, browser, network profile, and cache state.
 
-If the target host cannot reach Docker Hub, cross-compile static Linux amd64
-binaries into `dist/` and run `deploy/zzz-im/deploy-native.sh`. The included
-systemd unit runs the service as the dedicated `zzz-im` user with a read-only
-system view and write access limited to `/var/lib/zzz-im`.
+Native production releases are built and pushed from the local workstation.
+The release entrypoint checks out the committed `HEAD` in a temporary local
+workspace, runs Go tests, cross-compiles static Linux x86_64 artifacts, boots
+the server with a temporary SQLite database inside a Linux container, and only
+then uploads binaries to the host. The production server never receives source
+code or a compiler. Remote installation backs up the current binaries,
+environment, and systemd units and restores them if either service fails its
+health check.
 
 ```bash
-mkdir -p dist
-cd server
-CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=x86_64-linux-musl-gcc \
-  go build -trimpath \
-  -ldflags='-s -w -linkmode external -extldflags "-static"' \
-  -o ../dist/zzz-im-server-linux-amd64 ./cmd/server
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -trimpath -ldflags='-s -w' \
-  -o ../dist/zzz-im-vapid-linux-amd64 ./cmd/vapid
-cd ..
-sudo ./deploy/zzz-im/deploy-native.sh
+# Build and run the Linux x86_64 SQLite smoke test locally.
+./deploy/zzz-im/release-native.sh build
+
+# After HEAD is pushed and CI/CD succeeds, upload artifacts and deploy.
+./deploy/zzz-im/release-native.sh deploy root@server.example
 ```
+
+The local machine needs Go, Docker, and `x86_64-linux-musl-gcc` (provided by
+Homebrew `musl-cross` on macOS). `deploy` also requires the target commit to be
+the remote `master` head with a successful `CI/CD` workflow. Generated binaries
+remain available in `dist/`. The lower-level `deploy-native.sh` and
+`deploy-fairy-native.sh` scripts are invoked remotely by the release entrypoint;
+they are not production build commands.
 
 Build the PWA for GitHub Pages:
 

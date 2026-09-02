@@ -38,15 +38,14 @@ Fairy 是独立于 ZZZ IM 服务端运行的 Bot 进程。它使用普通账号�
 ## 构建与部署
 
 ```bash
-cd server
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -trimpath -ldflags='-s -w' \
-  -o ../dist/zzz-im-fairy-linux-amd64 ./cmd/fairy
-cd ..
-sudo ./deploy/zzz-im/deploy-fairy-native.sh
+# 同时构建 IM Server、VAPID 和 Fairy，并在本机 Linux 容器中验证 SQLite。
+./deploy/zzz-im/release-native.sh build
+
+# 提交已推送且 CI/CD 成功后，上传产物并部署；生产机不会编译源码。
+./deploy/zzz-im/release-native.sh deploy root@server.example
 ```
 
-部署脚本创建独立的 `zzz-fairy` 系统用户、`/var/lib/zzz-fairy` 数据目录、`/etc/zzz-im/fairy.env` 密钥文件和 `zzz-fairy.service`。本地健康检查位于 `http://127.0.0.1:18081/health`，只有 Fairy 已登录 IM 时才返回 `200`。
+统一发布脚本在远端调用底层安装脚本，创建独立的 `zzz-fairy` 系统用户、`/var/lib/zzz-fairy` 数据目录、`/etc/zzz-im/fairy.env` 密钥文件和 `zzz-fairy.service`。本地健康检查位于 `http://127.0.0.1:18081/health`，只有 Fairy 已登录 IM 时才返回 `200`。远端切换前会备份 IM/Fairy 二进制、环境文件和 systemd 单元；任一健康检查失败都会回滚。
 
 ## 模型配置
 

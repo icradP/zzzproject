@@ -26,7 +26,8 @@ fi
 
 install -d -m 0700 /etc/zzz-im
 install -d -m 0750 -o zzz-fairy -g zzz-fairy "${data_dir}"
-install -m 0755 "${fairy_binary}" /usr/local/bin/zzz-im-fairy
+install -m 0755 "${fairy_binary}" /usr/local/bin/zzz-im-fairy.next
+mv -f /usr/local/bin/zzz-im-fairy.next /usr/local/bin/zzz-im-fairy
 
 admin_token=$(sed -n 's/^ZZZ_FAIRY_ADMIN_TOKEN=//p' "${server_env}" | head -n 1)
 if [[ -z ${admin_token} ]]; then
