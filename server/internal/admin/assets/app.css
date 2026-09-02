@@ -396,6 +396,7 @@ td:last-child, th:last-child { width: 112px; text-align: right; }
 .plugin-row small { margin-top: 5px; color: #777b83; font-size: 11px; line-height: 1.45; }
 .plugin-row input { width: 42px; height: 23px; flex: 0 0 auto; accent-color: #f4c542; }
 .settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; color: #858990; font-size: 11px; }
+.settings-actions .unsaved { color: #e6c66b; font-weight: 750; }
 .switch-row {
   display: flex;
   align-items: center;

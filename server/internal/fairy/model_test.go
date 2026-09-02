@@ -510,6 +510,7 @@ func TestModelRouterCopiesConfigurationIntoSnapshot(t *testing.T) {
 func modelRouterTestConfig(t *testing.T, baseURL string, maxRetries int) Config {
 	t.Helper()
 	cfg := testConfig(t)
+	cfg.AIEnabled = true
 	cfg.ModelProviders = []ModelProviderConfig{{
 		ID: "provider", Protocol: OpenAICompatibleProtocol, BaseURL: baseURL, APIKey: "router-secret",
 		Timeout: 5 * time.Second, MaxRetries: maxRetries, RetryBackoff: 50 * time.Millisecond,

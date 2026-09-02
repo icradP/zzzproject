@@ -240,6 +240,38 @@ func TestStateStoreRollsBackWhenPersistenceFails(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvDefaultsConfiguredModelToProductionDisabled(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("FAIRY_PASSWORD", "fairy-config-test-password")
+	t.Setenv("FAIRY_STATE_FILE", filepath.Join(root, "state.json"))
+	t.Setenv("FAIRY_CONFIG_FILE", filepath.Join(root, "config.json"))
+	t.Setenv("FAIRY_TRACE_DB", filepath.Join(root, "trace.db"))
+	t.Setenv("FAIRY_TRACE_KEY_FILE", filepath.Join(root, "trace.key"))
+	t.Setenv("FAIRY_FACT_DB", filepath.Join(root, "facts.db"))
+	t.Setenv("FAIRY_MODEL_BASE_URL", "https://candidate.example.test/anthropic")
+	t.Setenv("FAIRY_MODEL_PROTOCOL", AnthropicCompatibleProtocol)
+	t.Setenv("FAIRY_MODEL_API_KEY", "env-candidate-secret")
+	t.Setenv("FAIRY_MODEL_NAME", "candidate-model")
+	t.Setenv("FAIRY_AI_ENABLED", "")
+
+	cfg, err := ConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AIEnabled || !cfg.ModelConfigured() || cfg.ModelEnabled() {
+		t.Fatalf("default production AI state = enabled %v configured %v active %v", cfg.AIEnabled, cfg.ModelConfigured(), cfg.ModelEnabled())
+	}
+
+	t.Setenv("FAIRY_AI_ENABLED", "true")
+	cfg, err = ConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AIEnabled || !cfg.ModelEnabled() {
+		t.Fatalf("explicit production AI state = enabled %v active %v", cfg.AIEnabled, cfg.ModelEnabled())
+	}
+}
+
 func testConfig(t *testing.T) Config {
 	t.Helper()
 	return Config{

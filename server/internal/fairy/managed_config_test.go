@@ -89,6 +89,9 @@ func TestManagedConfigLoadsVersionOneIntoStructuredModelConfig(t *testing.T) {
 		loaded.ModelTasks[0].ID != ReplyerTaskID || loaded.ModelTasks[0].MaxOutputTokens != stored.ModelMaxTokens {
 		t.Fatalf("migrated model config = %#v / %#v / %#v", loaded.ModelProviders, loaded.ModelDefinitions, loaded.ModelTasks)
 	}
+	if !loaded.AIEnabled || !loaded.ModelEnabled() {
+		t.Fatal("version 1 model configuration did not preserve production AI behavior")
+	}
 	if loaded.ModelBaseURL != stored.ModelBaseURL || loaded.ModelName != stored.ModelName || loaded.ModelAPIKey != stored.ModelAPIKey {
 		t.Fatalf("legacy projection changed during migration: %#v", loaded)
 	}
@@ -186,6 +189,38 @@ func TestManagedConfigPersistsStructuredModelsAndProviderSecretOperations(t *tes
 	}
 }
 
+func TestManagedConfigSavesDiagnosticCandidatesWithoutProductionTasks(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-candidate.json")
+	manager := NewConfigManager(cfg)
+	secret := "candidate-only-secret"
+	update := managedUpdateForConfig(cfg)
+	update.Providers = []ManagedModelProviderUpdate{{
+		ID: "candidate", Protocol: AnthropicCompatibleProtocol, BaseURL: "https://candidate.example.test/anthropic",
+		APIKey: &secret, TimeoutSeconds: 30, MaxRetries: 1, RetryBackoffMillis: 250,
+	}}
+	update.Models = []ManagedModelDefinition{{
+		ID: "candidate-model", ProviderID: "candidate", RemoteName: "candidate-v1", ContextWindow: 128000,
+	}}
+	update.Tasks = []ManagedModelTask{}
+
+	updated, err := manager.Update(update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.AIEnabled || !updated.ModelConfigured() || updated.ModelEnabled() || len(updated.ModelTasks) != 0 {
+		t.Fatalf("candidate-only config = %#v", updated)
+	}
+	response, err := json.Marshal(manager.Response(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(response, []byte(secret)) || !bytes.Contains(response, []byte(`"model_configured":true`)) ||
+		!bytes.Contains(response, []byte(`"model_enabled":false`)) {
+		t.Fatalf("candidate-only response = %s", response)
+	}
+}
+
 func TestManagedConfigRejectsInvalidUpdateWithoutChangingCurrentConfig(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed.json")
@@ -258,7 +293,7 @@ func TestFairyAdminAPIAuthenticationUpdateAndRestart(t *testing.T) {
 	authorized := httptest.NewRecorder()
 	handler.ServeHTTP(authorized, authorizedRequest)
 	if authorized.Code != http.StatusOK || strings.Contains(authorized.Body.String(), cfg.ModelAPIKey) ||
-		!strings.Contains(authorized.Body.String(), `"config_status":{"schema_version":7,"revision":"0","active_revision":"0","state":"active","restart_pending":false,"recent_changes":[]}`) {
+		!strings.Contains(authorized.Body.String(), `"config_status":{"schema_version":8,"revision":"0","active_revision":"0","state":"active","restart_pending":false,"recent_changes":[]}`) {
 		t.Fatalf("GET status=%d body=%s", authorized.Code, authorized.Body.String())
 	}
 
@@ -388,7 +423,7 @@ func TestManagedConfigVersionFourPersistsExternalProvidersWithoutEnvironmentValu
 		t.Fatal(err)
 	}
 	if bytes.Contains(response, []byte(secret)) || bytes.Contains(stored, []byte(secret)) ||
-		!bytes.Contains(response, []byte("FAIRY_MCP_TEST_SECRET")) || !bytes.Contains(stored, []byte(`"version": 7`)) {
+		!bytes.Contains(response, []byte("FAIRY_MCP_TEST_SECRET")) || !bytes.Contains(stored, []byte(`"version": 8`)) {
 		t.Fatalf("external provider leaked a value or was not persisted: response=%s stored=%s", response, stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
@@ -509,7 +544,7 @@ func TestManagedBehaviorExperiencesPersistMigrateAndRequireRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stored, []byte(`"version": 7`)) || !bytes.Contains(stored, []byte(`"behavior_experiences"`)) {
+	if !bytes.Contains(stored, []byte(`"version": 8`)) || !bytes.Contains(stored, []byte(`"behavior_experiences"`)) {
 		t.Fatalf("behavior experiences were not persisted in v7: %s", stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
@@ -628,6 +663,80 @@ func TestManagedConfigTracksRevisionAuditAndApplyState(t *testing.T) {
 	}
 }
 
+func TestManagedConfigAIActivationIsExplicitAuditedAndRestarted(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	cfg.AIEnabled = false
+	syncLegacyModelProjection(&cfg)
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v8.json")
+	manager := NewConfigManager(cfg)
+	update := managedUpdateForConfig(cfg)
+	update.Providers = []ManagedModelProviderUpdate{{
+		ID: "provider", Protocol: OpenAICompatibleProtocol, BaseURL: "https://model.example.test/v1",
+		TimeoutSeconds: 5, MaxRetries: 0, RetryBackoffMillis: 50,
+	}}
+	update.Models = managedModelDefinitions(cfg.ModelDefinitions)
+	update.Tasks = managedModelTasks(cfg.ModelTasks)
+	enabled := true
+	update.AIEnabled = &enabled
+
+	result, err := manager.UpdateWithResult(update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Config.AIEnabled || !result.Config.ModelEnabled() || !result.RestartRequired || result.BehaviorChanged ||
+		!reflect.DeepEqual(result.ChangedSections, []string{"ai_activation"}) {
+		t.Fatalf("AI activation result = %#v", result)
+	}
+	response, err := json.Marshal(manager.Response(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(response, []byte(`"ai_enabled":true`)) || !bytes.Contains(response, []byte(`"model_enabled":true`)) ||
+		bytes.Contains(response, []byte("router-secret")) {
+		t.Fatalf("AI activation response = %s", response)
+	}
+	stored, err := os.ReadFile(cfg.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stored, []byte(`"version": 8`)) || !bytes.Contains(stored, []byte(`"ai_enabled": true`)) {
+		t.Fatalf("AI activation was not persisted as v8: %s", stored)
+	}
+}
+
+func TestManagedConfigVersionSevenPreservesConfiguredAIActivation(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v7.json")
+	updatedAt := time.Date(2026, time.September, 3, 8, 0, 0, 0, time.UTC)
+	stored := managedConfigFile{
+		Version: 7, Revision: 1, UpdatedAtMS: updatedAt.UnixMilli(),
+		Audit:     []managedConfigAuditEntry{{Revision: 1, UpdatedAtMS: updatedAt.UnixMilli(), Sections: []string{"model"}}},
+		Providers: storedProviders(cfg.ModelProviders), Models: managedModelDefinitions(cfg.ModelDefinitions),
+		Tasks: managedModelTasks(cfg.ModelTasks), ModelDailyLimit: cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
+		SystemPrompt: cfg.SystemPrompt, GroupDefault: cfg.GroupDefault, GroupSoftDefault: string(cfg.GroupSoftDefault),
+		FocusTTLSeconds: int64(cfg.FocusTTL / time.Second), SoftCooldownSeconds: int64(cfg.SoftCooldown / time.Second),
+		ExpressionStyle: string(cfg.ExpressionStyle), RateLimitSeconds: int64(cfg.RateLimit / time.Second),
+		ContextTTLSeconds: int64(cfg.ContextTTL / time.Second), ContextMessages: cfg.ContextMessages,
+		MaxConcurrent: cfg.MaxConcurrent, ZZZAPIURL: cfg.ZZZAPIURL,
+		ZZZRequestTimeoutSeconds: int64(cfg.ZZZRequestTimeout / time.Second), PluginEnabled: clonePluginSettings(cfg.PluginEnabled),
+	}
+	content, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ConfigFile, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadManagedConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.AIEnabled || !loaded.ModelEnabled() || loaded.managedConfigRevision != 1 {
+		t.Fatalf("version 7 activation migration = %#v", loaded)
+	}
+}
+
 func TestManagedConfigAuditIsBoundedAndRejectsTampering(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v7.json")
@@ -681,6 +790,7 @@ func TestManagedConfigChangedSectionsUseFixedCategories(t *testing.T) {
 		want   string
 	}{
 		{name: "none", change: func(*Config) {}, want: "none"},
+		{name: "AI activation", change: func(cfg *Config) { cfg.AIEnabled = !cfg.AIEnabled }, want: "ai_activation"},
 		{name: "model", change: func(cfg *Config) { cfg.ModelDailyLimit++ }, want: "model"},
 		{name: "prompt", change: func(cfg *Config) { cfg.SystemPrompt = "private prompt text" }, want: "prompt"},
 		{name: "behavior", change: func(cfg *Config) { cfg.GroupSoftDefault = GroupSoftOn }, want: "behavior"},
@@ -775,7 +885,9 @@ func TestFairyAdminAPIBehaviorExperienceUpdateSchedulesRestart(t *testing.T) {
 func managedUpdateForConfig(cfg Config) ManagedConfigUpdate {
 	focusTTLSeconds := int64(cfg.FocusTTL / time.Second)
 	softCooldownSeconds := int64(cfg.SoftCooldown / time.Second)
+	aiEnabled := cfg.AIEnabled
 	return ManagedConfigUpdate{
+		AIEnabled:             &aiEnabled,
 		ModelBaseURL:          cfg.ModelBaseURL,
 		ModelName:             cfg.ModelName,
 		ModelDailyLimit:       cfg.ModelDailyLimit,

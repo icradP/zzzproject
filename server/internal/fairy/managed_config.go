@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	managedConfigVersion         = 7
+	managedConfigVersion         = 8
 	maxManagedConfigAuditEntries = 50
 )
 
@@ -91,6 +91,7 @@ type ManagedConfigUpdate struct {
 	ModelName        string  `json:"model_name,omitempty"`
 	ModelAPIKey      *string `json:"model_api_key,omitempty"`
 	ClearModelAPIKey bool    `json:"clear_model_api_key,omitempty"`
+	AIEnabled        *bool   `json:"ai_enabled,omitempty"`
 
 	Providers             []ManagedModelProviderUpdate  `json:"providers,omitempty"`
 	Models                []ManagedModelDefinition      `json:"models,omitempty"`
@@ -118,6 +119,8 @@ type ManagedConfigView struct {
 	// Legacy projection keeps older admin clients read-compatible.
 	ModelBaseURL          string `json:"model_base_url"`
 	ModelName             string `json:"model_name"`
+	AIEnabled             bool   `json:"ai_enabled"`
+	ModelConfigured       bool   `json:"model_configured"`
 	ModelEnabled          bool   `json:"model_enabled"`
 	AgentEnabled          bool   `json:"agent_enabled"`
 	VisionEnabled         bool   `json:"vision_enabled"`
@@ -203,6 +206,7 @@ type managedConfigFile struct {
 	Tasks                 []ManagedModelTask            `json:"tasks,omitempty"`
 	ExternalToolProviders []ManagedExternalToolProvider `json:"external_tool_providers,omitempty"`
 	BehaviorExperiences   []ManagedBehaviorExperience   `json:"behavior_experiences,omitempty"`
+	AIEnabled             bool                          `json:"ai_enabled"`
 
 	ModelDailyLimit          int             `json:"model_daily_limit"`
 	ModelMaxTokens           int             `json:"model_max_tokens"`
@@ -382,6 +386,9 @@ func loadManagedConfig(base Config) (Config, error) {
 		base.ModelDefinitions = modelDefinitionsFromManaged(stored.Models)
 		base.ModelTasks = modelTasksFromManaged(stored.Tasks)
 	}
+	if stored.Version >= 8 {
+		base.AIEnabled = stored.AIEnabled
+	}
 	if stored.Version >= 4 {
 		base.ExternalToolProviders = externalToolProvidersFromManaged(stored.ExternalToolProviders)
 	}
@@ -396,6 +403,9 @@ func loadManagedConfig(base Config) (Config, error) {
 	}
 	if err := normalizeBehaviorExperienceConfiguration(&base); err != nil {
 		return Config{}, fmt.Errorf("normalize Fairy managed behavior experience config: %w", err)
+	}
+	if stored.Version < 8 {
+		base.AIEnabled = base.modelTaskConfigured(ReplyerTaskID)
 	}
 	syncLegacyModelProjection(&base)
 	if err := base.Validate(); err != nil {
@@ -427,6 +437,9 @@ func applyManagedUpdate(current Config, update ManagedConfigUpdate) (Config, err
 	}
 
 	next := cloneConfig(current)
+	if update.AIEnabled != nil {
+		next.AIEnabled = *update.AIEnabled
+	}
 	structured := update.Providers != nil || update.Models != nil || update.Tasks != nil
 	var err error
 	if structured {
@@ -551,6 +564,7 @@ func persistManagedConfig(cfg Config) error {
 		Tasks:                    managedModelTasks(cfg.ModelTasks),
 		ExternalToolProviders:    managedExternalToolProviders(cfg.ExternalToolProviders),
 		BehaviorExperiences:      managedBehaviorExperiences(cfg.BehaviorExperiences),
+		AIEnabled:                cfg.AIEnabled,
 		ModelDailyLimit:          cfg.ModelDailyLimit,
 		ModelMaxTokens:           cfg.ModelMaxTokens,
 		SystemPrompt:             cfg.SystemPrompt,
@@ -611,6 +625,7 @@ func managedConfigView(cfg Config) ManagedConfigView {
 	projection := primaryModelProjection(cfg)
 	return ManagedConfigView{
 		ModelBaseURL: projection.BaseURL, ModelName: projection.ModelName,
+		AIEnabled: cfg.AIEnabled, ModelConfigured: cfg.ModelConfigured(),
 		ModelEnabled: cfg.ModelEnabled(), AgentEnabled: cfg.AgentEnabled(),
 		VisionEnabled: cfg.TaskEnabled(VisionTaskID), TranscriberEnabled: cfg.TaskEnabled(TranscriberTaskID),
 		ModelAPIKeyConfigured: projection.APIKey != "",
@@ -662,7 +677,10 @@ func managedConfigChangedSections(current, next Config) []string {
 	_ = normalizeExternalToolConfiguration(&next)
 	_ = normalizeBehaviorExperienceConfiguration(&current)
 	_ = normalizeBehaviorExperienceConfiguration(&next)
-	sections := make([]string, 0, 7)
+	sections := make([]string, 0, 8)
+	if current.AIEnabled != next.AIEnabled {
+		sections = append(sections, "ai_activation")
+	}
 	if current.ModelBaseURL != next.ModelBaseURL || current.ModelAPIKey != next.ModelAPIKey || current.ModelName != next.ModelName ||
 		current.ModelDailyLimit != next.ModelDailyLimit || current.ModelMaxTokens != next.ModelMaxTokens ||
 		!reflect.DeepEqual(current.ModelProviders, next.ModelProviders) ||
@@ -736,13 +754,13 @@ func validateManagedConfigMetadata(stored managedConfigFile) error {
 }
 
 func validManagedConfigAuditSections(sections []string) bool {
-	if len(sections) == 0 || len(sections) > 7 {
+	if len(sections) == 0 || len(sections) > 8 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(sections))
 	for _, section := range sections {
 		switch section {
-		case "model", "prompt", "behavior", "runtime_limits", "plugins", "external_tools", "behavior_experiences", "none":
+		case "ai_activation", "model", "prompt", "behavior", "runtime_limits", "plugins", "external_tools", "behavior_experiences", "none":
 		default:
 			return false
 		}

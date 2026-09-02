@@ -240,6 +240,7 @@ smoke_test_sqlite() {
       FAIRY_TRACE_KEY_FILE=/tmp/fairy.key \
       FAIRY_HEALTH_ADDR=127.0.0.1:18081 \
       FAIRY_ADMIN_TOKEN=fairy-smoke-admin-token \
+      FAIRY_AI_ENABLED=true \
       FAIRY_MODEL_BASE_URL=http://127.0.0.1:19090/v1 \
       FAIRY_MODEL_API_KEY=fairy-smoke-model-key \
       FAIRY_MODEL_NAME=fairy-smoke-model \
@@ -271,7 +272,9 @@ smoke_test_sqlite() {
         http://127.0.0.1:18081/admin/config
       grep -Fq "\"connected\":true" /tmp/fairy-admin
       grep -Fq "\"external_tool_providers\":[]" /tmp/fairy-admin
-      grep -Fq "\"config_status\":{\"schema_version\":7,\"revision\":\"0\",\"active_revision\":\"0\",\"state\":\"active\",\"restart_pending\":false" /tmp/fairy-admin
+      grep -Fq "\"ai_enabled\":true" /tmp/fairy-admin
+      grep -Fq "\"model_configured\":true" /tmp/fairy-admin
+      grep -Fq "\"config_status\":{\"schema_version\":8,\"revision\":\"0\",\"active_revision\":\"0\",\"state\":\"active\",\"restart_pending\":false" /tmp/fairy-admin
       grep -Fq "\"recent_changes\":[]" /tmp/fairy-admin
       grep -Fq "\"model_health\":[]" /tmp/fairy-admin
       grep -Fq "\"recent_failures\":[]" /tmp/fairy-admin

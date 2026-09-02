@@ -10,6 +10,7 @@ const state = {
   messages: [],
   media: [],
   fairy: null,
+  fairyDirty: false,
   fairyEvaluation: null,
   fairyEvaluationPollTimer: null,
   selectedGroup: null,
@@ -68,6 +69,17 @@ function showToast(message, isError = false) {
   toast.classList.toggle("error", isError);
   toast.classList.add("visible");
   state.toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 3200);
+}
+
+function setFairyDirty(dirty) {
+  state.fairyDirty = dirty;
+  const note = document.querySelector("#fairy-save-note");
+  note.classList.toggle("unsaved", dirty);
+  if (dirty) note.textContent = "Unsaved changes";
+}
+
+function markFairyDirty() {
+  setFairyDirty(true);
 }
 
 function element(tag, className, text) {
@@ -692,6 +704,7 @@ function createFairyProviderRow(provider = {}) {
     row.remove();
     refreshFairyProviderOptions();
     updateFairyRouteCounts();
+    markFairyDirty();
   };
   const heading = fairyEntryHeading("Provider", provider.id, remove);
   const identity = heading.firstElementChild;
@@ -748,6 +761,7 @@ function createFairyModelRow(model = {}) {
     row.remove();
     refreshFairyModelOptions();
     updateFairyRouteCounts();
+    markFairyDirty();
   };
   const heading = fairyEntryHeading("Model", model.id, remove);
   const removeButton = heading.lastElementChild;
@@ -998,6 +1012,7 @@ function addFairyCandidate(list, modelID = "") {
     if (direction === "up") list.insertBefore(row, sibling);
     else list.insertBefore(sibling, row);
     refreshCandidateButtons(list);
+    markFairyDirty();
   };
   const up = element("button", "icon-button", "\u2191");
   up.type = "button";
@@ -1014,6 +1029,7 @@ function addFairyCandidate(list, modelID = "") {
   const remove = fairyRemoveButton("Remove candidate model", () => {
     row.remove();
     refreshCandidateButtons(list);
+    markFairyDirty();
   });
   row.append(select, up, down, remove);
   list.append(row);
@@ -1026,6 +1042,7 @@ function createFairyTaskRow(task = {}) {
   const remove = () => {
     row.remove();
     updateFairyRouteCounts();
+    markFairyDirty();
   };
   const heading = fairyEntryHeading("Task", task.id, remove);
   const idInput = fairyInput("text", "id", task.id || "", { required: "", maxlength: "64", pattern: "[a-z0-9._-]+" });
@@ -1048,7 +1065,10 @@ function createFairyTaskRow(task = {}) {
   addCandidate.type = "button";
   candidateHeading.append(element("span", "", "Candidate models (fallback order)"), addCandidate);
   const candidateList = element("div", "candidate-list");
-  addCandidate.addEventListener("click", () => addFairyCandidate(candidateList, fairyModelIDs()[0] || ""));
+  addCandidate.addEventListener("click", () => {
+    addFairyCandidate(candidateList, fairyModelIDs()[0] || "");
+    markFairyDirty();
+  });
   (task.candidate_models || []).forEach((modelID) => addFairyCandidate(candidateList, modelID));
   candidateEditor.append(candidateHeading, candidateList);
   row.append(heading, primaryGrid, candidateEditor);
@@ -1155,6 +1175,7 @@ function createFairyExternalProviderRow(provider = {}) {
   const remove = () => {
     row.remove();
     updateFairyExternalProviderCount();
+    markFairyDirty();
   };
   const heading = fairyEntryHeading("External provider", provider.id, remove);
   const enabled = fairyInput("checkbox", "enabled", "");
@@ -1239,6 +1260,7 @@ function createFairyBehaviorExperienceRow(experience = {}) {
   const remove = () => {
     row.remove();
     updateFairyBehaviorExperienceCount();
+    markFairyDirty();
   };
   const heading = fairyEntryHeading("Behavior experience", experience.id, remove);
   const enabled = fairyInput("checkbox", "enabled", "");
@@ -1303,8 +1325,19 @@ function renderFairy(payload) {
   connectionBadge.textContent = payload.connected ? "Connected" : "Connecting";
   connectionBadge.className = `status-badge ${payload.connected ? "enabled" : "offline"}`;
   const modelBadge = document.querySelector("#fairy-model-state");
-  modelBadge.textContent = config.model_enabled ? "AI enabled" : "AI disabled";
-  modelBadge.className = `status-badge ${config.model_enabled ? "enabled" : "offline"}`;
+  const restartPending = payload.config_status?.restart_pending;
+  if (restartPending && config.ai_enabled) {
+    modelBadge.textContent = "AI enable pending";
+  } else if (restartPending && !config.ai_enabled) {
+    modelBadge.textContent = "AI disable pending";
+  } else if (config.model_enabled) {
+    modelBadge.textContent = "AI active";
+  } else if (config.model_configured) {
+    modelBadge.textContent = "AI off";
+  } else {
+    modelBadge.textContent = "AI unconfigured";
+  }
+  modelBadge.className = `status-badge ${config.model_enabled && !restartPending ? "enabled" : "offline"}`;
   const agentBadge = document.querySelector("#fairy-agent-state");
   agentBadge.textContent = config.agent_enabled ? "Planner enabled" : "Planner disabled";
   agentBadge.className = `status-badge ${config.agent_enabled ? "enabled" : "offline"}`;
@@ -1317,6 +1350,7 @@ function renderFairy(payload) {
   renderFairyModelRouting(config);
   renderFairyExternalProviders(config);
   renderFairyBehaviorExperiences(config);
+  document.querySelector("#fairy-ai-enabled").checked = Boolean(config.ai_enabled);
   document.querySelector("#fairy-system-prompt").value = config.system_prompt || "";
   document.querySelector("#fairy-group-default").checked = Boolean(config.group_default_enabled);
   document.querySelector("#fairy-group-soft-trigger").value = config.group_soft_trigger || "shadow";
@@ -1330,6 +1364,7 @@ function renderFairy(payload) {
   document.querySelector("#fairy-context-messages").value = config.context_messages ?? 12;
   document.querySelector("#fairy-zzz-api-url").value = config.zzz_api_url || "";
   document.querySelector("#fairy-zzz-timeout").value = config.zzz_request_timeout_seconds ?? 15;
+  setFairyDirty(false);
 
   const pluginRows = plugins.map((plugin) => {
     const row = document.createElement("label");
@@ -1421,6 +1456,7 @@ function renderFairyRuntime(runtime, configStatus) {
   }
 
   const configSectionLabels = {
+    ai_activation: "AI activation",
     model: "Model routing",
     prompt: "System prompt",
     behavior: "Behavior",
@@ -1615,6 +1651,11 @@ async function loadFairy() {
 }
 
 async function setActiveView(view) {
+  if (state.activeView === "fairy" && state.fairyDirty) {
+    if (view === "fairy") return;
+    if (!window.confirm("Discard unsaved Fairy changes?")) return;
+    setFairyDirty(false);
+  }
   if (view !== "fairy") {
     window.clearTimeout(state.fairyEvaluationPollTimer);
     state.fairyEvaluationPollTimer = null;
@@ -1825,6 +1866,7 @@ document.querySelector("#fairy-add-provider").addEventListener("click", () => {
   document.querySelector("#fairy-provider-list").append(createFairyProviderRow({ id: `provider-${index}` }));
   refreshFairyProviderOptions();
   updateFairyRouteCounts();
+  markFairyDirty();
 });
 
 document.querySelector("#fairy-add-model").addEventListener("click", () => {
@@ -1838,6 +1880,7 @@ document.querySelector("#fairy-add-model").addEventListener("click", () => {
   refreshFairyProviderOptions();
   refreshFairyModelOptions();
   updateFairyRouteCounts();
+  markFairyDirty();
 });
 
 document.querySelector("#fairy-add-task").addEventListener("click", () => {
@@ -1850,6 +1893,7 @@ document.querySelector("#fairy-add-task").addEventListener("click", () => {
   document.querySelector("#fairy-task-list").append(task);
   refreshFairyModelOptions();
   updateFairyRouteCounts();
+  markFairyDirty();
 });
 
 document.querySelector("#fairy-add-external-provider").addEventListener("click", () => {
@@ -1861,6 +1905,7 @@ document.querySelector("#fairy-add-external-provider").addEventListener("click",
     id: `tools-${index}`, enabled: false, protocol: "mcp-stdio",
   }));
   updateFairyExternalProviderCount();
+  markFairyDirty();
 });
 
 document.querySelector("#fairy-add-behavior-experience").addEventListener("click", () => {
@@ -1872,9 +1917,20 @@ document.querySelector("#fairy-add-behavior-experience").addEventListener("click
     id: `experience-${index}`, enabled: true, scope: "all",
   }));
   updateFairyBehaviorExperienceCount();
+  markFairyDirty();
 });
 
-document.querySelector("#fairy-config-form").addEventListener("submit", async (event) => {
+const fairyConfigForm = document.querySelector("#fairy-config-form");
+fairyConfigForm.addEventListener("input", markFairyDirty);
+fairyConfigForm.addEventListener("change", markFairyDirty);
+
+window.addEventListener("beforeunload", (event) => {
+  if (!state.fairyDirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+
+fairyConfigForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const saveButton = document.querySelector("#fairy-save-button");
   const pluginEnabled = {};
@@ -1887,7 +1943,13 @@ document.querySelector("#fairy-config-form").addEventListener("submit", async (e
     return;
   }
   const replyerTask = routing.tasks.find((task) => task.id === "replyer");
+  const aiEnabled = document.querySelector("#fairy-ai-enabled").checked;
+  if (aiEnabled && !replyerTask) {
+    showToast("Production AI requires a replyer task", true);
+    return;
+  }
   const payload = {
+    ai_enabled: aiEnabled,
     providers: routing.providers,
     models: routing.models,
     tasks: routing.tasks,

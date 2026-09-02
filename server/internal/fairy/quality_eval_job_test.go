@@ -76,6 +76,22 @@ func TestQualityEvalJobUsesSavedModelSnapshotAndRedactedState(t *testing.T) {
 	}
 }
 
+func TestQualityEvalTargetAllowsProductionDisabledCandidateWithoutTasks(t *testing.T) {
+	cfg := probeTestConfig(t, "https://provider.example.test/anthropic", AnthropicCompatibleProtocol, "candidate-eval-secret")
+	cfg.AIEnabled = false
+	cfg.ModelTasks = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled candidate config was rejected: %v", err)
+	}
+	target, _, err := qualityEvalTargetForConfiguredModel(cfg, "probe-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.RemoteModel != "probe-remote" || target.APIKey != "candidate-eval-secret" || target.Protocol != AnthropicCompatibleProtocol {
+		t.Fatalf("disabled candidate target = %#v", target)
+	}
+}
+
 func TestQualityEvalJobReportsFixedFailureAndCancellationStates(t *testing.T) {
 	cfg := probeTestConfig(t, "https://provider.example.test/v1", OpenAICompatibleProtocol, "private-key")
 

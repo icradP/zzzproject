@@ -62,6 +62,7 @@ type Config struct {
 	MaxConversationPending int
 	TurnTimeout            time.Duration
 	DrainTimeout           time.Duration
+	AIEnabled              bool
 	ModelBaseURL           string
 	ModelProtocol          string
 	ModelAPIKey            string
@@ -124,6 +125,9 @@ func ConfigFromEnv() (Config, error) {
 		ReconnectMax: 30 * time.Second,
 	}
 	var err error
+	if cfg.AIEnabled, err = envBool("FAIRY_AI_ENABLED", false); err != nil {
+		return Config{}, err
+	}
 	if cfg.GroupDefault, err = envBool("FAIRY_GROUP_DEFAULT_ENABLED", true); err != nil {
 		return Config{}, err
 	}
@@ -273,11 +277,25 @@ func (c Config) Validate() error {
 }
 
 func (c Config) ModelEnabled() bool {
+	if !c.AIEnabled {
+		return false
+	}
+	return c.modelTaskConfigured(ReplyerTaskID)
+}
+
+func (c Config) ModelConfigured() bool {
+	if normalizeModelConfiguration(&c) != nil {
+		return false
+	}
+	return len(c.ModelProviders) > 0 && len(c.ModelDefinitions) > 0
+}
+
+func (c Config) modelTaskConfigured(taskID string) bool {
 	if normalizeModelConfiguration(&c) != nil {
 		return false
 	}
 	for _, task := range c.ModelTasks {
-		if task.ID == ReplyerTaskID && len(task.CandidateModels) > 0 {
+		if task.ID == taskID && len(task.CandidateModels) > 0 {
 			return true
 		}
 	}
@@ -297,15 +315,10 @@ func (c Config) AgentEnabled() bool {
 }
 
 func (c Config) TaskEnabled(taskID string) bool {
-	if !c.ModelEnabled() {
+	if !c.AIEnabled || !c.modelTaskConfigured(ReplyerTaskID) {
 		return false
 	}
-	for _, task := range c.ModelTasks {
-		if task.ID == taskID && len(task.CandidateModels) > 0 {
-			return true
-		}
-	}
-	return false
+	return c.modelTaskConfigured(taskID)
 }
 
 func (c Config) IsPluginEnabled(id string) bool {

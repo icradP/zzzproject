@@ -58,6 +58,7 @@ if [[ ! -s ${env_file} ]]; then
     echo "FAIRY_HEALTH_ADDR=127.0.0.1:18081"
     echo "FAIRY_ADMIN_TOKEN=${admin_token}"
     echo "FAIRY_GROUP_DEFAULT_ENABLED=true"
+    echo "FAIRY_AI_ENABLED=false"
     echo "FAIRY_MODEL_DAILY_LIMIT=200"
     echo "FAIRY_CONTEXT_TTL=30m"
     echo "FAIRY_CONTEXT_MESSAGES=12"

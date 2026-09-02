@@ -150,10 +150,13 @@ func normalizeModelConfiguration(cfg *Config) error {
 
 func validateModelConfiguration(cfg Config) error {
 	if len(cfg.ModelProviders) == 0 && len(cfg.ModelDefinitions) == 0 && len(cfg.ModelTasks) == 0 {
+		if cfg.AIEnabled {
+			return fmt.Errorf("Fairy production AI requires a replyer task")
+		}
 		return nil
 	}
-	if len(cfg.ModelProviders) == 0 || len(cfg.ModelDefinitions) == 0 || len(cfg.ModelTasks) == 0 {
-		return fmt.Errorf("Fairy model providers, models, and tasks must be configured together")
+	if len(cfg.ModelProviders) == 0 || len(cfg.ModelDefinitions) == 0 {
+		return fmt.Errorf("Fairy model providers and models must be configured together")
 	}
 	providers := make(map[string]ModelProviderConfig, len(cfg.ModelProviders))
 	for _, provider := range cfg.ModelProviders {
@@ -249,8 +252,8 @@ func validateModelConfiguration(cfg Config) error {
 			return fmt.Errorf("task %q daily limit must be between 0 and 1000000", task.ID)
 		}
 	}
-	if !hasReplyer {
-		return fmt.Errorf("Fairy model configuration requires a replyer task")
+	if cfg.AIEnabled && !hasReplyer {
+		return fmt.Errorf("Fairy production AI requires a replyer task")
 	}
 	return nil
 }

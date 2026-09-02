@@ -206,8 +206,8 @@ func NewModelRouter(cfg Config, trace TraceStore) (*ModelRouter, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if !cfg.ModelEnabled() {
-		return nil, fmt.Errorf("Fairy replyer task is not configured")
+	if !cfg.ModelConfigured() {
+		return nil, fmt.Errorf("Fairy model providers and models are not configured")
 	}
 	snapshotID, err := newRuntimeID("snapshot")
 	if err != nil {

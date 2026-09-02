@@ -91,6 +91,33 @@ func TestProbeConfiguredModelAnthropicCompatible(t *testing.T) {
 	}
 }
 
+func TestProbeConfiguredModelWorksWithProductionAIDisabledAndNoTasks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("probe request path = %q", request.URL.Path)
+		}
+		_, _ = response.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	cfg := probeTestConfig(t, server.URL+"/v1", OpenAICompatibleProtocol, "disabled-probe-secret")
+	cfg.AIEnabled = false
+	cfg.ModelTasks = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled candidate config was rejected: %v", err)
+	}
+	if !cfg.ModelConfigured() || cfg.ModelEnabled() {
+		t.Fatalf("disabled candidate state = configured %v enabled %v", cfg.ModelConfigured(), cfg.ModelEnabled())
+	}
+	result, err := ProbeConfiguredModel(context.Background(), cfg, "probe-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.InputTokens != 4 || result.OutputTokens != 1 {
+		t.Fatalf("disabled candidate probe = %#v", result)
+	}
+}
+
 func TestProbeConfiguredModelClassifiesFailureWithoutLeakingUpstreamBody(t *testing.T) {
 	tests := []struct {
 		name       string
