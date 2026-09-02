@@ -40,3 +40,17 @@ func TestReconnectDelayResetsAfterEstablishedSession(t *testing.T) {
 		t.Fatalf("overflow guard delay = %s, want maximum", got)
 	}
 }
+
+func TestRunnerDeduplicatesOnlyInFlightFriendRequests(t *testing.T) {
+	runner := &Runner{pendingFriends: make(map[string]struct{})}
+	if !runner.reserveFriendRequest("friend-request-1") {
+		t.Fatal("first friend request reservation was rejected")
+	}
+	if runner.reserveFriendRequest("friend-request-1") {
+		t.Fatal("duplicate in-flight friend request was reserved")
+	}
+	runner.releaseFriendRequest("friend-request-1")
+	if !runner.reserveFriendRequest("friend-request-1") {
+		t.Fatal("completed friend request could not be retried")
+	}
+}

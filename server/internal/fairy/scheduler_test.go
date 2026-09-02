@@ -208,6 +208,29 @@ func TestConversationSchedulerDeduplicatesIngress(t *testing.T) {
 	}
 }
 
+func TestConversationSchedulerAllowsRetryableControlIngress(t *testing.T) {
+	cfg := testConfig(t)
+	scheduler := NewConversationScheduler(cfg, newMemoryTraceStore())
+	var calls atomic.Int32
+	turn := scheduledTurn{
+		source:         "test-control",
+		eventID:        "retryable-event",
+		conversationID: "control:test",
+		retryable:      true,
+		run:            func(context.Context) { calls.Add(1) },
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		accepted, err := scheduler.Submit(context.Background(), turn)
+		if err != nil || !accepted {
+			t.Fatalf("submit %d: accepted=%v err=%v", attempt+1, accepted, err)
+		}
+	}
+	shutdownSchedulerForTest(t, scheduler)
+	if calls.Load() != 2 {
+		t.Fatalf("retryable turn calls = %d, want 2", calls.Load())
+	}
+}
+
 func TestConversationSchedulerStopCancelsAndRunsBeforeFollowups(t *testing.T) {
 	cfg := testConfig(t)
 	scheduler := NewConversationScheduler(cfg, newMemoryTraceStore())

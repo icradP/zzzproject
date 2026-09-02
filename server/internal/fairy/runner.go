@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,21 +16,28 @@ import (
 )
 
 type Runner struct {
-	cfg       Config
-	engine    *Engine
-	connected atomic.Bool
-	scheduler *ConversationScheduler
-	messenger *reliableMessenger
-	feedback  FeedbackStore
+	cfg                Config
+	engine             *Engine
+	connected          atomic.Bool
+	scheduler          *ConversationScheduler
+	messenger          *reliableMessenger
+	feedback           FeedbackStore
+	friendMu           sync.Mutex
+	pendingFriends     map[string]struct{}
+	friendSyncInterval time.Duration
 }
+
+const defaultFriendSyncInterval = 30 * time.Second
 
 func NewRunner(cfg Config, engine *Engine, trace TraceStore) *Runner {
 	feedback, _ := trace.(FeedbackStore)
 	return &Runner{
 		cfg: cfg, engine: engine,
-		scheduler: NewConversationScheduler(cfg, trace),
-		messenger: newReliableMessenger(feedback),
-		feedback:  feedback,
+		scheduler:          NewConversationScheduler(cfg, trace),
+		messenger:          newReliableMessenger(feedback),
+		feedback:           feedback,
+		pendingFriends:     make(map[string]struct{}),
+		friendSyncInterval: defaultFriendSyncInterval,
 	}
 }
 
@@ -113,6 +122,8 @@ func (r *Runner) runSession(ctx context.Context) (bool, error) {
 
 	heartbeat := time.NewTicker(30 * time.Second)
 	defer heartbeat.Stop()
+	friendSync := time.NewTicker(r.friendSyncInterval)
+	defer friendSync.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -128,6 +139,10 @@ func (r *Runner) runSession(ctx context.Context) (bool, error) {
 			pingCancel()
 			if err != nil {
 				return true, fmt.Errorf("heartbeat failed: %w", err)
+			}
+		case <-friendSync.C:
+			if err := r.acceptPendingFriends(ctx, client); err != nil && ctx.Err() == nil {
+				log.Printf("[fairy] sync friend requests: %v", err)
 			}
 		}
 	}
@@ -324,21 +339,48 @@ func (r *Runner) waitForFeedbackOutput(ctx context.Context, messageID string) er
 }
 
 func (r *Runner) submitFriendRequest(ctx context.Context, client *Client, flag string) {
+	flag = strings.TrimSpace(flag)
+	if flag == "" || len(flag) > 1024 || !r.reserveFriendRequest(flag) {
+		return
+	}
 	accepted, err := r.scheduler.Submit(ctx, scheduledTurn{
 		source:         "zzz-friend-request",
 		eventID:        flag,
 		conversationID: "control:friend-requests",
+		retryable:      true,
 		run: func(turnContext context.Context) {
+			defer r.releaseFriendRequest(flag)
 			if err := r.acceptFriend(turnContext, client, flag); err != nil && turnContext.Err() == nil {
 				log.Printf("[fairy] accept friend request: %v", err)
 			}
 		},
 	})
 	if err != nil {
+		r.releaseFriendRequest(flag)
 		log.Printf("[fairy] friend request admission rejected: %v", err)
 	} else if !accepted {
+		r.releaseFriendRequest(flag)
 		log.Printf("[fairy] duplicate friend request ignored")
 	}
+}
+
+func (r *Runner) reserveFriendRequest(flag string) bool {
+	r.friendMu.Lock()
+	defer r.friendMu.Unlock()
+	if r.pendingFriends == nil {
+		r.pendingFriends = make(map[string]struct{})
+	}
+	if _, exists := r.pendingFriends[flag]; exists {
+		return false
+	}
+	r.pendingFriends[flag] = struct{}{}
+	return true
+}
+
+func (r *Runner) releaseFriendRequest(flag string) {
+	r.friendMu.Lock()
+	delete(r.pendingFriends, flag)
+	r.friendMu.Unlock()
 }
 
 func (r *Runner) shutdownScheduler() {

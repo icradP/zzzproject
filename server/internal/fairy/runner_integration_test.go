@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -241,6 +242,74 @@ func TestRunnerRetriesReplyAcrossAuthenticatedReconnect(t *testing.T) {
 		stats := runner.OutboundStats()
 		return stats.Delivered == 1 && stats.RetryAttempts == 1 && stats.Failed == 0 && stats.OutcomeUnknown == 0
 	}, "successful retried outbound delivery")
+}
+
+func TestRunnerRetriesPendingFriendRequestAfterTransientFailure(t *testing.T) {
+	var acceptAttempts atomic.Int32
+	server := newOutboundTestServer(t, func(connection *websocket.Conn, _ int) {
+		for {
+			var request protocol.Request
+			if err := connection.ReadJSON(&request); err != nil {
+				return
+			}
+			switch request.Action {
+			case protocol.ActionAuth, protocol.ActionUpdateProfile, protocol.ActionPing:
+				_ = connection.WriteJSON(protocol.Response{Status: "ok", RetCode: 0, Echo: request.Echo})
+			case protocol.ActionGetFriendRequests:
+				pending := []friendRequestInfo{}
+				if acceptAttempts.Load() < 2 {
+					requestInfo := friendRequestInfo{Flag: "friend-retry-1", Status: "pending"}
+					requestInfo.ToUser.UserID = "fairy"
+					pending = append(pending, requestInfo)
+				}
+				_ = connection.WriteJSON(protocol.Response{
+					Status: "ok", RetCode: 0, Echo: request.Echo, Data: pending,
+				})
+			case protocol.ActionFriendHandle:
+				attempt := acceptAttempts.Add(1)
+				if attempt == 1 {
+					_ = connection.WriteJSON(protocol.Response{
+						Status: "failed", RetCode: 500, Msg: "temporary failure", Echo: request.Echo,
+					})
+					continue
+				}
+				_ = connection.WriteJSON(protocol.Response{Status: "ok", RetCode: 0, Echo: request.Echo})
+			default:
+				_ = connection.WriteJSON(protocol.Response{
+					Status: "failed", RetCode: 400, Msg: "unexpected action", Echo: request.Echo,
+				})
+			}
+		}
+	})
+	defer server.Close()
+
+	cfg := testConfig(t)
+	cfg.ServerURL = "ws" + strings.TrimPrefix(server.URL, "http")
+	state, err := OpenStateStore(cfg.StateFile, cfg.GroupDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace, err := OpenSQLiteTraceStore(cfg.TraceDB, cfg.TraceKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trace.Close()
+	runner := NewRunner(cfg, NewEngine(cfg, state, nil), trace)
+	runner.friendSyncInterval = 10 * time.Millisecond
+	runnerContext, stopRunner := context.WithCancel(context.Background())
+	runnerDone := make(chan error, 1)
+	go func() { runnerDone <- runner.Run(runnerContext) }()
+
+	waitUntil(t, 3*time.Second, func() bool { return acceptAttempts.Load() >= 2 }, "retried friend acceptance")
+	stopRunner()
+	select {
+	case err := <-runnerDone:
+		if err != nil {
+			t.Fatalf("runner stopped with error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("runner did not stop")
+	}
 }
 
 func requestOK(t *testing.T, client *Client, action string, params, result interface{}) {

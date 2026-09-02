@@ -24,9 +24,12 @@ type scheduledTurn struct {
 	eventID        string
 	conversationID string
 	priority       bool
-	run            func(context.Context)
-	traceID        string
-	turnID         string
+	// retryable skips the persistent ingress claim. Its caller must coalesce
+	// concurrent duplicates and provide an authoritative retry source.
+	retryable bool
+	run       func(context.Context)
+	traceID   string
+	turnID    string
 }
 
 type conversationQueue struct {
@@ -115,15 +118,17 @@ func (s *ConversationScheduler) Submit(ctx context.Context, turn scheduledTurn) 
 		s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionRejected, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "conversation_pending_limit", QueueDepth: queueDepth, Pending: pending})
 		return false, ErrConversationPending
 	}
-	claimed, err := s.trace.ClaimIngress(ctx, turn.source, turn.eventID, now)
-	if err != nil {
-		s.mu.Unlock()
-		return false, err
-	}
-	if !claimed {
-		s.mu.Unlock()
-		s.appendTrace(TraceEvent{Time: now, Type: TraceIngressDuplicate, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "ignored"})
-		return false, nil
+	if !turn.retryable {
+		claimed, err := s.trace.ClaimIngress(ctx, turn.source, turn.eventID, now)
+		if err != nil {
+			s.mu.Unlock()
+			return false, err
+		}
+		if !claimed {
+			s.mu.Unlock()
+			s.appendTrace(TraceEvent{Time: now, Type: TraceIngressDuplicate, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "ignored"})
+			return false, nil
+		}
 	}
 	if queue == nil {
 		queue = &conversationQueue{}
