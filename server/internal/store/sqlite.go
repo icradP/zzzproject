@@ -93,6 +93,8 @@ func (s *SQLiteStore) initSchema() error {
 		sender_id TEXT NOT NULL,
 		sender_nickname TEXT NOT NULL,
 		segments TEXT NOT NULL, -- JSON array of segments
+		client_message_id TEXT,
+		client_message_fingerprint TEXT,
 		recalled BOOLEAN DEFAULT FALSE,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id)
@@ -277,11 +279,17 @@ func (s *SQLiteStore) initSchema() error {
 		"ALTER TABLE media_files ADD COLUMN width INTEGER DEFAULT 0",
 		"ALTER TABLE media_files ADD COLUMN height INTEGER DEFAULT 0",
 		"ALTER TABLE forwards ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE messages ADD COLUMN client_message_id TEXT",
+		"ALTER TABLE messages ADD COLUMN client_message_fingerprint TEXT",
 	} {
 		if _, err := s.db.Exec(statement); err != nil &&
 			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return err
 		}
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_sender_client_message
+		ON messages(sender_id, client_message_id)`); err != nil {
+		return err
 	}
 	if _, err := s.db.Exec(`UPDATE conversation_preferences
 		SET notification_level = CASE WHEN is_muted THEN 'muted' ELSE 'normal' END
@@ -594,9 +602,23 @@ func (s *SQLiteStore) DeleteConversation(id string) error {
 // ---- Message operations ----
 
 func (s *SQLiteStore) StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error) {
+	message, _, err := s.StoreMessageIdempotent(convID, senderID, senderNickname, "", segments)
+	return message, err
+}
+
+func (s *SQLiteStore) StoreMessageIdempotent(convID, senderID, senderNickname, clientMessageID string, segments []protocol.MessageSegment) (*Message, bool, error) {
 	segmentsJSON, err := json.Marshal(segments)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	fingerprint, err := messageRequestFingerprint(convID, segments)
+	if err != nil {
+		return nil, false, err
+	}
+	if clientMessageID != "" {
+		if existing, duplicate, err := s.idempotentMessage(senderID, clientMessageID, fingerprint); err != nil || duplicate {
+			return existing, duplicate, err
+		}
 	}
 
 	msg := &Message{
@@ -608,15 +630,49 @@ func (s *SQLiteStore) StoreMessage(convID, senderID, senderNickname string, segm
 		Timestamp:      time.Now(),
 	}
 
-	_, err = s.db.Exec(
-		"INSERT INTO messages (id, conversation_id, sender_id, sender_nickname, segments, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-		msg.ID, msg.ConversationID, msg.SenderID, msg.SenderNickname, string(segmentsJSON), msg.Timestamp,
+	var clientID interface{}
+	var requestFingerprint interface{}
+	if clientMessageID != "" {
+		clientID = clientMessageID
+		requestFingerprint = fingerprint
+	}
+	result, err := s.db.Exec(
+		`INSERT INTO messages (id, conversation_id, sender_id, sender_nickname, segments, client_message_id, client_message_fingerprint, timestamp)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(sender_id, client_message_id) DO NOTHING`,
+		msg.ID, msg.ConversationID, msg.SenderID, msg.SenderNickname, string(segmentsJSON), clientID, requestFingerprint, msg.Timestamp,
 	)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if inserted == 0 && clientMessageID != "" {
+		return s.idempotentMessage(senderID, clientMessageID, fingerprint)
+	}
+	return msg, false, nil
+}
 
-	return msg, nil
+func (s *SQLiteStore) idempotentMessage(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
+	var messageID string
+	var existingFingerprint string
+	err := s.db.QueryRow(
+		"SELECT id, client_message_fingerprint FROM messages WHERE sender_id = ? AND client_message_id = ?",
+		senderID, clientMessageID,
+	).Scan(&messageID, &existingFingerprint)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if existingFingerprint != fingerprint {
+		return nil, false, ErrMessageIdempotencyConflict
+	}
+	message, err := s.GetMessage(messageID)
+	return message, true, err
 }
 
 func (s *SQLiteStore) GetMessage(msgID string) (*Message, error) {

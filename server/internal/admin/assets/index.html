@@ -229,37 +229,139 @@
               <div class="badge-row">
                 <span id="fairy-connection-state" class="status-badge offline">Unavailable</span>
                 <span id="fairy-model-state" class="status-badge offline">AI disabled</span>
+                <span id="fairy-agent-state" class="status-badge offline">Planner disabled</span>
+                <span id="fairy-vision-state" class="status-badge offline">Vision disabled</span>
+                <span id="fairy-transcriber-state" class="status-badge offline">Voice disabled</span>
               </div>
             </div>
             <div class="settings-form">
-              <div class="field-grid two-columns">
-                <label class="field" for="fairy-model-base-url">
-                  <span>Model API base URL</span>
-                  <input id="fairy-model-base-url" type="url" maxlength="2048" placeholder="https://provider.example/v1">
-                </label>
-                <label class="field" for="fairy-model-name">
-                  <span>Model</span>
-                  <input id="fairy-model-name" type="text" maxlength="256" placeholder="Model identifier">
-                </label>
-              </div>
-              <div class="field-grid two-columns">
-                <label class="field" for="fairy-model-api-key">
-                  <span>API key</span>
-                  <input id="fairy-model-api-key" type="password" maxlength="8192" autocomplete="new-password" placeholder="Leave blank to keep the current key">
-                </label>
-                <div class="secret-control">
-                  <span id="fairy-api-key-state" class="status-badge offline">No key</span>
-                  <label class="checkbox-row compact-checkbox">
-                    <input id="fairy-clear-api-key" type="checkbox">
-                    <span>Clear stored key</span>
-                  </label>
+              <div class="route-section">
+                <div class="route-heading">
+                  <div>
+                    <strong>Providers</strong>
+                    <span id="fairy-provider-count" class="route-count">0</span>
+                  </div>
+                  <button id="fairy-add-provider" class="secondary-button compact" type="button">Add provider</button>
                 </div>
+                <div id="fairy-provider-list" class="route-list"></div>
               </div>
+
+              <div class="route-section">
+                <div class="route-heading">
+                  <div>
+                    <strong>Models</strong>
+                    <span id="fairy-model-count" class="route-count">0</span>
+                  </div>
+                  <button id="fairy-add-model" class="secondary-button compact" type="button">Add model</button>
+                </div>
+                <div id="fairy-model-list" class="route-list"></div>
+              </div>
+
+              <div class="route-section">
+                <div class="route-heading">
+                  <div>
+                    <strong>Tasks</strong>
+                    <span id="fairy-task-count" class="route-count">0</span>
+                  </div>
+                  <button id="fairy-add-task" class="secondary-button compact" type="button">Add task</button>
+                </div>
+                <div id="fairy-task-list" class="route-list"></div>
+              </div>
+
               <label class="field" for="fairy-system-prompt">
                 <span>System prompt</span>
                 <textarea id="fairy-system-prompt" rows="7" maxlength="8000" required></textarea>
               </label>
             </div>
+          </section>
+
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">REVIEWED GUIDANCE</p>
+                <h3>Behavior experiences</h3>
+              </div>
+              <div class="badge-row">
+                <span id="fairy-behavior-auto-learning" class="status-badge offline">Auto learning off</span>
+                <span id="fairy-behavior-experience-count" class="status-badge offline">0 configured</span>
+                <button id="fairy-add-behavior-experience" class="secondary-button compact" type="button">Add experience</button>
+              </div>
+            </div>
+            <div class="settings-form">
+              <div id="fairy-behavior-experience-list" class="route-list"></div>
+            </div>
+          </section>
+
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">MCP STDIO</p>
+                <h3>External tools</h3>
+              </div>
+              <div class="badge-row">
+                <span id="fairy-external-provider-count" class="status-badge offline">0 configured</span>
+                <button id="fairy-add-external-provider" class="secondary-button compact" type="button">Add provider</button>
+              </div>
+            </div>
+            <div class="settings-form">
+              <div id="fairy-external-provider-list" class="route-list"></div>
+            </div>
+          </section>
+
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">OBSERVABILITY</p>
+                <h3>Live runtime</h3>
+              </div>
+              <div class="badge-row">
+                <span id="fairy-config-state" class="status-badge offline">Config unavailable</span>
+                <span id="fairy-trace-state" class="status-badge offline">Trace unavailable</span>
+              </div>
+            </div>
+            <dl id="fairy-runtime-details" class="detail-grid"></dl>
+            <div class="table-scroll runtime-config-history-table">
+              <table>
+                <thead><tr><th>Revision</th><th>Updated</th><th>Changed sections</th></tr></thead>
+                <tbody id="fairy-config-history"></tbody>
+              </table>
+            </div>
+            <p id="fairy-config-history-empty" class="empty-state" hidden>No managed configuration changes yet.</p>
+            <div class="table-scroll runtime-task-quota-table">
+              <table>
+                <thead><tr><th>Model task</th><th>Used</th><th>Remaining</th><th>Daily limit</th></tr></thead>
+                <tbody id="fairy-runtime-task-quotas"></tbody>
+              </table>
+            </div>
+            <p id="fairy-runtime-task-quotas-empty" class="empty-state" hidden>No model tasks configured.</p>
+            <div class="table-scroll runtime-model-health-table">
+              <table>
+                <thead><tr><th>Model</th><th>Task</th><th>Health</th><th>Calls</th><th>Fallback</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Failures</th></tr></thead>
+                <tbody id="fairy-runtime-model-health"></tbody>
+              </table>
+            </div>
+            <p id="fairy-runtime-model-health-empty" class="empty-state" hidden>No model activity in the last 24 hours.</p>
+            <div class="table-scroll runtime-recent-failures-table">
+              <table>
+                <thead><tr><th>Time</th><th>Type</th><th>Target</th><th>Failure</th><th>Duration</th><th>Details</th></tr></thead>
+                <tbody id="fairy-runtime-recent-failures"></tbody>
+              </table>
+            </div>
+            <p id="fairy-runtime-recent-failures-empty" class="empty-state" hidden>No failures in the last 24 hours.</p>
+            <div class="table-scroll runtime-provider-table">
+              <table>
+                <thead><tr><th>External provider</th><th>Status</th><th>Tools</th><th>Failures</th><th>Circuit reset</th></tr></thead>
+                <tbody id="fairy-runtime-providers"></tbody>
+              </table>
+            </div>
+            <p id="fairy-runtime-providers-empty" class="empty-state" hidden>No external providers configured.</p>
+            <div class="table-scroll runtime-tool-table">
+              <table>
+                <thead><tr><th>Tool</th><th>State</th><th>Policy</th><th>Risk</th><th>Execution</th></tr></thead>
+                <tbody id="fairy-runtime-tools"></tbody>
+              </table>
+            </div>
+            <p id="fairy-runtime-tools-empty" class="empty-state" hidden>No tools registered.</p>
           </section>
 
           <section class="surface">
@@ -277,14 +379,36 @@
                 </span>
                 <input id="fairy-group-default" type="checkbox" role="switch">
               </label>
+              <div class="field-grid two-columns">
+                <label class="field" for="fairy-group-soft-trigger">
+                  <span>Group soft trigger</span>
+                  <select id="fairy-group-soft-trigger" required>
+                    <option value="off">Off</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="on">On</option>
+                  </select>
+                </label>
+                <label class="field" for="fairy-expression-style">
+                  <span>Expression style</span>
+                  <select id="fairy-expression-style" required>
+                    <option value="brief">Brief</option>
+                    <option value="normal">Normal</option>
+                    <option value="detailed">Detailed</option>
+                  </select>
+                </label>
+                <label class="field" for="fairy-focus-ttl">
+                  <span>Focus lifetime (seconds)</span>
+                  <input id="fairy-focus-ttl" type="number" min="10" max="1800" required>
+                </label>
+                <label class="field" for="fairy-soft-cooldown">
+                  <span>Soft trigger cooldown (seconds)</span>
+                  <input id="fairy-soft-cooldown" type="number" min="0" max="600" required>
+                </label>
+              </div>
               <div class="field-grid three-columns">
                 <label class="field" for="fairy-daily-limit">
                   <span>Daily model calls</span>
                   <input id="fairy-daily-limit" type="number" min="0" max="1000000" required>
-                </label>
-                <label class="field" for="fairy-max-tokens">
-                  <span>Maximum output tokens</span>
-                  <input id="fairy-max-tokens" type="number" min="64" max="4096" required>
                 </label>
                 <label class="field" for="fairy-max-concurrent">
                   <span>Concurrent requests</span>
@@ -330,8 +454,8 @@
           </section>
 
           <div class="settings-actions">
-            <span>Saving restarts Fairy and keeps the IM server online.</span>
-            <button id="fairy-save-button" class="primary-button" type="submit">Save and restart Fairy</button>
+            <span id="fairy-save-note">Ready</span>
+            <button id="fairy-save-button" class="primary-button" type="submit">Save Fairy settings</button>
           </div>
         </form>
       </section>

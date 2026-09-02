@@ -6,6 +6,12 @@ import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/widgets/im_chat_room_view/im_reaction_chips.dart';
 
 void main() {
+  test('Fairy positive and negative feedback reactions have stable IDs', () {
+    expect(ImReactionChips.emojiFor('76'), '👍');
+    expect(ImReactionChips.emojiFor('fairy-negative'), '👎');
+    expect(ImReactionChips.emojiIds.take(2), ['76', 'fairy-negative']);
+  });
+
   test('mock repository adds and removes the current user reaction', () async {
     final repository = MockImRepository();
     final messages = await repository.watchMessages('dm_belle_me').first;

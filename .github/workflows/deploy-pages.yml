@@ -77,6 +77,22 @@ jobs:
   server:
     name: Go server test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: zzz_test
+          POSTGRES_PASSWORD: zzz_test_password
+          POSTGRES_DB: zzz_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zzz_test -d zzz_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ZZZ_TEST_POSTGRES_DSN: postgres://zzz_test:zzz_test_password@127.0.0.1:5432/zzz_test?sslmode=disable
     defaults:
       run:
         working-directory: server

@@ -13,8 +13,11 @@ import (
 	"time"
 )
 
+const maxFairyAdminResponseBytes = 256 * 1024
+const maxFairyAdminRequestBytes = 256 * 1024
+
 type FairyController interface {
-	Request(ctx context.Context, method string, body []byte) (int, []byte, error)
+	Request(ctx context.Context, resource, method string, body []byte) (int, []byte, error)
 }
 
 type FairyHTTPController struct {
@@ -36,12 +39,12 @@ func NewFairyHTTPController(rawURL, token string) (*FairyHTTPController, error) 
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("Fairy admin token is required")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/config"
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return &FairyHTTPController{
 		endpoint: parsed.String(),
 		token:    strings.TrimSpace(token),
 		client: &http.Client{
-			Timeout: 8 * time.Second,
+			Timeout: 32 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -49,11 +52,14 @@ func NewFairyHTTPController(rawURL, token string) (*FairyHTTPController, error) 
 	}, nil
 }
 
-func (c *FairyHTTPController) Request(ctx context.Context, method string, body []byte) (int, []byte, error) {
-	if method != http.MethodGet && method != http.MethodPatch {
+func (c *FairyHTTPController) Request(ctx context.Context, resource, method string, body []byte) (int, []byte, error) {
+	if resource != "config" && resource != "model-probe" && resource != "model-eval" ||
+		resource == "config" && method != http.MethodGet && method != http.MethodPatch ||
+		resource == "model-probe" && method != http.MethodPost ||
+		resource == "model-eval" && method != http.MethodGet && method != http.MethodPost {
 		return 0, nil, fmt.Errorf("unsupported Fairy admin method")
 	}
-	request, err := http.NewRequestWithContext(ctx, method, c.endpoint, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, c.endpoint+"/"+resource, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -67,9 +73,12 @@ func (c *FairyHTTPController) Request(ctx context.Context, method string, body [
 		return 0, nil, fmt.Errorf("contact Fairy admin service: %w", err)
 	}
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxFairyAdminResponseBytes+1))
 	if err != nil {
 		return 0, nil, fmt.Errorf("read Fairy admin response: %w", err)
+	}
+	if len(payload) > maxFairyAdminResponseBytes {
+		return 0, nil, fmt.Errorf("Fairy admin response exceeds %d bytes", maxFairyAdminResponseBytes)
 	}
 	if !json.Valid(payload) {
 		return 0, nil, fmt.Errorf("Fairy admin service returned invalid JSON")

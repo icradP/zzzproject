@@ -21,6 +21,7 @@ type MemoryStore struct {
 	groupAnnouncements  map[string][]*GroupAnnouncement               // groupID -> announcements
 	announcementReads   map[string]map[string]bool                    // announcementID -> userID -> read
 	messages            map[string][]*Message                         // conversationID -> messages
+	messageIdempotency  map[string]memoryMessageIdempotency           // senderID + clientMessageID -> request
 	messageReactions    map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
 	readStates          map[string]map[string]*ReadState              // conversationID -> userID -> cursor
 	friendRequests      map[string]*FriendRequest
@@ -36,6 +37,11 @@ type MemoryStore struct {
 	friendReqCounter    int64
 }
 
+type memoryMessageIdempotency struct {
+	fingerprint string
+	message     *Message
+}
+
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users:              make(map[string]*User),
@@ -46,6 +52,7 @@ func NewMemoryStore() *MemoryStore {
 		groupAnnouncements: make(map[string][]*GroupAnnouncement),
 		announcementReads:  make(map[string]map[string]bool),
 		messages:           make(map[string][]*Message),
+		messageIdempotency: make(map[string]memoryMessageIdempotency),
 		messageReactions:   make(map[string]map[string]map[string]struct{}),
 		readStates:         make(map[string]map[string]*ReadState),
 		friendRequests:     make(map[string]*FriendRequest),
@@ -191,6 +198,7 @@ func (s *MemoryStore) DeleteConversation(id string) error {
 	defer s.mu.Unlock()
 	for _, msg := range s.messages[id] {
 		delete(s.messageReactions, msg.ID)
+		s.deleteMessageIdempotencyLocked(msg.ID)
 	}
 	delete(s.conversations, id)
 	delete(s.preferences, id)
@@ -202,8 +210,28 @@ func (s *MemoryStore) DeleteConversation(id string) error {
 // ---- Message operations ----
 
 func (s *MemoryStore) StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error) {
+	message, _, err := s.StoreMessageIdempotent(convID, senderID, senderNickname, "", segments)
+	return message, err
+}
+
+func (s *MemoryStore) StoreMessageIdempotent(convID, senderID, senderNickname, clientMessageID string, segments []protocol.MessageSegment) (*Message, bool, error) {
+	fingerprint, err := messageRequestFingerprint(convID, segments)
+	if err != nil {
+		return nil, false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := senderID + "\x00" + clientMessageID
+	if clientMessageID != "" {
+		if existing, ok := s.messageIdempotency[key]; ok {
+			if existing.fingerprint != fingerprint {
+				return nil, false, ErrMessageIdempotencyConflict
+			}
+			copy := *existing.message
+			copy.Reactions = s.reactionCountsLocked(copy.ID)
+			return &copy, true, nil
+		}
+	}
 	s.msgCounter++
 	msg := &Message{
 		ID:             fmt.Sprintf("msg_%d", s.msgCounter),
@@ -214,7 +242,10 @@ func (s *MemoryStore) StoreMessage(convID, senderID, senderNickname string, segm
 		Timestamp:      time.Now(),
 	}
 	s.messages[convID] = append(s.messages[convID], msg)
-	return msg, nil
+	if clientMessageID != "" {
+		s.messageIdempotency[key] = memoryMessageIdempotency{fingerprint: fingerprint, message: msg}
+	}
+	return msg, false, nil
 }
 
 func (s *MemoryStore) GetMessage(msgID string) (*Message, error) {
@@ -298,10 +329,19 @@ func (s *MemoryStore) DeleteMessage(msgID string) (bool, error) {
 			}
 			s.messages[conversationID] = append(messages[:index], messages[index+1:]...)
 			delete(s.messageReactions, msgID)
+			s.deleteMessageIdempotencyLocked(msgID)
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func (s *MemoryStore) deleteMessageIdempotencyLocked(messageID string) {
+	for key, record := range s.messageIdempotency {
+		if record.message.ID == messageID {
+			delete(s.messageIdempotency, key)
+		}
+	}
 }
 
 func (s *MemoryStore) ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error) {

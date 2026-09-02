@@ -93,8 +93,10 @@ func (s *PostgresStore) initSchema() error {
 		id VARCHAR(32) PRIMARY KEY,
 		conversation_id VARCHAR(32) NOT NULL,
 		sender_id VARCHAR(32) NOT NULL,
-		sender_nickname VARCHAR(64) NOT NULL,
-		segments JSONB NOT NULL,
+			sender_nickname VARCHAR(64) NOT NULL,
+			segments JSONB NOT NULL,
+			client_message_id TEXT,
+			client_message_fingerprint TEXT,
 		content_text TEXT,
 		content_type VARCHAR(20),
 		recalled BOOLEAN DEFAULT FALSE,
@@ -273,10 +275,16 @@ func (s *PostgresStore) initSchema() error {
 		"ALTER TABLE media_files ADD COLUMN IF NOT EXISTS width INTEGER DEFAULT 0",
 		"ALTER TABLE media_files ADD COLUMN IF NOT EXISTS height INTEGER DEFAULT 0",
 		"ALTER TABLE forwards ADD COLUMN IF NOT EXISTS conversation_id VARCHAR(64) NOT NULL DEFAULT ''",
+		"ALTER TABLE messages ADD COLUMN IF NOT EXISTS client_message_id TEXT",
+		"ALTER TABLE messages ADD COLUMN IF NOT EXISTS client_message_fingerprint TEXT",
 	} {
 		if _, err = s.db.Exec(statement); err != nil {
 			return err
 		}
+	}
+	if _, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_sender_client_message
+		ON messages(sender_id, client_message_id)`); err != nil {
+		return err
 	}
 	if _, err = s.db.Exec(`UPDATE conversation_preferences
 		SET notification_level = CASE WHEN is_muted THEN 'muted' ELSE 'normal' END
@@ -560,9 +568,23 @@ func (s *PostgresStore) DeleteConversation(id string) error {
 // ---- Message operations ----
 
 func (s *PostgresStore) StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error) {
+	message, _, err := s.StoreMessageIdempotent(convID, senderID, senderNickname, "", segments)
+	return message, err
+}
+
+func (s *PostgresStore) StoreMessageIdempotent(convID, senderID, senderNickname, clientMessageID string, segments []protocol.MessageSegment) (*Message, bool, error) {
 	segmentsJSON, err := json.Marshal(segments)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	fingerprint, err := messageRequestFingerprint(convID, segments)
+	if err != nil {
+		return nil, false, err
+	}
+	if clientMessageID != "" {
+		if existing, duplicate, err := s.idempotentMessage(senderID, clientMessageID, fingerprint); err != nil || duplicate {
+			return existing, duplicate, err
+		}
 	}
 
 	// Extract content text and type for indexing
@@ -596,17 +618,50 @@ func (s *PostgresStore) StoreMessage(convID, senderID, senderNickname string, se
 		Timestamp:      time.Now(),
 	}
 
-	_, err = s.db.Exec(
-		`INSERT INTO messages (id, conversation_id, sender_id, sender_nickname, segments, content_text, content_type, recalled, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+	var clientID interface{}
+	var requestFingerprint interface{}
+	if clientMessageID != "" {
+		clientID = clientMessageID
+		requestFingerprint = fingerprint
+	}
+	result, err := s.db.Exec(
+		`INSERT INTO messages (id, conversation_id, sender_id, sender_nickname, segments, content_text, content_type, client_message_id, client_message_fingerprint, recalled, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT(sender_id, client_message_id) DO NOTHING`,
 		msg.ID, msg.ConversationID, msg.SenderID, msg.SenderNickname,
-		string(segmentsJSON), contentText, contentType, msg.Recalled, msg.Timestamp,
+		string(segmentsJSON), contentText, contentType, clientID, requestFingerprint, msg.Recalled, msg.Timestamp,
 	)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if inserted == 0 && clientMessageID != "" {
+		return s.idempotentMessage(senderID, clientMessageID, fingerprint)
+	}
+	return msg, false, nil
+}
 
-	return msg, nil
+func (s *PostgresStore) idempotentMessage(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
+	var messageID string
+	var existingFingerprint string
+	err := s.db.QueryRow(
+		"SELECT id, client_message_fingerprint FROM messages WHERE sender_id = $1 AND client_message_id = $2",
+		senderID, clientMessageID,
+	).Scan(&messageID, &existingFingerprint)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if existingFingerprint != fingerprint {
+		return nil, false, ErrMessageIdempotencyConflict
+	}
+	message, err := s.GetMessage(messageID)
+	return message, true, err
 }
 
 func (s *PostgresStore) GetMessage(msgID string) (*Message, error) {

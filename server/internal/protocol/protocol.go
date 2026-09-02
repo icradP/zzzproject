@@ -262,8 +262,9 @@ type RegisterParams struct {
 
 // SendMessageParams are the params for the "send_message" action.
 type SendMessageParams struct {
-	ConversationID string           `json:"conversation_id"`
-	Message        []MessageSegment `json:"message"`
+	ConversationID  string           `json:"conversation_id"`
+	Message         []MessageSegment `json:"message"`
+	ClientMessageID string           `json:"client_message_id,omitempty"`
 }
 
 // RecallMessageParams are the params for the "recall_message" action.

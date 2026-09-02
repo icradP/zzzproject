@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,6 +10,88 @@ import (
 	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
 )
+
+func TestSendMessageClientIDIsIdempotentWithoutDuplicateBroadcast(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID, "type": "private", "participants": []string{"alice", "bob"},
+	}))
+	params := map[string]interface{}{
+		"conversation_id":   conversationID,
+		"client_message_id": "desktop:message-1",
+		"message":           []map[string]interface{}{{"type": "text", "data": map[string]interface{}{"text": "only once"}}},
+	}
+	first := request(t, alice, "send_message", params)
+	assertOK(t, first)
+	firstData := responseData(t, first)
+	if firstData["duplicate"] != false || firstData["client_message_id"] != "desktop:message-1" {
+		t.Fatalf("first response data = %#v", firstData)
+	}
+	firstEvent := readJSON(t, bob)
+	if firstEvent["message_id"] != firstData["message_id"] {
+		t.Fatalf("first event = %#v, response = %#v", firstEvent, firstData)
+	}
+
+	second := request(t, alice, "send_message", params)
+	assertOK(t, second)
+	secondData := responseData(t, second)
+	if secondData["duplicate"] != true || secondData["message_id"] != firstData["message_id"] || secondData["timestamp_ms"] != firstData["timestamp_ms"] {
+		t.Fatalf("duplicate response = %#v, first = %#v", secondData, firstData)
+	}
+	if err := bob.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var unexpected map[string]interface{}
+	if err := bob.ReadJSON(&unexpected); err == nil {
+		t.Fatalf("duplicate request was broadcast: %#v", unexpected)
+	} else if networkError, ok := err.(net.Error); !ok || !networkError.Timeout() {
+		t.Fatalf("wait for duplicate broadcast: %v", err)
+	}
+	_ = bob.SetReadDeadline(time.Time{})
+
+	conflictParams := map[string]interface{}{
+		"conversation_id":   conversationID,
+		"client_message_id": "desktop:message-1",
+		"message":           []map[string]interface{}{{"type": "text", "data": map[string]interface{}{"text": "changed"}}},
+	}
+	if conflict := request(t, alice, "send_message", conflictParams); conflict["status"] == "ok" || !strings.Contains(conflict["msg"].(string), "different message") {
+		t.Fatalf("conflicting idempotency response = %#v", conflict)
+	}
+
+	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID, "limit": 100,
+	}))
+	if len(history) != 1 {
+		t.Fatalf("message history has %d entries, want 1", len(history))
+	}
+}
+
+func TestValidClientMessageID(t *testing.T) {
+	for _, value := range []string{"", "has whitespace", strings.Repeat("a", 129)} {
+		if validClientMessageID(value) {
+			t.Fatalf("invalid client message ID was accepted: %q", value)
+		}
+	}
+	for _, value := range []string{"fairy-msg-0123456789abcdef", "desktop:message_1", "a.b-c_d"} {
+		if !validClientMessageID(value) {
+			t.Fatalf("valid client message ID was rejected: %q", value)
+		}
+	}
+}
 
 func TestWebSocketReplyAndRecallLifecycle(t *testing.T) {
 	database := store.NewMemoryStore()

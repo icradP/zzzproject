@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -15,28 +16,73 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cfg, err := fairy.ConfigFromEnv()
 	if err != nil {
-		log.Fatalf("[fairy] configuration error: %v", err)
+		log.Printf("[fairy] configuration error: %v", err)
+		return 1
 	}
-	state, err := fairy.OpenStateStore(cfg.StateFile, cfg.GroupDefault)
+	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	state, err := fairy.OpenStateStoreWithDefaults(cfg.StateFile, cfg.GroupDefault, cfg.GroupSoftDefault)
 	if err != nil {
-		log.Fatalf("[fairy] open state: %v", err)
+		log.Printf("[fairy] open state: %v", err)
+		return 1
 	}
+	trace, err := fairy.OpenSQLiteTraceStore(cfg.TraceDB, cfg.TraceKeyFile)
+	if err != nil {
+		log.Printf("[fairy] open trace store: %v", err)
+		return 1
+	}
+	defer func() {
+		if err := trace.Close(); err != nil {
+			log.Printf("[fairy] close trace store: %v", err)
+		}
+	}()
+	facts, err := fairy.OpenSQLiteFactMemoryStore(cfg.FactDB)
+	if err != nil {
+		log.Printf("[fairy] open fact-memory store: %v", err)
+		return 1
+	}
+	defer func() {
+		if err := facts.Close(); err != nil {
+			log.Printf("[fairy] close fact-memory store: %v", err)
+		}
+	}()
 	var model fairy.Model
 	if cfg.ModelEnabled() {
-		model = fairy.NewCompatibleModel(cfg)
-		log.Printf("[fairy] AI model enabled (%s), daily limit %d", cfg.ModelName, cfg.ModelDailyLimit)
+		modelRouter, routerErr := fairy.NewModelRouter(cfg, trace)
+		if routerErr != nil {
+			log.Printf("[fairy] initialize model router: %v", routerErr)
+			return 1
+		}
+		model = modelRouter
+		log.Printf("[fairy] AI model router enabled (%d providers, %d models), daily limit %d", len(cfg.ModelProviders), len(cfg.ModelDefinitions), cfg.ModelDailyLimit)
 	} else {
 		log.Printf("[fairy] AI model is not configured; command plugins remain available")
 	}
-	engine := fairy.NewEngine(cfg, state, model, fairy.NewBuiltinPlugins(cfg)...)
-	runner := fairy.NewRunner(cfg, engine)
+	externalTools := fairy.StartExternalToolManager(signalContext, cfg.ExternalToolProviders)
+	defer func() {
+		if err := externalTools.Close(); err != nil {
+			log.Printf("[fairy] close external tool providers")
+		}
+	}()
+	log.Printf("[fairy] external tool providers initialized (%d tools)", len(externalTools.Tools()))
+	engine := fairy.NewEngineWithExternalTools(cfg, state, model, trace, facts, externalTools.Tools(), fairy.NewBuiltinPlugins(cfg)...)
+	runner := fairy.NewRunner(cfg, engine, trace)
 	configManager := fairy.NewConfigManager(cfg)
+	runtimeInspector := fairy.NewRuntimeInspector(engine, runner, trace, facts).WithExternalTools(externalTools)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	healthServer := startHealthServer(cfg, runner, configManager)
+	ctx, stopRunner := context.WithCancel(signalContext)
+	defer stopRunner()
+	var restartRequested atomic.Bool
+	healthServer := startHealthServer(signalContext, cfg, runner, configManager, runtimeInspector, func() {
+		restartRequested.Store(true)
+		stopRunner()
+	})
 	if healthServer != nil {
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -45,40 +91,23 @@ func main() {
 		}()
 	}
 	if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatalf("[fairy] stopped: %v", err)
+		log.Printf("[fairy] stopped: %v", err)
+		return 1
 	}
+	if restartRequested.Load() {
+		return 75
+	}
+	return 0
 }
 
-func startHealthServer(cfg fairy.Config, runner *fairy.Runner, configManager *fairy.ConfigManager) *http.Server {
+func startHealthServer(ctx context.Context, cfg fairy.Config, runner *fairy.Runner, configManager *fairy.ConfigManager, runtime fairy.AdminRuntime, restart func()) *http.Server {
 	if cfg.HealthAddr == "" {
 		return nil
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet && request.Method != http.MethodHead {
-			response.Header().Set("Allow", "GET, HEAD")
-			http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		connected := runner.Connected()
-		response.Header().Set("Content-Type", "application/json")
-		response.Header().Set("Cache-Control", "no-store")
-		if !connected {
-			response.WriteHeader(http.StatusServiceUnavailable)
-		}
-		if request.Method == http.MethodHead {
-			return
-		}
-		_ = json.NewEncoder(response).Encode(map[string]interface{}{
-			"status":    map[bool]string{true: "ok", false: "connecting"}[connected],
-			"connected": connected,
-		})
-	})
+	registerProbeHandlers(mux, runner.Connected, runner.Ready)
 	if cfg.AdminToken != "" {
-		adminAPI := fairy.NewAdminAPI(configManager, cfg.AdminToken, runner.Connected, func() {
-			time.Sleep(300 * time.Millisecond)
-			os.Exit(75)
-		})
+		adminAPI := fairy.NewAdminAPIWithRuntimeContext(ctx, configManager, cfg.AdminToken, runner.Connected, restart, runtime)
 		mux.Handle("/admin/", adminAPI)
 		log.Printf("[fairy] local admin API enabled")
 	}
@@ -95,4 +124,40 @@ func startHealthServer(cfg fairy.Config, runner *fairy.Runner, configManager *fa
 		}
 	}()
 	return server
+}
+
+func registerProbeHandlers(mux *http.ServeMux, connected, ready func() bool) {
+	mux.HandleFunc("/health", probeHandler(false, connected, ready))
+	mux.HandleFunc("/ready", probeHandler(true, connected, ready))
+}
+
+func probeHandler(requireReady bool, connected, ready func() bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			response.Header().Set("Allow", "GET, HEAD")
+			http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		isConnected := connected()
+		isReady := ready()
+		status := "ok"
+		if !isConnected {
+			status = "connecting"
+		} else if !isReady {
+			status = "draining"
+		}
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("Cache-Control", "no-store")
+		if requireReady && !isReady {
+			response.WriteHeader(http.StatusServiceUnavailable)
+		}
+		if request.Method == http.MethodHead {
+			return
+		}
+		_ = json.NewEncoder(response).Encode(map[string]interface{}{
+			"status":    status,
+			"connected": isConnected,
+			"ready":     isReady,
+		})
+	}
 }

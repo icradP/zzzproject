@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,6 +78,9 @@ func (c *Client) Events() <-chan json.RawMessage { return c.events }
 func (c *Client) Done() <-chan struct{}          { return c.done }
 
 func (c *Client) Request(ctx context.Context, action string, params interface{}, result interface{}) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("start %s request: %w", action, err)
+	}
 	echo := fmt.Sprintf("fairy-%d", c.echo.Add(1))
 	responseChannel := make(chan pendingResult, 1)
 	c.pendingMu.Lock()
@@ -91,6 +95,11 @@ func (c *Client) Request(ctx context.Context, action string, params interface{},
 
 	request := protocol.Request{Action: action, Params: params, Echo: echo}
 	c.writeMu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.writeMu.Unlock()
+		c.removePending(echo)
+		return fmt.Errorf("start %s request: %w", action, err)
+	}
 	writeDeadline := time.Now().Add(15 * time.Second)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(writeDeadline) {
 		writeDeadline = deadline
@@ -128,15 +137,35 @@ func (c *Client) Request(ctx context.Context, action string, params interface{},
 }
 
 func (c *Client) SendText(ctx context.Context, conversationID, messageID, text string) error {
+	clientMessageID, err := newRuntimeID("fairy-msg")
+	if err != nil {
+		return fmt.Errorf("generate Fairy client message ID: %w", err)
+	}
+	_, err = c.sendTextWithID(ctx, conversationID, messageID, text, clientMessageID)
+	return err
+}
+
+func (c *Client) sendTextWithID(ctx context.Context, conversationID, messageID, text, clientMessageID string) (string, error) {
 	segments := make([]protocol.MessageSegment, 0, 2)
 	if messageID != "" {
 		segments = append(segments, protocol.ReplySegment(messageID))
 	}
 	segments = append(segments, protocol.TextSegment(text))
-	return c.Request(ctx, protocol.ActionSendMessage, protocol.SendMessageParams{
-		ConversationID: conversationID,
-		Message:        segments,
-	}, nil)
+	var result struct {
+		MessageID string `json:"message_id"`
+	}
+	if err := c.Request(ctx, protocol.ActionSendMessage, protocol.SendMessageParams{
+		ConversationID:  conversationID,
+		Message:         segments,
+		ClientMessageID: clientMessageID,
+	}, &result); err != nil {
+		return "", err
+	}
+	result.MessageID = strings.TrimSpace(result.MessageID)
+	if result.MessageID == "" || len(result.MessageID) > 1024 {
+		return "", fmt.Errorf("send_message response did not contain a valid message ID")
+	}
+	return result.MessageID, nil
 }
 
 func (c *Client) GetGroupMembers(ctx context.Context, groupID string) ([]protocol.GroupMember, error) {

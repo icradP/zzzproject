@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -947,6 +948,15 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "conversation_id required")
 		return
 	}
+	clientMessageID := ""
+	if rawClientMessageID, exists := params["client_message_id"]; exists {
+		var valid bool
+		clientMessageID, valid = rawClientMessageID.(string)
+		if !valid || !validClientMessageID(clientMessageID) {
+			g.sendError(client, req.Echo, "client_message_id must contain 1-128 letters, digits, dots, colons, dashes, or underscores")
+			return
+		}
+	}
 
 	// Parse message segments.
 	msgData, err := json.Marshal(params["message"])
@@ -1076,8 +1086,12 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		nickname = user.Nickname
 		avatar = user.Avatar
 	}
-	msg, err := g.store.StoreMessage(convID, client.userID, nickname, segments)
+	msg, duplicate, err := g.store.StoreMessageIdempotent(convID, client.userID, nickname, clientMessageID, segments)
 	if err != nil {
+		if errors.Is(err, store.ErrMessageIdempotencyConflict) {
+			g.sendError(client, req.Echo, "client_message_id was already used for a different message")
+			return
+		}
 		g.sendError(client, req.Echo, "failed to store message")
 		return
 	}
@@ -1087,11 +1101,16 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		Status:  "ok",
 		RetCode: 0,
 		Data: map[string]interface{}{
-			"message_id":   msg.ID,
-			"timestamp_ms": msg.Timestamp.UnixMilli(),
+			"message_id":        msg.ID,
+			"timestamp_ms":      msg.Timestamp.UnixMilli(),
+			"client_message_id": clientMessageID,
+			"duplicate":         duplicate,
 		},
 		Echo: req.Echo,
 	})
+	if duplicate {
+		return
+	}
 
 	// Broadcast message event to all clients in the conversation.
 	event := protocol.MessageEvent{
@@ -1113,6 +1132,21 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	g.pushToConversation(convID, msg, client.userID, false)
 
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
+}
+
+func validClientMessageID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '.' || character == ':' ||
+			character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validateImageSegmentURL(segment protocol.MessageSegment) error {

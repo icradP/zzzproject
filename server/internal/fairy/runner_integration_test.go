@@ -9,10 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/icradp/zzz-im-server/internal/gateway"
 	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
 )
+
+const feedbackPersistenceTimeout = 8 * time.Second
 
 func TestRunnerRegistersAcceptsFriendsAndRepliesWithGroupTriggerRules(t *testing.T) {
 	database := store.NewMemoryStore()
@@ -29,8 +32,13 @@ func TestRunnerRegistersAcceptsFriendsAndRepliesWithGroupTriggerRules(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := NewEngine(cfg, state, nil)
-	runner := NewRunner(cfg, engine)
+	engine := NewEngine(cfg, state, &fakeModel{response: "integration model reply"})
+	trace, err := OpenSQLiteTraceStore(cfg.TraceDB, cfg.TraceKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trace.Close()
+	runner := NewRunner(cfg, engine, trace)
 	runnerContext, stopRunner := context.WithCancel(context.Background())
 	runnerDone := make(chan error, 1)
 	go func() { runnerDone <- runner.Run(runnerContext) }()
@@ -78,6 +86,38 @@ func TestRunnerRegistersAcceptsFriendsAndRepliesWithGroupTriggerRules(t *testing
 	if !strings.Contains(eventText(privateReply), "Fairy 可用指令") {
 		t.Fatalf("private reply = %#v", privateReply)
 	}
+	requestOK(t, alice, protocol.ActionReactMessage, protocol.ReactMessageParams{
+		MessageID: privateReply.MessageID, EmojiID: FairyPositiveReactionID,
+	}, nil)
+	requestOK(t, alice, protocol.ActionSendMessage, protocol.SendMessageParams{
+		ConversationID: privateID,
+		Message:        []protocol.MessageSegment{protocol.TextSegment("hello model")},
+	}, nil)
+	modelReply := waitForFairyMessage(t, alice, 3*time.Second, cfg.UserID)
+	if eventText(modelReply) != "integration model reply" {
+		t.Fatalf("model reply = %#v", modelReply)
+	}
+	requestOK(t, alice, protocol.ActionReactMessage, protocol.ReactMessageParams{
+		MessageID: modelReply.MessageID, EmojiID: FairyPositiveReactionID,
+	}, nil)
+	waitUntil(t, feedbackPersistenceTimeout, func() bool {
+		stats, statsErr := trace.FeedbackStats(context.Background(), time.Now().Add(-time.Hour))
+		return statsErr == nil && stats.RatedOutputs == 1 && stats.Positive == 1 && stats.Negative == 0
+	}, "positive model reply feedback without command reply feedback")
+	requestOK(t, alice, protocol.ActionReactMessage, protocol.ReactMessageParams{
+		MessageID: modelReply.MessageID, EmojiID: FairyPositiveReactionID, Remove: true,
+	}, nil)
+	waitUntil(t, feedbackPersistenceTimeout, func() bool {
+		stats, statsErr := trace.FeedbackStats(context.Background(), time.Now().Add(-time.Hour))
+		return statsErr == nil && stats.RatedOutputs == 0 && stats.Positive == 0 && stats.Negative == 0
+	}, "removed model reply feedback")
+	requestOK(t, alice, protocol.ActionReactMessage, protocol.ReactMessageParams{
+		MessageID: modelReply.MessageID, EmojiID: FairyNegativeReactionID,
+	}, nil)
+	waitUntil(t, feedbackPersistenceTimeout, func() bool {
+		stats, statsErr := trace.FeedbackStats(context.Background(), time.Now().Add(-time.Hour))
+		return statsErr == nil && stats.RatedOutputs == 1 && stats.Positive == 0 && stats.Negative == 1
+	}, "negative model reply feedback")
 
 	var group struct {
 		GroupID string `json:"group_id"`
@@ -104,6 +144,103 @@ func TestRunnerRegistersAcceptsFriendsAndRepliesWithGroupTriggerRules(t *testing
 	if !strings.Contains(eventText(groupReply), "群回复已开启") {
 		t.Fatalf("group reply = %#v", groupReply)
 	}
+}
+
+func TestRunnerRetriesReplyAcrossAuthenticatedReconnect(t *testing.T) {
+	type outboundRequest struct {
+		connection int
+		request    protocol.Request
+	}
+	outbound := make(chan outboundRequest, 2)
+	server := newOutboundTestServer(t, func(connection *websocket.Conn, connectionNumber int) {
+		for {
+			var request protocol.Request
+			if err := connection.ReadJSON(&request); err != nil {
+				return
+			}
+			switch request.Action {
+			case protocol.ActionAuth, protocol.ActionUpdateProfile, protocol.ActionPing:
+				_ = connection.WriteJSON(protocol.Response{Status: "ok", RetCode: 0, Echo: request.Echo})
+			case protocol.ActionGetFriendRequests:
+				_ = connection.WriteJSON(protocol.Response{
+					Status: "ok", RetCode: 0, Echo: request.Echo, Data: []friendRequestInfo{},
+				})
+				if connectionNumber == 1 {
+					_ = connection.WriteJSON(messageEvent{
+						PostType: "message", MessageType: "private", MessageID: "inbound-reconnect-1",
+						ConversationID: "private_alice_fairy", Sender: protocol.Sender{UserID: "alice", Nickname: "Alice"},
+						Message: []protocol.MessageSegment{protocol.TextSegment("/fairy help")}, Timestamp: time.Now().Unix(),
+					})
+				}
+			case protocol.ActionSendMessage:
+				outbound <- outboundRequest{connection: connectionNumber, request: request}
+				if connectionNumber == 1 {
+					_ = connection.Close()
+					return
+				}
+				_ = connection.WriteJSON(protocol.Response{
+					Status: "ok", RetCode: 0, Echo: request.Echo,
+					Data: map[string]interface{}{"message_id": "server-reconnect-reply"},
+				})
+			default:
+				_ = connection.WriteJSON(protocol.Response{
+					Status: "failed", RetCode: 400, Msg: "unexpected action", Echo: request.Echo,
+				})
+			}
+		}
+	})
+	defer server.Close()
+
+	cfg := testConfig(t)
+	cfg.ServerURL = "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg.ReconnectMin = time.Millisecond
+	cfg.ReconnectMax = 5 * time.Millisecond
+	state, err := OpenStateStore(cfg.StateFile, cfg.GroupDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace, err := OpenSQLiteTraceStore(cfg.TraceDB, cfg.TraceKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trace.Close()
+	runner := NewRunner(cfg, NewEngine(cfg, state, nil), trace)
+	runnerContext, stopRunner := context.WithCancel(context.Background())
+	runnerDone := make(chan error, 1)
+	go func() { runnerDone <- runner.Run(runnerContext) }()
+	defer func() {
+		stopRunner()
+		select {
+		case err := <-runnerDone:
+			if err != nil {
+				t.Errorf("runner stopped with error: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("runner did not stop")
+		}
+	}()
+
+	var first, second outboundRequest
+	select {
+	case first = <-outbound:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first outbound reply was not attempted")
+	}
+	select {
+	case second = <-outbound:
+	case <-time.After(5 * time.Second):
+		t.Fatal("outbound reply was not retried after reconnect")
+	}
+	firstParams := decodeOutboundParams(t, first.request)
+	secondParams := decodeOutboundParams(t, second.request)
+	if first.connection != 1 || second.connection != 2 || firstParams.ClientMessageID == "" ||
+		firstParams.ClientMessageID != secondParams.ClientMessageID {
+		t.Fatalf("runner outbound attempts = %#v then %#v", first, second)
+	}
+	waitUntil(t, 3*time.Second, func() bool {
+		stats := runner.OutboundStats()
+		return stats.Delivered == 1 && stats.RetryAttempts == 1 && stats.Failed == 0 && stats.OutcomeUnknown == 0
+	}, "successful retried outbound delivery")
 }
 
 func requestOK(t *testing.T, client *Client, action string, params, result interface{}) {

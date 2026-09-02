@@ -299,6 +299,176 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 已建立内置插件注册表，管理页可启停已注册的 `zzz-profile` 插件并配置其公开资料上游；暂不允许从网页上传或执行任意插件代码。
 - 保存配置后 Fairy 自动重启应用完整配置，核心 IM 服务保持在线。
 
+当前进度（M7 Agent 化 F0，已本地实现、待发布）：
+
+- 确定版架构见 [FAIRY_AGENT_ARCHITECTURE.md](FAIRY_AGENT_ARCHITECTURE.md)。DSH 与 MaiBot 已足够覆盖 Agent 内核和聊天行为；IM 投递、安全、观测和评测分别由 ZZZ / OneBot、OWASP Agentic AI、OpenTelemetry GenAI 和 Fairy 自有 eval corpus 补齐。
+- 已用有界 Conversation Scheduler 替换直接并发 worker，实现 per-conversation FIFO、单活跃 Turn、跨会话并发上限和明确的队列溢出错误；已接纳消息不会因 worker 满载被静默跳过。
+- ZZZ 消息 ID 和好友请求 flag 使用 Fairy 本地 SQLite 持久化去重；`/fairy stop` 可抢占当前 Turn，信号退出和管理配置重启均先停止 admission，再 drain 或取消。
+- Turn Trace 只保存事件类型、随机 Trace / Turn ID、队列计数、固定状态和 HMAC 会话引用；不持久化消息正文、昵称、账号 ID、模型密钥或 Cookie。
+- FIFO、跨会话并发、队列边界、重启去重、stop、shutdown 和取消后不发送错误回复已有 Go 测试；当前只完成本地代码与测试，尚未部署到 `icrad.ltd`。
+- 后续按 Model Router、Tool Pipeline、Planner / Replyer、行为门控、可选记忆和外部 Tool Provider 的顺序推进，不在 Go 中重写完整 Cordis。
+- 默认继续不持久化聊天正文；生产 AI 仍需先确认模型供应商、预算、内容安全和评测门槛。
+
+当前进度（M7 Agent 化 F1，核心实现已完成、待发布）：
+
+- Fairy 已支持 Provider / Model / Task 结构化配置；版本 1 的单模型配置会自动迁移，管理 API 保留旧字段投影以兼容旧客户端。
+- Model Router 已实现 OpenAI-compatible 与 Anthropic-compatible 调用、不可变配置快照、有限重试、可取消退避和按顺序 fallback；鉴权、无效参数、内容拒绝不会重试或切换模型。
+- 每次模型尝试只记录脱敏的 Task、Provider、Model、snapshot、耗时、Token、成本和失败分类；Trace 不包含 Prompt、密钥或会话明文。
+- Fairy 管理页已支持多个 Provider、Model、Task 的增删改、候选模型 fallback 顺序调整和密钥只写；配置请求/响应上限已提升到 `256 KiB`。
+- 当前仍只完成本地代码、专项测试和浏览器预览，尚未生成或部署生产制品；生产模型变量继续保持为空。
+
+当前进度（M7 Agent 化 F2，已本地实现、待发布）：
+
+- 已实现 `ToolSpec`、不可变 Registry、严格 object Schema、Agent Scope、allowlist、风险与副作用策略、单 Turn 调用上限、可取消 timeout、输出校验/大小限制和脱敏投影。
+- 首版 Tool Session 强制串行执行；`exclusive` 工具跨会话互斥且等待锁时仍响应取消和超时。副作用工具必须声明幂等类型，默认策略只允许低风险只读工具。
+- `zzz-profile` 已迁移为低风险只读工具，同时保留 `/zzz <UID>`；包含唯一合法 UID 和明确 ZZZ 关键词的自然语言请求可确定性调用，无关键词、多个 UID 和普通聊天不会误触发。
+- Tool Trace 仅记录 Call ID、工具名、风险、策略结论、Step、耗时、结果状态/字节数和固定失败分类；不保存 UID、完整参数、上游响应或聊天正文。
+- 通用 `send_message.client_message_id` 已在 Memory、SQLite、Postgres 和 Gateway 实现。相同发送者/键/请求返回原消息且不重复广播推送，请求不一致时拒绝；SQLite 重启去重已有测试，Fairy 出站默认生成客户端消息 ID。
+- F2 单元、Gateway WebSocket 集成、SQLite/Postgres 重启和脱敏 Trace 测试已通过；CI 的 Go job 已加入临时 Postgres 服务。尚未生成或部署生产制品。结构化 Planner、模型原生 Tool Call 和多 Step Agent Loop 属于 F3，当前自然语言工具选择仅限高置信确定性规则。
+
+当前进度（M7 Agent 化 F3，已本地实现、待发布）：
+
+- OpenAI-compatible Adapter 已支持原生 Function Tool Call、严格请求/响应边界、Planner JSON 响应模式、`finish_reason` 内容拒绝/截断处理，以及结构错误时的受控 fallback；Anthropic-compatible Adapter 已支持 Messages、`tool_use / tool_result` 和对应停止原因。
+- 已实现 `call_tools`、`respond`、`wait`、`stop` 四类 Planner Decision；文本 Decision 必须是无 Markdown 包装、无未知字段、无尾随值的严格 JSON，工具参数只能来自原生 Tool Call 或严格 JSON object。
+- Agent Loop 最多 4 个 Planner Step，并复用 F2 Tool Session 的 6 次调用上限、可见性、授权、风险、副作用、timeout 和串行策略。Planner 对隐藏或不存在工具的请求只会得到固定失败码，无法直接执行能力。
+- 普通闲聊保持一次 `replyer` 调用；已配置 `planner` 时，工具意图和 `/fairy agent <请求>` 才进入 Agent mode。管理面板按 `replyer -> planner -> utility` 创建默认 Task，并分别显示 AI / Planner 状态。
+- Prompt 已拆为稳定 ID 的 `identity`、`persona`、`platform`、`safety`、`task`、`tools`、`runtime_context` sections；Model Trace 使用部署 `trace.key` 记录 section 版本和 HMAC，不保存 Prompt 正文。内存 Context Surface 带来源消息元数据、按会话隔离且只在成功回复后提交。
+- Replyer 不允许提交 Tool Call；最终文本统一执行空值、长度、疑似凭据、危险协议、私网/本机链接和双向文字控制符检查。每 Turn 的可见最终回复最多一次，取消后不发送错误回复。
+- 模型额度改为按实际 Planner / Replyer 逻辑调用逐次扣减；Provider 内部 Retry 不重复扣减。Fake Model golden trace、越权工具、Step 上限、会话隔离、取消、输出安全、额度中断和原生 Tool Call 协议测试已通过。尚未生成或部署生产制品，生产模型仍未配置。
+
+当前进度（M7 Agent 化 F4，已本地实现、待发布）：
+
+- 模型前 Gate 返回固定 `trigger / wait / ignore / reject` 和受限 reason；私聊、明确 `@Fairy` 与指令为硬触发，普通群消息默认 `shadow`，不排队、不调用模型、不保存正文、不发送回复。
+- 群主和管理员可用 `/fairy proactive off|shadow|on` 按群控制软触发。`on` 只允许明确触发后同一用户在 Focus TTL 内继续对话，并受 cooldown 约束；硬触发不受这些软抑制影响。
+- 新增 `brief / normal / detailed` 表达档位；每个 Turn 固定使用开始时的行为快照。群聊软触发默认值、Focus、cooldown 和表达档位可热更新，模型、密钥、插件、Prompt 和调度配置仍受控重启。
+- 内存 Context 溢出不再直接丢弃，而是压缩为带不可信标记的 `user` 摘要，保留来源起止 ID 和数量；摘要和聊天正文均不写入状态文件或 Trace。
+- Fairy 管理页新增 Scheduler、Tool Policy、当日模型额度，以及近 24 小时 Model / Tool / Gate / Token / cost 聚合；管理响应不包含聊天正文、Prompt 正文、用户 ID 或会话 ID。
+- 受管配置升级为 v3 并兼容读取 v1/v2；Gate、状态保留、上下文压缩、Trace 聚合和行为热更新专项测试已加入。当前仍未提交、推送、构建发布制品或部署，生产模型继续未配置。
+
+当前进度（M7 Agent 化 F5.1，来源化事实记忆已本地实现、待发布）：
+
+- 新增权限 `0600` 的独立 `facts.db`；事实记忆默认关闭，只接受 `/fairy remember` 显式写入，不进行模型自动抽取。单条、单 scope 数量/字符、TTL 和疑似凭据均有固定限制。
+- 私聊事实按“用户 + 会话”隔离，群事实按群隔离；群内开启、关闭、写入和删除仅群主或管理员可执行，群成员可查看本群事实。`/fairy facts list [页码]` 展示事实 ID、正文、来源消息和日期，`/fairy forget <id|all>` 执行真实删除。
+- 关闭事实记忆只停止召回、不隐式删除；事实以 `user` 角色的明确不可信 JSON 区段注入 Planner / Replyer，不能提升为 system 指令，也不进入 Prompt Trace。读取失败时本次 AI 调用 fail closed。
+- 管理运行态只暴露事实总数、已有 scope 数和已开启 scope 数，不返回事实正文、用户或会话标识。SQLite 重启、TTL、容量、凭据拦截、跨用户/跨群隔离、群权限、删除、Prompt 注入和并发测试已加入。
+- 语音和图片 Task 已在 F5.3 完成核心本地实现；行为经验只读召回已在 F5.5 完成，显式质量反馈聚合已在 F5.8 完成，自动反馈学习继续关闭。当前未提交、推送或部署。
+
+当前进度（M7 Agent 化 F5.2，可信独立进程 / MCP Tool Provider 已本地实现、待发布）：
+
+- 使用官方 Go MCP SDK 接入 stdio Provider；命令必须是绝对路径，参数不经过 shell，子进程只继承管理员列出的环境变量名称。管理配置升级为 v4 并兼容读取 v1-v3，API 不保存或返回环境变量值，疑似凭据参数直接拒绝。
+- Provider 与远端工具使用双层 allowlist。只有明确 `readOnlyHint=true`、未声明 destructive、名称合法且输入 Schema 属于 Fairy 支持子集的工具才以 `provider-id.tool-name` 注册；未授权、可写或 Schema 不兼容的能力不会进入 Planner definitions。
+- 外部工具复用现有 Tool Pipeline 的可见性、低风险只读策略、输入/输出 Schema、调用次数、timeout、大小、敏感投影和脱敏 Trace。MCP 结果先正规化为固定不可信 JSON；非文本内容、危险资源链接、空结果和超大结果均拒绝。
+- Provider 启动失败不阻止 Fairy 主进程；调用 timeout 或协议错误会关闭会话、终止子进程并打开熔断器，冷却后按需重连。stderr 直接丢弃，关闭时显式回收会话，systemd control-group 和 TasksMax 作为异常退出兜底。
+- Fairy 管理页新增外部 Provider 编辑器和固定运行态表格，只展示状态、工具数、连续失败数和熔断截止时间。配置外部工具后普通自然语言请求进入 Planner；生产启用前必须把增加的模型调用纳入预算。
+- 已加入真实 stdio 子进程的握手、分页发现、allowlist、只读/破坏性声明、Schema 拒绝、启动失败、timeout、熔断恢复、超大输出、stderr 背压、危险链接和进程退出测试。生产尚未安装或启用任何外部 Provider。
+- 当前工作树已完成 Linux amd64 静态 Server、VAPID 和 Fairy 构建，并在 Alpine amd64 中验证 SQLite、Fairy 实际注册登录、受管配置 API 以及真实 MCP stdio 发现/调用/熔断恢复。发布脚本已把这些检查固化为后续每次候选构建的强制 smoke；本阶段仍未提交、推送或部署。
+
+当前进度（M7 Agent 化 F5.3，图片理解与语音转写核心已本地实现、待发布）：
+
+- 已建立只识别消息段类型的 `Media Input` 前置边界。私聊图片/语音和群内明确 `@Fairy` 的媒体消息可以进入 Gate；普通群媒体不会越过现有触发策略。
+- `vision` 可通过 OpenAI-compatible Chat Completions 或 Anthropic-compatible Messages 接收校验后的内联图片；`transcriber` 只允许 OpenAI-compatible `/audio/transcriptions` multipart 转写语音。两者复用 Provider 的 timeout、有限 Retry、顺序 fallback 和脱敏 Model Trace。
+- 单次最多 4 张图片或 1 条语音，禁止图音混发；图片单张最多 8 MB、合计最多 20 MB、最长边 8192 像素且总像素不超过 4000 万，语音最多 10 MB / 2 分钟。当前支持 JPEG、PNG、GIF、WebP，以及 WebM、Ogg、MP3、M4A、WAV。
+- 服务端托管媒体只允许从已配置 ZZZ Server 的 `/files/` 读取；外部只允许 HTTPS 图片，外部语音拒绝。DNS 解析、实际拨号和每次重定向都阻断私网、回环、链路本地等地址，并限制响应头、正文、类型、签名和图片解码尺寸。
+- 未配置对应 Task 时保持零下载、零模型调用。事实记忆读取在媒体下载前 fail closed；图片或转写结果被包装为明确的不可信 `user` 数据，只进入 `replyer`，即使存在外部 MCP 也不会进入 Planner 或触发 Tool。
+- 全局日额度继续作为总闸门，`replyer`、`planner`、`vision`、`transcriber` 等 Task 另有独立 UTC 日额度；两层计数原子持久化。管理页可分别配置并查看各 Task 已用/剩余额度，旧 v1-v4 配置自动继承全局上限。
+- 图片 URL、原始字节、转写/描述正文均不写入 Trace；模型 Trace 只保留固定 Task、Provider、Model、耗时、Token、费用和失败分类。视频、普通文件和批量 OCR 仍不处理。
+- 管理页已验证 Provider / Model / Task 保存后受控重启与重新载入，Task 独立额度能在 Live runtime 正确显示。Fairy、Store、Gateway 竞态测试通过；当前工作树已生成 Linux amd64 静态 Server、VAPID、Fairy 和测试制品，并在 Alpine amd64 中通过完整 Fairy 测试、SQLite 注册登录、管理 API、VAPID、权限和优雅退出 smoke。systemd 单元也已通过 `systemd-analyze verify`；发布脚本现将完整 Fairy 测试纳入 Alpine 门禁。
+- 行为经验只读召回已在 F5.5 落地；自动反馈学习继续延后。当前聊天协议没有稳定的正负反馈事件和成功指标，在建立显式反馈、删除机制和离线 eval 前不允许模型自动生成或持久化行为经验。
+- F5.3 当前仍未提交、推送或部署，生产模型与媒体模型均未配置。
+
+当前进度（M7 Agent 化 F5.4，运行契约与确定性评测已本地实现、待发布）：
+
+- Fairy 探针按架构拆分：`/health` 只表示进程 HTTP 服务存活，`/ready` 要求已登录 IM 且 Scheduler 仍接纳新 Turn；连接中和 draining 的 `/ready` 返回 `503`。部署脚本与 Linux smoke 已改为只用 `/ready` 判断可切流。
+- 新增版本化 `testdata/eval/v1.json`，F5.5 扩展后当前 74 条严格 JSON 样例覆盖中英文 Gate、Prompt Injection 输入边界、凭据检测、危险输出链接、ZZZ 工具意图、Planner Decision、媒体批次和行为经验召回。重复 ID、未知字段和尾随 JSON 都会阻断测试。
+- 凭据防护新增中文密码、口令、密钥和令牌标签，并识别 OpenAI、GitHub、Slack、AWS 常见高置信 Token 前缀；普通密码咨询、策略说明和短 Token 不误拦截。
+- 自动行为学习继续保持关闭。真实模型的人格、拒答、质量、Token、费用和延迟评测仍需等待生产候选供应商与预算确认，并只在专用测试账号离线执行。
+- F5.4 当前未提交、推送或部署。
+
+当前进度（M7 Agent 化 F5.5，只读行为经验与 MiMo 候选接入已本地实现、待发布）：
+
+- 管理员可配置最多 64 条 `场景 -> 建议动作 -> 观察结果`，每条限定作用域并包含最多 12 个关键词。Fairy 只按本次用户原始文本确定性召回最多 3 条；排序依次采用关键词命中数、最长关键词和稳定 ID。
+- 经验以 advisory JSON 注入 Planner / Replyer，不包含召回关键词或 scope，不写入 Trace；图片描述和语音转写不参与匹配。模型与聊天没有经验写入接口，自动反馈学习固定关闭。
+- 受管配置升级为 v6 并兼容 v1-v5。管理页支持经验增删、启停、作用域和内容编辑；运行态只显示配置数、启用数与自动学习关闭。经验修改需要 Fairy 受控重启，不混入行为热更新。
+- Model Router 新增 Anthropic-compatible Messages Adapter，覆盖 system/messages、图片、原生 Tool Call、`tool_result`、Token 与停止原因。MiMo 返回的 thinking 块被丢弃；语音转写在配置阶段禁止绑定 Anthropic Provider。
+- 已从本地 CC Switch 读取非敏感 MiMo 元数据，并用进程环境变量完成 `mimo-v2.5-pro` 隔离 Eval。5 次调用覆盖中英文、Fairy 身份、Prompt Injection 和原生 Tool Call，总计 1247 input / 386 output tokens，P50 约 5.2 秒、P95 约 13.4 秒；套餐单价未知，因此不估算费用。
+- 发布脚本新增 `validate`，只验证当前工作树且不发布产物。F5.5 当前工作树已通过 Go test/vet、静态 Linux amd64 交叉编译，以及 Alpine 中 IM + SQLite + Fairy 就绪、管理 API、文件权限、MCP 测试和优雅退出的完整 lifecycle smoke；`build/deploy` 仍只从已提交 HEAD 构建。
+- 当前未提交、推送或部署，生产 Fairy 仍未启用外部模型；M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.6，可靠出站投递已本地实现、待发布）：
+
+- Engine 回复改由 Runner 生命周期内的可靠投递器发送。确认超时、响应异常或 WebSocket 在确认前断开时，同一逻辑回复可在当前连接或下一条已认证连接上继续尝试，总尝试次数最多 3 次。
+- 每次重试都复用最初生成的 `client_message_id`，与服务端已实现的“发送者 + 客户端消息 ID + 内容指纹”持久化去重闭环配合，不会二次广播或推送。服务器明确返回 API 错误时不重试。
+- 回复正文只保留在当前 Turn 内存，不新增持久 outbox，进程重启后不自动重放。管理运行态只公开成功、重试、失败和结果未知累计数，不返回消息、会话、账号或幂等键。
+- 专项测试覆盖同连接确认超时、断线后换连接、旧连接解绑竞态、明确拒绝不重试和连接前取消；当前未提交、推送或部署。
+
+当前进度（M7 Agent 化 F5.7，安全模型探测已本地实现、待发布）：
+
+- Fairy 本机管理 API 和 IM 管理代理新增单模型探测端点；只接受严格的 `{model_id}`，请求上限 1 KiB，要求管理鉴权，全进程最多同时探测一个模型。
+- 探测只读取已保存配置并固定使用无用户数据 Prompt、256 输出 Token 上限、单次供应商请求和 30 秒硬超时；不读取聊天、事实记忆、行为经验或工具数据，不占聊天日额度，也不写 Turn Trace。
+- 管理页每个 Model 增加 `Test`、Ready / 固定失败状态、延迟、Token 和估算费用。模型或 Provider 有未保存修改时要求先保存，避免误测旧配置；回复正文、供应商错误正文和密钥均不返回或展示。
+- OpenAI-compatible 与 Anthropic-compatible 请求契约、鉴权、401 / 429 / 5xx 分类、非法/超大请求、未授权、单并发和不泄密测试已通过。MiMo `mimo-v2.5-pro` 复测发现 64 Token 可能全部用于 `thinking` 并得到 `invalid_response`；上限调整为 256 Token 后，Fairy 自身真实探测约 2.7 秒完成，使用 25 input / 48 output tokens。
+- 管理页已在 1440×1000 和 390×844 实际浏览器中验证，无横向溢出、控件重叠或控制台错误。当前未提交、推送或部署，生产 Fairy 仍未启用外部模型；M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.8，显式质量反馈闭环已本地实现、待发布）：
+
+- 只有成功发送并取得服务端 `message_id` 的模型最终回复登记为可评价输出；命令、插件直出、错误和限流回复不登记。`👍`（`76`）映射为 positive，`👎`（`fairy-negative`）映射为 negative，其他 Reaction 和 Fairy 自己的 Reaction 忽略。
+- 同一输出与评价者采用 upsert：改评覆盖，取消只删除当前匹配标签，旧标签的迟到取消不会删除新标签。Fairy 输出被 Recall 后删除资格映射并级联删除全部评价。
+- SQLite 只保存输出消息与评价者的 HMAC 引用、随机 Turn ID、标签和时间，默认保留 30 天；不保存原始消息/用户/会话 ID、回复正文或会话正文。管理运行态只返回最近 24 小时已评价回复数、赞、踩和正向率聚合。
+- Gateway WebSocket 集成、重试/重连最终消息关联、SQLite 重启持久性、隐私字节扫描、Recall 级联、Runtime 聚合和 Flutter 稳定 Reaction ID 均有回归测试。管理页已在 1440×1000 与 390×844 实测，无横向溢出、统计项重叠或控制台错误。
+- 显式反馈当前只提供人工质量观察，不写回行为经验、Prompt、模型路由或工具策略；自动行为学习继续关闭。当前未提交、推送或部署，生产 Fairy 仍未启用外部模型；M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.9，候选模型质量门禁已本地实现、待发布）：
+
+- 新增独立 `fairy-eval` 命令和严格版本化的 5 Case 质量语料，覆盖中文简洁回复、英文隐私回复、Fairy 身份、Prompt Injection 隐藏标记保护和原生 Tool Call；支持 OpenAI-compatible 与 Anthropic-compatible。
+- 门禁按真实 `time.Duration` 判定 P95，并限制总输入/输出 Token；配置单价和成本上限后可增加成本门槛。退出码固定为通过 `0`、配置或运行错误 `1`、门禁失败 `2`，可直接接入后续 CI 候选发布。
+- API Key 只允许从 `FAIRY_EVAL_API_KEY` 进程环境读取。JSON 报告不包含 Prompt、模型正文、Base URL、API Key、供应商错误正文或真实用户数据，只输出固定 Case ID、固定失败码、尝试次数、延迟、Token 和可选费用。
+- 已从本机 CC Switch 将 MiMo 凭据直接注入单次进程环境完成 `mimo-v2.5-pro` 实测，未回显或落盘密钥。5/5 Case 通过且均为单次调用，总计 1256 input / 403 output tokens，P50 约 3.3 秒、P95 约 6.9 秒；套餐单价未知，成本门禁保持关闭。
+- 全量 Go test/vet/race、凭据扫描、差异检查和 Linux x86_64 `release-native.sh validate` 均通过。自动行为学习继续关闭；当前未提交、推送或部署，生产 Fairy 仍未启用外部模型；M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.10，管理面板质量评测已本地实现、待发布）：
+
+- Fairy 本机管理 API 与 IM 管理代理新增质量评测 GET/POST；只能评测已保存的 Model，POST 异步启动固定 5 Case，GET 返回最近任务，任务使用配置快照并随 Fairy 进程生命周期取消。
+- F5.7 连通性探测和质量评测共享单个诊断并发槽；冲突统一返回 `429` 与 `Retry-After: 1`。输入仍限制为严格 `{model_id}`、1 KiB、管理鉴权，不接受 Prompt 或运行参数。
+- 管理投影只返回任务状态、Model 配置 ID、固定 Case 状态/失败码、P50/P95、汇总 Token 和可选费用；不返回 Provider、远端模型名、逐请求尝试/延迟/费用、Prompt、模型正文、Base URL、API Key 或供应商错误正文。
+- 每个 Model 行新增 `Quality` 和脱敏结果；有未保存 Model/Provider 修改时禁用评测。页面通过单一计时器轮询，离开 Fairy 页面后停止；刷新页面可恢复 Fairy 进程内的最近任务。
+- 已用本地 IM、Fairy 和假 OpenAI Provider 在 1280px 桌面与 390×844 移动视口验证 `idle -> running -> passed`、刷新恢复、按钮状态、无横向溢出及无控制台错误。Linux smoke 已覆盖 GET `idle` 与 POST `running` 契约。
+- 全量 Go test/vet/race、凭据扫描、差异检查和最终 Linux x86_64 `release-native.sh validate` 均通过；为避免 Apple Silicon 上 x86 模拟导致已发送 Reaction 的反馈落库断言偶发超时，集成测试只将该异步持久化等待预算由 3 秒调整为 8 秒，统计断言保持不变。
+- 自动行为学习继续关闭；当前未提交、推送或部署，生产 Fairy 仍未启用外部模型；M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.11，模型健康观测已本地实现、待发布）：
+
+- 复用现有脱敏 `model_attempt` Trace，按最近 24 小时 `task_id + provider_id + model_id` 聚合 attempts/completed/failed、fallback、P50/P95、输入/输出 Token、费用和固定失败码；不新增数据库表，也不产生模型请求。
+- 存量 Trace 的模型 ID、状态、失败码、耗时、Token 和费用必须通过固定字段校验；结果按 Task、Provider、Model 稳定排序，空状态固定为 `model_health: []`。
+- 管理页 Live runtime 新增可横向滚动的 Model health 表，展示 Healthy / Degraded / Failing、成功率与聚合指标；不返回远端模型名、逐请求 Trace、Trace/Turn/Snapshot ID、会话身份、Prompt、正文、密钥或供应商错误。
+- 已用本地 IM、Fairy 和合成 Trace 在 1280px 桌面与 390×844 移动视口验证数据态和空状态；页面无全局横向溢出，浏览器控制台无警告或错误。Linux smoke 已加入 `model_health: []` 契约断言。
+- 已从本机 CC Switch 将 MiMo 凭据仅注入单次测试进程完成 `mimo-v2.5-pro` 复测：5/5 质量 Case 通过，1576 input / 430 output tokens，P50 约 6.4 秒、P95 约 8.8 秒；256 Token 探针约 7.3 秒并通过。凭据未回显或落盘，生产模型仍未配置。
+- 全量 Go test/vet/race、凭据扫描、差异检查和 Linux x86-64 `release-native.sh validate` 已通过；静态制品仅用于本地 Alpine smoke，没有发布或上传。
+- 自动行为学习继续关闭；当前未提交、推送或部署，M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.12，最近脱敏失败摘要已本地实现、待发布）：
+
+- 复用现有脱敏 Trace，投影最近 24 小时最多 20 条失败摘要并按时间倒序展示，覆盖 Model failure、Tool failure、Admission rejection 和 Turn timeout；不新增数据库表，也不产生模型请求。
+- 摘要只允许固定失败码、Task / Provider / Model / Tool 配置 ID、耗时、attempt / step / fallback 与有限队列数字。Trace / Turn / Snapshot / Tool Call ID、会话身份、消息正文、Prompt、工具参数和供应商错误均不返回；非法存量 Tool payload 会 fail closed。
+- 管理页 Live runtime 新增独立横向滚动的 Recent failures 表；空状态固定为 `recent_failures: []`。已在 1280x900 桌面与 390x844 移动视口验证四类数据态和空状态，页面无全局横向溢出，失败码保持单行且表格不会挤压页面。
+- 专项测试覆盖四类映射、时间排序、20 条上限、隐私字段扫描和非法 Tool 失败码；Linux smoke 已加入 `recent_failures: []` 契约断言。
+- 全量 Go test/vet/race、JavaScript 语法、凭据扫描、差异检查和 Linux x86_64 `release-native.sh validate` 均已通过；验证制品只存在于临时目录，没有发布或上传。
+- 自动行为学习继续关闭；当前未提交、推送或部署，生产 Fairy 仍未启用外部模型；M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.13，配置修订与生效状态已本地实现、待发布）：
+
+- 受管配置升级为 v7 并兼容读取 v1-v6；每次成功保存生成单调递增 revision、UTC 更新时间和固定分类审计，非法 v7 revision 或审计元数据 fail closed。
+- ConfigManager 分别维护期望配置与 active 配置。热更新成功后才推进 active revision；模型、Prompt、插件等需要重启的变更，在新进程实际加载前保持 `restart_pending`，避免把持久化成功误报为运行态生效。
+- 管理 API 与 Fairy 页面展示 schema、期望/生效 revision、`active / applying / restart_pending` 状态及最近 50 条变更分类。审计只允许固定分类，不记录配置值、Prompt、URL、密钥或用户身份；移动端表格使用独立横向滚动。
+- 已在本地验证 Environment baseline、热更新、重启 pending、重启后 active 和审计保留流程；1280x900 与 390x844 视口均无全局横向溢出。刷新管理数据后保存提示会按实际配置状态复位，不再残留旧的 `Restart scheduled`。
+- 从本机 CC Switch 向单次测试进程注入 MiMo 凭据完成 `mimo-v2.5-pro` 复测，密钥未回显或落盘。256 Token 探针约 3.7 秒并通过；5/5 质量 Case 通过，总计 1576 input / 291 output tokens，P50 约 3.4 秒、P95 约 8.2 秒。该结果不代表生产已启用模型。
+- 自动行为学习继续关闭；当前未提交、推送或部署，M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.14，候选模型启动配置完善、待发布）：
+
+- 旧版单模型环境配置新增 `FAIRY_MODEL_PROTOCOL`，默认 `openai-compatible`，也可直接选择 `anthropic-compatible`；这样无需把 API Key 写入受管配置即可启动 Anthropic-compatible Provider（包括 MiMo）。
+- 回归测试覆盖旧版配置迁移到 Anthropic Messages `/v1/messages`、`x-api-key` 和 `anthropic-version` 头，并确认 MiMo 的 `thinking` 块不会泄露到最终回复。
+- 当前仍只完成本地代码与验证，未提交、推送或部署；生产是否启用 MiMo 仍需明确月度额度和内容安全策略，M8 继续暂停。
+
 ### M1-M7 使用体验修复批次（已完成并上线）
 
 M8 暂停期间，优先处理生产使用中确认的以下问题：
@@ -354,7 +524,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Bot、客户端入口与隐私控制已上线，AI 待配置 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | 基础 Bot 已上线；Agent F0-F5.13 核心已本地完成、待发布；AI 待配置 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

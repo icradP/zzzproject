@@ -52,6 +52,9 @@ if [[ ! -s ${env_file} ]]; then
     echo "FAIRY_BIO=ZZZ IM 智能助手。私聊直接提问，群聊请先 @Fairy。"
     echo "FAIRY_STATE_FILE=${data_dir}/state.json"
     echo "FAIRY_CONFIG_FILE=${data_dir}/config.json"
+    echo "FAIRY_TRACE_DB=${data_dir}/fairy.db"
+    echo "FAIRY_FACT_DB=${data_dir}/facts.db"
+    echo "FAIRY_TRACE_KEY_FILE=${data_dir}/trace.key"
     echo "FAIRY_HEALTH_ADDR=127.0.0.1:18081"
     echo "FAIRY_ADMIN_TOKEN=${admin_token}"
     echo "FAIRY_GROUP_DEFAULT_ENABLED=true"
@@ -65,6 +68,18 @@ fi
 if ! grep -q '^FAIRY_CONFIG_FILE=' "${env_file}"; then
   umask 077
   echo "FAIRY_CONFIG_FILE=${data_dir}/config.json" >>"${env_file}"
+fi
+if ! grep -q '^FAIRY_TRACE_DB=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_TRACE_DB=${data_dir}/fairy.db" >>"${env_file}"
+fi
+if ! grep -q '^FAIRY_TRACE_KEY_FILE=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_TRACE_KEY_FILE=${data_dir}/trace.key" >>"${env_file}"
+fi
+if ! grep -q '^FAIRY_FACT_DB=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_FACT_DB=${data_dir}/facts.db" >>"${env_file}"
 fi
 if ! grep -q '^FAIRY_ADMIN_TOKEN=' "${env_file}"; then
   umask 077
@@ -80,8 +95,8 @@ systemctl enable zzz-fairy.service
 systemctl restart zzz-fairy.service
 
 for _ in {1..30}; do
-  if curl --fail --silent http://127.0.0.1:18081/health >/dev/null; then
-    echo "Fairy is connected to ZZZ IM and healthy on 127.0.0.1:18081."
+  if curl --fail --silent http://127.0.0.1:18081/ready >/dev/null; then
+    echo "Fairy is connected to ZZZ IM and ready on 127.0.0.1:18081."
     exit 0
   fi
   sleep 1

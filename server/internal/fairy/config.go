@@ -15,37 +15,73 @@ const (
 	defaultZZZAPIURL    = "https://enka.network/api/zzz/uid/{uid}"
 )
 
+type GroupSoftMode string
+
+const (
+	GroupSoftOff    GroupSoftMode = "off"
+	GroupSoftShadow GroupSoftMode = "shadow"
+	GroupSoftOn     GroupSoftMode = "on"
+)
+
+type ExpressionStyle string
+
+const (
+	ExpressionBrief    ExpressionStyle = "brief"
+	ExpressionNormal   ExpressionStyle = "normal"
+	ExpressionDetailed ExpressionStyle = "detailed"
+)
+
 // Config contains only Fairy process settings. The IM server remains unaware
 // of model credentials and plugin upstreams.
 type Config struct {
-	ServerURL         string
-	UserID            string
-	Password          string
-	InviteCode        string
-	Nickname          string
-	AvatarURL         string
-	Bio               string
-	DeviceID          string
-	StateFile         string
-	ConfigFile        string
-	HealthAddr        string
-	AdminToken        string
-	GroupDefault      bool
-	RateLimit         time.Duration
-	ContextTTL        time.Duration
-	ContextMessages   int
-	MaxConcurrent     int
-	ModelBaseURL      string
-	ModelAPIKey       string
-	ModelName         string
-	ModelDailyLimit   int
-	ModelMaxTokens    int
-	SystemPrompt      string
-	ZZZAPIURL         string
-	ZZZRequestTimeout time.Duration
-	PluginEnabled     map[string]bool
-	ReconnectMin      time.Duration
-	ReconnectMax      time.Duration
+	ServerURL              string
+	UserID                 string
+	Password               string
+	InviteCode             string
+	Nickname               string
+	AvatarURL              string
+	Bio                    string
+	DeviceID               string
+	StateFile              string
+	ConfigFile             string
+	TraceDB                string
+	TraceKeyFile           string
+	FactDB                 string
+	HealthAddr             string
+	AdminToken             string
+	GroupDefault           bool
+	GroupSoftDefault       GroupSoftMode
+	FocusTTL               time.Duration
+	SoftCooldown           time.Duration
+	ExpressionStyle        ExpressionStyle
+	RateLimit              time.Duration
+	ContextTTL             time.Duration
+	ContextMessages        int
+	MaxConcurrent          int
+	MaxPending             int
+	MaxConversationPending int
+	TurnTimeout            time.Duration
+	DrainTimeout           time.Duration
+	ModelBaseURL           string
+	ModelProtocol          string
+	ModelAPIKey            string
+	ModelName              string
+	ModelDailyLimit        int
+	ModelMaxTokens         int
+	SystemPrompt           string
+	ModelProviders         []ModelProviderConfig
+	ModelDefinitions       []ModelDefinitionConfig
+	ModelTasks             []ModelTaskConfig
+	ExternalToolProviders  []ExternalToolProviderConfig
+	BehaviorExperiences    []BehaviorExperienceConfig
+	ZZZAPIURL              string
+	ZZZRequestTimeout      time.Duration
+	PluginEnabled          map[string]bool
+	ReconnectMin           time.Duration
+	ReconnectMax           time.Duration
+	managedConfigRevision  uint64
+	managedConfigUpdatedAt time.Time
+	managedConfigAudit     []managedConfigAuditEntry
 }
 
 // ConfigFromEnv loads and validates Fairy configuration from environment
@@ -62,9 +98,21 @@ func ConfigFromEnv() (Config, error) {
 		DeviceID:     envOrDefault("FAIRY_DEVICE_ID", "fairy-service"),
 		StateFile:    envOrDefault("FAIRY_STATE_FILE", "/var/lib/zzz-fairy/state.json"),
 		ConfigFile:   envOrDefault("FAIRY_CONFIG_FILE", "/var/lib/zzz-fairy/config.json"),
+		TraceDB:      envOrDefault("FAIRY_TRACE_DB", "/var/lib/zzz-fairy/fairy.db"),
+		TraceKeyFile: envOrDefault("FAIRY_TRACE_KEY_FILE", "/var/lib/zzz-fairy/trace.key"),
+		FactDB:       envOrDefault("FAIRY_FACT_DB", "/var/lib/zzz-fairy/facts.db"),
 		HealthAddr:   envOrDefault("FAIRY_HEALTH_ADDR", "127.0.0.1:18081"),
 		AdminToken:   strings.TrimSpace(os.Getenv("FAIRY_ADMIN_TOKEN")),
+		GroupSoftDefault: GroupSoftMode(strings.ToLower(envOrDefault(
+			"FAIRY_GROUP_SOFT_TRIGGER", string(GroupSoftShadow),
+		))),
+		ExpressionStyle: ExpressionStyle(strings.ToLower(envOrDefault(
+			"FAIRY_EXPRESSION_STYLE", string(ExpressionNormal),
+		))),
 		ModelBaseURL: strings.TrimSpace(os.Getenv("FAIRY_MODEL_BASE_URL")),
+		ModelProtocol: strings.ToLower(strings.TrimSpace(envOrDefault(
+			"FAIRY_MODEL_PROTOCOL", OpenAICompatibleProtocol,
+		))),
 		ModelAPIKey:  os.Getenv("FAIRY_MODEL_API_KEY"),
 		ModelName:    strings.TrimSpace(os.Getenv("FAIRY_MODEL_NAME")),
 		SystemPrompt: envOrDefault("FAIRY_SYSTEM_PROMPT", defaultSystemPrompt),
@@ -82,6 +130,12 @@ func ConfigFromEnv() (Config, error) {
 	if cfg.RateLimit, err = envDuration("FAIRY_RATE_LIMIT", 8*time.Second); err != nil {
 		return Config{}, err
 	}
+	if cfg.FocusTTL, err = envDuration("FAIRY_FOCUS_TTL", 2*time.Minute); err != nil {
+		return Config{}, err
+	}
+	if cfg.SoftCooldown, err = envDuration("FAIRY_SOFT_COOLDOWN", 30*time.Second); err != nil {
+		return Config{}, err
+	}
 	if cfg.ContextTTL, err = envDuration("FAIRY_CONTEXT_TTL", 30*time.Minute); err != nil {
 		return Config{}, err
 	}
@@ -92,6 +146,18 @@ func ConfigFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.MaxConcurrent, err = envInt("FAIRY_MAX_CONCURRENT", 4); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxPending, err = envInt("FAIRY_MAX_PENDING", 256); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxConversationPending, err = envInt("FAIRY_MAX_CONVERSATION_PENDING", 16); err != nil {
+		return Config{}, err
+	}
+	if cfg.TurnTimeout, err = envDuration("FAIRY_TURN_TIMEOUT", 60*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.DrainTimeout, err = envDuration("FAIRY_DRAIN_TIMEOUT", 10*time.Second); err != nil {
 		return Config{}, err
 	}
 	if cfg.ModelDailyLimit, err = envInt("FAIRY_MODEL_DAILY_LIMIT", 200); err != nil {
@@ -107,6 +173,15 @@ func ConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err := normalizeModelConfiguration(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := normalizeExternalToolConfiguration(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := normalizeBehaviorExperienceConfiguration(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -114,6 +189,15 @@ func ConfigFromEnv() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := normalizeModelConfiguration(&c); err != nil {
+		return err
+	}
+	if err := normalizeExternalToolConfiguration(&c); err != nil {
+		return err
+	}
+	if err := normalizeBehaviorExperienceConfiguration(&c); err != nil {
+		return err
+	}
 	serverURL, err := url.Parse(c.ServerURL)
 	if err != nil || (serverURL.Scheme != "ws" && serverURL.Scheme != "wss") || serverURL.Host == "" {
 		return fmt.Errorf("FAIRY_SERVER_URL must be an absolute ws:// or wss:// URL")
@@ -127,8 +211,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Nickname) == "" || len([]rune(c.Nickname)) > 64 {
 		return fmt.Errorf("FAIRY_NICKNAME must contain 1-64 characters")
 	}
-	if c.StateFile == "" || c.ConfigFile == "" {
-		return fmt.Errorf("FAIRY_STATE_FILE and FAIRY_CONFIG_FILE are required")
+	if c.StateFile == "" || c.ConfigFile == "" || c.TraceDB == "" || c.TraceKeyFile == "" || c.FactDB == "" {
+		return fmt.Errorf("Fairy state, config, trace, fact-memory, and trace key paths are required")
 	}
 	if c.HealthAddr != "" {
 		if _, _, err := net.SplitHostPort(c.HealthAddr); err != nil {
@@ -138,8 +222,32 @@ func (c Config) Validate() error {
 	if c.RateLimit < 0 || c.ContextTTL < time.Minute || c.ContextMessages < 2 || c.ContextMessages > 50 {
 		return fmt.Errorf("Fairy rate/context limits are invalid")
 	}
+	if !validGroupSoftMode(c.GroupSoftDefault) {
+		return fmt.Errorf("FAIRY_GROUP_SOFT_TRIGGER must be off, shadow, or on")
+	}
+	if c.FocusTTL < 10*time.Second || c.FocusTTL > 30*time.Minute {
+		return fmt.Errorf("FAIRY_FOCUS_TTL must be between 10s and 30m")
+	}
+	if c.SoftCooldown < 0 || c.SoftCooldown > 10*time.Minute {
+		return fmt.Errorf("FAIRY_SOFT_COOLDOWN must be between 0 and 10m")
+	}
+	if !validExpressionStyle(c.ExpressionStyle) {
+		return fmt.Errorf("FAIRY_EXPRESSION_STYLE must be brief, normal, or detailed")
+	}
 	if c.MaxConcurrent < 1 || c.MaxConcurrent > 32 {
 		return fmt.Errorf("FAIRY_MAX_CONCURRENT must be between 1 and 32")
+	}
+	if c.MaxPending < c.MaxConcurrent || c.MaxPending > 10000 {
+		return fmt.Errorf("FAIRY_MAX_PENDING must be between FAIRY_MAX_CONCURRENT and 10000")
+	}
+	if c.MaxConversationPending < 1 || c.MaxConversationPending > c.MaxPending {
+		return fmt.Errorf("FAIRY_MAX_CONVERSATION_PENDING must be between 1 and FAIRY_MAX_PENDING")
+	}
+	if c.TurnTimeout < time.Second || c.TurnTimeout > 10*time.Minute {
+		return fmt.Errorf("FAIRY_TURN_TIMEOUT must be between 1s and 10m")
+	}
+	if c.DrainTimeout < time.Second || c.DrainTimeout > 5*time.Minute {
+		return fmt.Errorf("FAIRY_DRAIN_TIMEOUT must be between 1s and 5m")
 	}
 	if c.ReconnectMin <= 0 || c.ReconnectMax < c.ReconnectMin {
 		return fmt.Errorf("Fairy reconnect limits are invalid")
@@ -150,14 +258,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.SystemPrompt) == "" || len([]rune(c.SystemPrompt)) > 8000 {
 		return fmt.Errorf("FAIRY_SYSTEM_PROMPT must contain 1-8000 characters")
 	}
-	if (c.ModelBaseURL == "") != (c.ModelName == "") {
-		return fmt.Errorf("FAIRY_MODEL_BASE_URL and FAIRY_MODEL_NAME must be configured together")
-	}
-	if c.ModelBaseURL != "" {
-		modelURL, err := url.Parse(c.ModelBaseURL)
-		if err != nil || modelURL.Scheme != "https" || modelURL.Host == "" {
-			return fmt.Errorf("FAIRY_MODEL_BASE_URL must be an absolute HTTPS URL")
-		}
+	if err := validateModelConfiguration(c); err != nil {
+		return err
 	}
 	if err := validateTemplateURL(c.ZZZAPIURL); err != nil {
 		return err
@@ -171,7 +273,39 @@ func (c Config) Validate() error {
 }
 
 func (c Config) ModelEnabled() bool {
-	return c.ModelBaseURL != "" && c.ModelName != ""
+	if normalizeModelConfiguration(&c) != nil {
+		return false
+	}
+	for _, task := range c.ModelTasks {
+		if task.ID == ReplyerTaskID && len(task.CandidateModels) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) AgentEnabled() bool {
+	if !c.ModelEnabled() {
+		return false
+	}
+	for _, task := range c.ModelTasks {
+		if task.ID == PlannerTaskID && len(task.CandidateModels) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) TaskEnabled(taskID string) bool {
+	if !c.ModelEnabled() {
+		return false
+	}
+	for _, task := range c.ModelTasks {
+		if task.ID == taskID && len(task.CandidateModels) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Config) IsPluginEnabled(id string) bool {
@@ -182,6 +316,24 @@ func (c Config) IsPluginEnabled(id string) bool {
 		return descriptor.DefaultEnabled
 	}
 	return true
+}
+
+func validGroupSoftMode(value GroupSoftMode) bool {
+	switch value {
+	case GroupSoftOff, GroupSoftShadow, GroupSoftOn:
+		return true
+	default:
+		return false
+	}
+}
+
+func validExpressionStyle(value ExpressionStyle) bool {
+	switch value {
+	case ExpressionBrief, ExpressionNormal, ExpressionDetailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateTemplateURL(value string) error {

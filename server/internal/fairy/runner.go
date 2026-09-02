@@ -8,7 +8,6 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,34 +18,50 @@ type Runner struct {
 	cfg       Config
 	engine    *Engine
 	connected atomic.Bool
-	workers   chan struct{}
-	wait      sync.WaitGroup
+	scheduler *ConversationScheduler
+	messenger *reliableMessenger
+	feedback  FeedbackStore
 }
 
-func NewRunner(cfg Config, engine *Engine) *Runner {
-	return &Runner{cfg: cfg, engine: engine, workers: make(chan struct{}, cfg.MaxConcurrent)}
+func NewRunner(cfg Config, engine *Engine, trace TraceStore) *Runner {
+	feedback, _ := trace.(FeedbackStore)
+	return &Runner{
+		cfg: cfg, engine: engine,
+		scheduler: NewConversationScheduler(cfg, trace),
+		messenger: newReliableMessenger(feedback),
+		feedback:  feedback,
+	}
 }
 
 func (r *Runner) Connected() bool { return r.connected.Load() }
 
+func (r *Runner) Ready() bool {
+	if r == nil || !r.connected.Load() || r.scheduler == nil {
+		return false
+	}
+	return r.scheduler.Stats().Accepting
+}
+
+func (r *Runner) Stats() SchedulerStats { return r.scheduler.Stats() }
+
+func (r *Runner) OutboundStats() OutboundDeliveryStats { return r.messenger.Stats() }
+
 func (r *Runner) Run(ctx context.Context) error {
+	defer r.shutdownScheduler()
 	delay := r.cfg.ReconnectMin
 	for {
 		if err := ctx.Err(); err != nil {
-			r.wait.Wait()
 			return nil
 		}
 		err := r.runSession(ctx)
 		r.connected.Store(false)
 		if ctx.Err() != nil {
-			r.wait.Wait()
 			return nil
 		}
 		log.Printf("[fairy] session ended: %v; reconnecting in %s", err, delay)
 		jitter := time.Duration(rand.Int63n(int64(delay/4 + 1)))
 		select {
 		case <-ctx.Done():
-			r.wait.Wait()
 			return nil
 		case <-time.After(delay + jitter):
 		}
@@ -65,7 +80,12 @@ func (r *Runner) runSession(ctx context.Context) error {
 	if err := r.authenticate(ctx, client); err != nil {
 		return err
 	}
+	r.messenger.Attach(client)
 	r.connected.Store(true)
+	defer func() {
+		r.connected.Store(false)
+		r.messenger.Detach(client)
+	}()
 	log.Printf("[fairy] connected to ZZZ Server as %s", r.cfg.UserID)
 	if err := r.updateProfile(ctx, client); err != nil {
 		log.Printf("[fairy] update profile: %v", err)
@@ -79,6 +99,7 @@ func (r *Runner) runSession(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			r.shutdownScheduler()
 			return nil
 		case <-client.Done():
 			return client.closeError()
@@ -157,9 +178,7 @@ func (r *Runner) acceptPendingFriends(ctx context.Context, client *Client) error
 		if request.Status != "pending" || request.ToUser.UserID != r.cfg.UserID {
 			continue
 		}
-		if err := r.acceptFriend(ctx, client, request.Flag); err != nil {
-			log.Printf("[fairy] accept pending friend %s: %v", request.Flag, err)
-		}
+		r.submitFriendRequest(ctx, client, request.Flag)
 	}
 	return nil
 }
@@ -177,34 +196,138 @@ func (r *Runner) dispatch(ctx context.Context, client *Client, payload json.RawM
 	case "request":
 		var event requestEvent
 		if json.Unmarshal(payload, &event) == nil && event.RequestType == "friend" && event.Flag != "" {
-			r.runWorker(ctx, func(workerCtx context.Context) {
-				if err := r.acceptFriend(workerCtx, client, event.Flag); err != nil {
-					log.Printf("[fairy] accept friend request from %s: %v", event.UserID, err)
-				}
-			})
+			r.submitFriendRequest(ctx, client, event.Flag)
 		}
 	case "message":
 		var event messageEvent
 		if json.Unmarshal(payload, &event) == nil {
-			r.runWorker(ctx, func(workerCtx context.Context) {
-				r.engine.HandleMessage(workerCtx, client, event)
+			decision := r.engine.PreviewGate(event)
+			if decision.Action != GateTrigger {
+				r.engine.TraceGateIngress(ctx, event, decision)
+				return
+			}
+			priority := isStopCommand(event, r.cfg.UserID)
+			accepted, err := r.scheduler.Submit(ctx, scheduledTurn{
+				source:         "zzz-message",
+				eventID:        event.MessageID,
+				conversationID: event.ConversationID,
+				priority:       priority,
+				run: func(turnContext context.Context) {
+					r.engine.HandleMessage(turnContext, r.messenger, event)
+				},
 			})
+			if err != nil {
+				log.Printf("[fairy] message admission rejected: %v", err)
+			} else if !accepted {
+				log.Printf("[fairy] duplicate message ignored")
+			}
+		}
+	case "notice":
+		var event protocol.NoticeEvent
+		if json.Unmarshal(payload, &event) == nil {
+			r.handleFeedbackNotice(ctx, event)
 		}
 	}
 }
 
-func (r *Runner) runWorker(ctx context.Context, work func(context.Context)) {
-	select {
-	case r.workers <- struct{}{}:
-		r.wait.Add(1)
-		go func() {
-			defer func() {
-				<-r.workers
-				r.wait.Done()
-			}()
-			work(ctx)
-		}()
-	default:
-		log.Printf("[fairy] worker limit reached; event skipped")
+func (r *Runner) handleFeedbackNotice(ctx context.Context, event protocol.NoticeEvent) {
+	if r.feedback == nil || event.MessageID == "" {
+		return
+	}
+	switch event.NoticeType {
+	case protocol.NoticeTypeMessageReaction:
+		if event.UserID == "" || event.UserID == r.cfg.UserID {
+			return
+		}
+		label, ok := feedbackLabelForReaction(event.EmojiID)
+		if !ok {
+			return
+		}
+		feedbackContext, cancel := requestTimeout(ctx, 100*time.Millisecond)
+		exists, err := r.feedbackOutputExists(feedbackContext, event.MessageID)
+		cancel()
+		if err != nil {
+			return
+		}
+		if !exists {
+			go r.applyFeedbackEventually(event, label)
+			return
+		}
+		feedbackContext, cancel = requestTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if _, err := r.feedback.ApplyFeedback(feedbackContext, event.MessageID, event.UserID, label, event.Removed, time.Now()); err != nil {
+			log.Printf("[fairy] apply explicit reply feedback: %v", err)
+		}
+	case protocol.NoticeTypeFriendRecall, protocol.NoticeTypeGroupRecall:
+		feedbackContext, cancel := requestTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if _, err := r.feedback.DeleteFeedbackOutput(feedbackContext, event.MessageID); err != nil {
+			log.Printf("[fairy] delete recalled reply feedback: %v", err)
+		}
+	}
+}
+
+type feedbackOutputAvailability interface {
+	FeedbackOutputExists(context.Context, string) (bool, error)
+}
+
+func (r *Runner) feedbackOutputExists(ctx context.Context, messageID string) (bool, error) {
+	checker, ok := r.feedback.(feedbackOutputAvailability)
+	if !ok {
+		return true, nil
+	}
+	return checker.FeedbackOutputExists(ctx, messageID)
+}
+
+func (r *Runner) applyFeedbackEventually(event protocol.NoticeEvent, label FeedbackLabel) {
+	feedbackContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.waitForFeedbackOutput(feedbackContext, event.MessageID); err != nil {
+		return
+	}
+	if _, err := r.feedback.ApplyFeedback(feedbackContext, event.MessageID, event.UserID, label, event.Removed, time.Now()); err != nil {
+		log.Printf("[fairy] apply explicit reply feedback: %v", err)
+	}
+}
+
+func (r *Runner) waitForFeedbackOutput(ctx context.Context, messageID string) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		exists, err := r.feedbackOutputExists(ctx, messageID)
+		if err != nil || exists {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (r *Runner) submitFriendRequest(ctx context.Context, client *Client, flag string) {
+	accepted, err := r.scheduler.Submit(ctx, scheduledTurn{
+		source:         "zzz-friend-request",
+		eventID:        flag,
+		conversationID: "control:friend-requests",
+		run: func(turnContext context.Context) {
+			if err := r.acceptFriend(turnContext, client, flag); err != nil && turnContext.Err() == nil {
+				log.Printf("[fairy] accept friend request: %v", err)
+			}
+		},
+	})
+	if err != nil {
+		log.Printf("[fairy] friend request admission rejected: %v", err)
+	} else if !accepted {
+		log.Printf("[fairy] duplicate friend request ignored")
+	}
+}
+
+func (r *Runner) shutdownScheduler() {
+	shutdownContext, cancel := context.WithTimeout(context.Background(), r.cfg.DrainTimeout)
+	defer cancel()
+	if err := r.scheduler.Shutdown(shutdownContext); err != nil {
+		log.Printf("[fairy] scheduler drain ended: %v", err)
 	}
 }

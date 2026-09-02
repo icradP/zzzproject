@@ -19,6 +19,7 @@ class ImReactionChips extends StatelessWidget {
 
   static const emojiMap = <String, String>{
     '76': '👍',
+    'fairy-negative': '👎',
     '66': '❤️',
     '63': '😂',
     '15': '😭',
@@ -45,6 +46,7 @@ class ImReactionChips extends StatelessWidget {
 
   static const emojiIds = <String>[
     '76',
+    'fairy-negative',
     '66',
     '63',
     '15',
@@ -89,8 +91,7 @@ class ImReactionChips extends StatelessWidget {
                           : const Color(0xFF2A2A3A),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color:
-                        reaction.reactedByMe ? Colors.amber : Colors.white10,
+                    color: reaction.reactedByMe ? Colors.amber : Colors.white10,
                   ),
                 ),
                 child: Row(

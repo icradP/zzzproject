@@ -1,10 +1,16 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/icradp/zzz-im-server/internal/protocol"
 )
+
+var ErrMessageIdempotencyConflict = errors.New("client_message_id was already used for a different message")
 
 // Store defines the storage interface for the IM server.
 // Implementations can be MemoryStore, MySQLStore, SQLiteStore, etc.
@@ -41,6 +47,7 @@ type Store interface {
 
 	// ---- Message operations ----
 	StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error)
+	StoreMessageIdempotent(convID, senderID, senderNickname, clientMessageID string, segments []protocol.MessageSegment) (*Message, bool, error)
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
 	GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error)
@@ -102,6 +109,18 @@ type Store interface {
 
 	// ---- Lifecycle ----
 	Close() error
+}
+
+func messageRequestFingerprint(conversationID string, segments []protocol.MessageSegment) (string, error) {
+	encoded, err := json.Marshal(struct {
+		ConversationID string                    `json:"conversation_id"`
+		Segments       []protocol.MessageSegment `json:"segments"`
+	}{ConversationID: conversationID, Segments: segments})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // ServerStats contains aggregate operational counts for the admin console.

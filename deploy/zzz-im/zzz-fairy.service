@@ -15,6 +15,8 @@ ExecStart=/usr/local/bin/zzz-im-fairy
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=15s
+KillMode=control-group
+TasksMax=64
 UMask=0077
 
 NoNewPrivileges=true

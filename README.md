@@ -119,6 +119,9 @@ environment, and systemd units and restores them if either service fails its
 health check.
 
 ```bash
+# Validate uncommitted server/Fairy changes without publishing artifacts.
+./deploy/zzz-im/release-native.sh validate
+
 # Build and run the Linux x86_64 SQLite smoke test locally.
 ./deploy/zzz-im/release-native.sh build
 
@@ -127,11 +130,12 @@ health check.
 ```
 
 The local machine needs Go, Docker, and `x86_64-linux-musl-gcc` (provided by
-Homebrew `musl-cross` on macOS). `deploy` also requires the target commit to be
-the remote `master` head with a successful `CI/CD` workflow. Generated binaries
-remain available in `dist/`. The lower-level `deploy-native.sh` and
-`deploy-fairy-native.sh` scripts are invoked remotely by the release entrypoint;
-they are not production build commands.
+Homebrew `musl-cross` on macOS). `validate` uses the current worktree and removes
+its temporary artifacts after the smoke test; `build` uses committed `HEAD` and
+keeps generated binaries in `dist/`. `deploy` also requires the target commit to
+be the remote `master` head with a successful `CI/CD` workflow. The lower-level
+`deploy-native.sh` and `deploy-fairy-native.sh` scripts are invoked remotely by
+the release entrypoint; they are not production build commands.
 
 Build the PWA for GitHub Pages:
 

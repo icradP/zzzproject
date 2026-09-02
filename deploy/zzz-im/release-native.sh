@@ -6,10 +6,13 @@ usage() {
 Build and deploy the native ZZZ IM services from the local workstation.
 
 Usage:
+  ./deploy/zzz-im/release-native.sh validate
   ./deploy/zzz-im/release-native.sh build
   ./deploy/zzz-im/release-native.sh deploy user@host
 
 Commands:
+  validate
+          Test, build, and smoke-test the current worktree without publishing.
   build   Test, build, and smoke-test Linux x86_64 artifacts locally.
   deploy  Run build, upload artifacts only, then install them remotely.
   push    Alias for deploy.
@@ -50,8 +53,8 @@ action=${1:-build}
 target=${2:-${ZZZ_DEPLOY_TARGET:-}}
 
 case ${action} in
-  build)
-    [[ $# -le 1 ]] || die "build does not accept an SSH target"
+  validate | build)
+    [[ $# -le 1 ]] || die "${action} does not accept an SSH target"
     ;;
   deploy | push)
     [[ $# -le 2 ]] || die "too many arguments"
@@ -80,7 +83,8 @@ work_dir=$(mktemp -d "${TMPDIR:-/tmp}/zzz-native-release.XXXXXX")
 artifact_dir=${work_dir}/artifacts
 package_root=${work_dir}/package
 checkout_root=${work_dir}/checkout
-release_server_root=${checkout_root}/server
+release_source_root=${checkout_root}
+release_server_root=${release_source_root}/server
 
 cleanup() {
   rm -rf -- "${work_dir}"
@@ -106,6 +110,12 @@ prepare_release_checkout() {
   log "Checking out committed release ${release_id} in a temporary workspace."
   git clone --quiet --shared --no-checkout "${repo_root}" "${checkout_root}"
   git -C "${checkout_root}" checkout --quiet --detach "${release_sha}"
+}
+
+prepare_validation_worktree() {
+  release_source_root=${repo_root}
+  release_server_root=${release_source_root}/server
+  log "Validating the current worktree at ${release_id}; artifacts will not be published."
 }
 
 run_local_checks() {
@@ -141,7 +151,7 @@ build_artifacts() {
   musl_cc=$(resolve_musl_compiler) || die \
     'x86_64 musl compiler not found; install musl-cross or set ZZZ_MUSL_CC'
   mkdir -p "${artifact_dir}"
-  log "Building Linux x86_64 server with CGO using ${musl_cc}."
+  log "Building Linux x86_64 server and Fairy with CGO using ${musl_cc}."
   (
     cd "${release_server_root}"
     env CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="${musl_cc}" \
@@ -151,13 +161,19 @@ build_artifacts() {
     env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
       go build -trimpath -ldflags='-s -w' \
       -o "${artifact_dir}/zzz-im-vapid-linux-amd64" ./cmd/vapid
-    env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-      go build -trimpath -ldflags='-s -w' \
+    env CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="${musl_cc}" \
+      go build -trimpath \
+      -ldflags='-s -w -linkmode external -extldflags "-static"' \
       -o "${artifact_dir}/zzz-im-fairy-linux-amd64" ./cmd/fairy
+    env CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="${musl_cc}" \
+      go test -c -trimpath \
+      -ldflags='-linkmode external -extldflags "-static"' \
+      -o "${artifact_dir}/fairy-mcp.test" ./internal/fairy
   )
   verify_artifact "${artifact_dir}/zzz-im-server-linux-amd64"
   verify_artifact "${artifact_dir}/zzz-im-vapid-linux-amd64"
   verify_artifact "${artifact_dir}/zzz-im-fairy-linux-amd64"
+  verify_artifact "${artifact_dir}/fairy-mcp.test"
   (
     cd "${artifact_dir}"
     shasum -a 256 \
@@ -169,18 +185,31 @@ build_artifacts() {
 
 smoke_test_sqlite() {
   docker version >/dev/null 2>&1 || die 'Docker is required for Linux SQLite smoke testing'
-  log 'Starting the Linux x86_64 server with a temporary SQLite database.'
+  log 'Starting the Linux x86_64 server and Fairy with temporary SQLite databases.'
   local smoke_container
   smoke_container=$(docker create --platform linux/amd64 \
     "${smoke_image}" /bin/sh -ec '
       mkdir -p /tmp/media
+      server_pid=
+      fairy_pid=
+      cleanup() {
+        if test -n "${fairy_pid}"; then
+          kill "${fairy_pid}" >/dev/null 2>&1 || true
+          wait "${fairy_pid}" >/dev/null 2>&1 || true
+        fi
+        if test -n "${server_pid}"; then
+          kill "${server_pid}" >/dev/null 2>&1 || true
+          wait "${server_pid}" >/dev/null 2>&1 || true
+        fi
+      }
+      trap cleanup EXIT
       /release/zzz-im-server-linux-amd64 \
         -addr 127.0.0.1:18080 \
         -driver sqlite \
         -dsn /tmp/zzz-smoke.db \
+        -invite-code fairy-smoke-invite \
         -media-dir /tmp/media >/tmp/zzz-smoke.log 2>&1 &
       server_pid=$!
-      trap '\''kill "${server_pid}" >/dev/null 2>&1 || true'\'' EXIT
       ready=0
       for attempt in $(seq 1 20); do
         if wget -q -O /tmp/health http://127.0.0.1:18080/health 2>/dev/null && grep -qx ok /tmp/health; then
@@ -201,6 +230,70 @@ smoke_test_sqlite() {
       /release/zzz-im-vapid-linux-amd64 >/tmp/vapid.env
       grep -q "^ZZZ_VAPID_PUBLIC_KEY=" /tmp/vapid.env
       grep -q "^ZZZ_VAPID_PRIVATE_KEY=" /tmp/vapid.env
+      FAIRY_PASSWORD=fairy-smoke-password \
+      FAIRY_USER_ID=fairy-smoke \
+      FAIRY_INVITE_CODE=fairy-smoke-invite \
+      FAIRY_STATE_FILE=/tmp/fairy-state.json \
+      FAIRY_CONFIG_FILE=/tmp/fairy-config.json \
+      FAIRY_TRACE_DB=/tmp/fairy.db \
+      FAIRY_FACT_DB=/tmp/facts.db \
+      FAIRY_TRACE_KEY_FILE=/tmp/fairy.key \
+      FAIRY_HEALTH_ADDR=127.0.0.1:18081 \
+      FAIRY_ADMIN_TOKEN=fairy-smoke-admin-token \
+      FAIRY_MODEL_BASE_URL=http://127.0.0.1:19090/v1 \
+      FAIRY_MODEL_API_KEY=fairy-smoke-model-key \
+      FAIRY_MODEL_NAME=fairy-smoke-model \
+        /release/zzz-im-fairy-linux-amd64 >/tmp/fairy-smoke.log 2>&1 &
+      fairy_pid=$!
+      fairy_ready=0
+      for attempt in $(seq 1 30); do
+        if wget -q -O /tmp/fairy-ready http://127.0.0.1:18081/ready 2>/dev/null && \
+          grep -Fq "\"ready\":true" /tmp/fairy-ready; then
+          fairy_ready=1
+          break
+        fi
+        if ! kill -0 "${fairy_pid}" >/dev/null 2>&1; then
+          cat /tmp/fairy-smoke.log >&2
+          exit 1
+        fi
+        sleep 1
+      done
+      if [ "${fairy_ready}" -ne 1 ]; then
+        cat /tmp/fairy-smoke.log >&2
+        exit 1
+      fi
+      test "$(wc -c </tmp/fairy.key | tr -d " ")" -eq 32
+      test "$(stat -c %a /tmp/fairy.db)" = 600
+      test "$(stat -c %a /tmp/facts.db)" = 600
+      test "$(stat -c %a /tmp/fairy.key)" = 600
+      wget -q -O /tmp/fairy-admin \
+        --header="Authorization: Bearer fairy-smoke-admin-token" \
+        http://127.0.0.1:18081/admin/config
+      grep -Fq "\"connected\":true" /tmp/fairy-admin
+      grep -Fq "\"external_tool_providers\":[]" /tmp/fairy-admin
+      grep -Fq "\"config_status\":{\"schema_version\":7,\"revision\":\"0\",\"active_revision\":\"0\",\"state\":\"active\",\"restart_pending\":false" /tmp/fairy-admin
+      grep -Fq "\"recent_changes\":[]" /tmp/fairy-admin
+      grep -Fq "\"model_health\":[]" /tmp/fairy-admin
+      grep -Fq "\"recent_failures\":[]" /tmp/fairy-admin
+      wget -q -O /tmp/fairy-eval-status \
+        --header="Authorization: Bearer fairy-smoke-admin-token" \
+        http://127.0.0.1:18081/admin/model-eval
+      grep -Fq "\"schema_version\":\"fairy-quality-eval-job/v1\"" /tmp/fairy-eval-status
+      grep -Fq "\"status\":\"idle\"" /tmp/fairy-eval-status
+      wget -q -O /tmp/fairy-eval-start \
+        --header="Authorization: Bearer fairy-smoke-admin-token" \
+        --header="Content-Type: application/json" \
+        --post-data="{\"model_id\":\"default\"}" \
+        http://127.0.0.1:18081/admin/model-eval
+      grep -Fq "\"status\":\"running\"" /tmp/fairy-eval-start
+      grep -Fq "\"model_id\":\"default\"" /tmp/fairy-eval-start
+      /release/fairy-mcp.test -test.timeout=150s
+      kill -TERM "${fairy_pid}"
+      if ! wait "${fairy_pid}"; then
+        cat /tmp/fairy-smoke.log >&2
+        exit 1
+      fi
+      fairy_pid=
     ')
   if ! docker cp "${artifact_dir}/." "${smoke_container}:/release"; then
     docker rm --force "${smoke_container}" >/dev/null 2>&1 || true
@@ -208,7 +301,7 @@ smoke_test_sqlite() {
   fi
   if ! docker start --attach "${smoke_container}"; then
     docker rm --force "${smoke_container}" >/dev/null 2>&1 || true
-    die 'Linux x86_64 SQLite smoke test failed'
+    die 'Linux x86_64 server/Fairy SQLite smoke test failed'
   fi
   docker rm "${smoke_container}" >/dev/null
 }
@@ -428,14 +521,25 @@ if [[ ${action} == deploy || ${action} == push ]]; then
   ensure_deployable_commit
 fi
 
-prepare_release_checkout
+if [[ ${action} == validate ]]; then
+  prepare_validation_worktree
+else
+  prepare_release_checkout
+fi
 run_local_checks
 build_artifacts
 smoke_test_sqlite
-publish_artifacts
+
+if [[ ${action} != validate ]]; then
+  publish_artifacts
+fi
 
 if [[ ${action} == deploy || ${action} == push ]]; then
   deploy_artifacts
 fi
 
-log "Release ${release_id} complete."
+if [[ ${action} == validate ]]; then
+  log "Worktree validation at ${release_id} complete."
+else
+  log "Release ${release_id} complete."
+fi
