@@ -94,6 +94,77 @@ func TestEngineMarksOnlySuccessfulModelRepliesForFeedback(t *testing.T) {
 	}
 }
 
+func TestEngineAIRolloutAllowlistGatesOnlyModelTraffic(t *testing.T) {
+	profileServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]interface{}{
+			"PlayerInfo": map[string]interface{}{
+				"SocialDetail": map[string]interface{}{
+					"ProfileDetail": map[string]interface{}{"Nickname": "灰度测试", "Level": 42},
+				},
+				"ShowcaseDetail": map[string]interface{}{"AvatarList": []interface{}{}},
+			},
+		})
+	}))
+	defer profileServer.Close()
+
+	cfg := testConfig(t)
+	cfg.AIEnabled = true
+	cfg.AIRolloutMode = AIRolloutAllowlist
+	cfg.AIAllowedUsers = []string{"alice"}
+	cfg.ModelBaseURL = "https://model.example.test/v1"
+	cfg.ModelName = "test-model"
+	cfg.ZZZAPIURL = profileServer.URL + "/{uid}"
+	state, err := OpenStateStore(cfg.StateFile, cfg.GroupDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &fakeModel{response: "model reply"}
+	engine := NewEngine(cfg, state, model, NewZZZPlugin(cfg))
+	messenger := &fakeMessenger{}
+
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "hello"))
+	if len(model.requests) != 1 || messenger.lastReply().text != "model reply" {
+		t.Fatalf("allowlisted request = calls %d reply %q", len(model.requests), messenger.lastReply().text)
+	}
+
+	bob := testMessage("private_bob_fairy", "private", "bob", "hello")
+	bob.MessageID = "message_2"
+	engine.HandleMessage(context.Background(), messenger, bob)
+	if len(model.requests) != 1 || !strings.Contains(messenger.lastReply().text, "仅向灰度账号开放") || messenger.lastReply().feedbackEligible {
+		t.Fatalf("denied request = calls %d reply %#v", len(model.requests), messenger.lastReply())
+	}
+
+	bob.MessageID = "message_3"
+	bob.Message = []protocol.MessageSegment{protocol.ImageSegment("photo.png", "/files/photo.png")}
+	engine.HandleMessage(context.Background(), messenger, bob)
+	if len(model.requests) != 1 || !strings.Contains(messenger.lastReply().text, "仅向灰度账号开放") {
+		t.Fatalf("denied media request = calls %d reply %#v", len(model.requests), messenger.lastReply())
+	}
+
+	bob.MessageID = "message_4"
+	bob.Message = []protocol.MessageSegment{protocol.TextSegment("/fairy status")}
+	engine.HandleMessage(context.Background(), messenger, bob)
+	if !strings.Contains(messenger.lastReply().text, "AI 灰度未向此账号开放") {
+		t.Fatalf("denied account status = %q", messenger.lastReply().text)
+	}
+
+	bob.MessageID = "message_5"
+	bob.Message = []protocol.MessageSegment{protocol.TextSegment("/zzz 123456789")}
+	engine.HandleMessage(context.Background(), messenger, bob)
+	if len(model.requests) != 1 || !strings.Contains(messenger.lastReply().text, "灰度测试 · UID 123456789") {
+		t.Fatalf("allowlisted plugin path = calls %d reply %q", len(model.requests), messenger.lastReply().text)
+	}
+
+	group := testMessage("group_room", "group", "bob", "hello")
+	group.MessageID = "message_6"
+	group.Message = append([]protocol.MessageSegment{protocol.AtSegment("fairy")}, group.Message...)
+	before := messenger.replyCount()
+	engine.HandleMessage(context.Background(), messenger, group)
+	if len(model.requests) != 1 || messenger.replyCount() != before {
+		t.Fatalf("denied group request = calls %d replies %d, want %d", len(model.requests), messenger.replyCount(), before)
+	}
+}
+
 func TestEngineGroupTriggersAndAdminSwitch(t *testing.T) {
 	cfg := testConfig(t)
 	state, err := OpenStateStore(cfg.StateFile, true)

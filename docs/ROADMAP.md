@@ -510,6 +510,14 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 生产 256 Token 安全探针约 3.6 秒通过，使用 25 input / 44 output tokens；固定质量语料 5/5 Case 通过，使用 1256 input / 518 output tokens，P50 约 3.89 秒、P95 约 10.80 秒。资格已持久化到 schema v9 revision 2，`production_ready=true`、无未取得资格的 `replyer` 候选。
 - 管理 API 未返回 API Key 或资格摘要，Fairy 日志未发现敏感字段，受管配置权限保持 `0600`。套餐单价未知，输入/输出价格暂记为 0，成本门禁未启用；在明确启用生产回复前仍需确认预算与运行策略。M8 继续暂停。
 
+当前进度（M7 Agent 化 F5.19，生产 AI 受控灰度已本地实现、待发布）：
+
+- 生产 AI 从单一总开关扩展为 `off / allowlist / all` 三档。`allowlist` 最多接受 128 个经过账号 ID 校验和去重的账号，空名单或非法账号 fail closed；环境变量支持 `FAIRY_AI_ROLLOUT_MODE` 与逗号/换行分隔的 `FAIRY_AI_ALLOWED_USERS`。
+- 受管配置升级为 v10 并兼容 v1-v9：v1-v7 具备 `replyer` 的旧部署迁移为 `all`，v8-v9 按原 `ai_enabled` 迁移为 `off` 或 `all`；v10 中 `ai_enabled` 与 rollout mode 自相矛盾时拒绝加载。名单只保存在 Fairy 的 `0600` 配置中，日志只记录数量，固定审计分类为 `ai_rollout`。
+- 灰度账号可进入 Replyer、Planner、Vision 和 Transcriber；未获准账号仍可使用 `/fairy` 管理指令与确定性插件。其私聊模型请求返回固定未开放提示，群聊模型请求静默忽略，且门控发生在任何媒体下载或模型调用前。
+- Fairy 管理页用 rollout 选择器和账号名单编辑器替代全局复选框，空名单在浏览器和服务端双重拦截。已在真实本地 IM + Fairy schema v10 环境验证 1440x900 与 390x844 布局、三种控件状态、无横向溢出和无控制台错误。
+- 全量 Go test/vet/race、JavaScript/发布脚本静态检查，以及本地 Linux x86_64 交叉编译与 Alpine SQLite/Fairy lifecycle smoke 均通过。当前尚未提交、推送或部署；生产继续运行 schema v9 revision 2 且 `ai_enabled=false`，M8 继续暂停。
+
 ### M1-M7 使用体验修复批次（已完成并上线）
 
 M8 暂停期间，优先处理生产使用中确认的以下问题：
@@ -565,7 +573,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.18 已部署；MiMo 候选已配置并取得资格，生产回复仍关闭 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.18 已部署；F5.19 受控灰度已本地完成、待发布 | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

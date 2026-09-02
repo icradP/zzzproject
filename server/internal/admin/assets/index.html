@@ -235,13 +235,21 @@
               </div>
             </div>
             <div class="settings-form">
-              <label class="switch-row">
-                <span>
-                  <strong>Production AI replies</strong>
-                  <small id="fairy-ai-readiness">Configure and qualify every replyer model before activation</small>
-                </span>
-                <input id="fairy-ai-enabled" type="checkbox" role="switch">
-              </label>
+              <div class="field-grid two-columns">
+                <label class="field" for="fairy-ai-rollout-mode">
+                  <span>AI rollout</span>
+                  <select id="fairy-ai-rollout-mode">
+                    <option value="off">Off</option>
+                    <option value="allowlist">Allowlisted accounts</option>
+                    <option value="all">All users</option>
+                  </select>
+                </label>
+                <label class="field" for="fairy-ai-allowed-users">
+                  <span>Allowed account IDs</span>
+                  <textarea id="fairy-ai-allowed-users" rows="3" maxlength="4352" spellcheck="false" autocomplete="off"></textarea>
+                </label>
+              </div>
+              <p id="fairy-ai-readiness" class="form-note">Configure and qualify every replyer model before activation</p>
               <div class="route-section">
                 <div class="route-heading">
                   <div>

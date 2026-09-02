@@ -273,11 +273,13 @@ smoke_test_sqlite() {
       grep -Fq "\"connected\":true" /tmp/fairy-admin
       grep -Fq "\"external_tool_providers\":[]" /tmp/fairy-admin
       grep -Fq "\"ai_enabled\":true" /tmp/fairy-admin
+      grep -Fq "\"ai_rollout_mode\":\"all\"" /tmp/fairy-admin
+      grep -Fq "\"ai_allowed_users\":[]" /tmp/fairy-admin
       grep -Fq "\"model_configured\":true" /tmp/fairy-admin
       grep -Fq "\"production_ready\":false" /tmp/fairy-admin
       grep -Fq "\"model_qualifications\":[]" /tmp/fairy-admin
       grep -Fq "\"unqualified_replyer_models\":[\"default\"]" /tmp/fairy-admin
-      grep -Fq "\"config_status\":{\"schema_version\":9,\"revision\":\"0\",\"active_revision\":\"0\",\"state\":\"active\",\"restart_pending\":false" /tmp/fairy-admin
+      grep -Fq "\"config_status\":{\"schema_version\":10,\"revision\":\"0\",\"active_revision\":\"0\",\"state\":\"active\",\"restart_pending\":false" /tmp/fairy-admin
       grep -Fq "\"recent_changes\":[]" /tmp/fairy-admin
       grep -Fq "\"model_health\":[]" /tmp/fairy-admin
       grep -Fq "\"recent_failures\":[]" /tmp/fairy-admin

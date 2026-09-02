@@ -208,6 +208,12 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		}
 		return
 	}
+	if e.cfg.EffectiveAIRolloutMode() == AIRolloutAllowlist && !e.cfg.AIUserAllowed(event.Sender.UserID) {
+		if !isGroup {
+			e.reply(ctx, messenger, event, "Fairy AI 当前仅向灰度账号开放；管理指令和 ZZZ 查询仍可使用。")
+		}
+		return
+	}
 	if e.model == nil {
 		if media.present() {
 			e.reply(ctx, messenger, event, media.unavailableReply())
@@ -715,10 +721,7 @@ func (e *Engine) handleManagement(
 		return true
 	case "quota", "额度":
 		used, remaining := e.state.ModelQuotaStatus(e.now(), e.cfg.ModelDailyLimit)
-		modelStatus := "AI 已配置"
-		if e.model == nil {
-			modelStatus = "AI 未配置"
-		}
+		modelStatus := e.modelAvailabilityStatus(event.Sender.UserID)
 		e.reply(ctx, messenger, event, fmt.Sprintf("%s；今日已用 %d 次，剩余 %d 次（按 UTC 日期重置）。", modelStatus, used, remaining))
 		return true
 	case "memory", "记忆":
@@ -785,13 +788,13 @@ func (e *Engine) handleManagement(
 			}
 		}
 		used, remaining := e.state.ModelQuotaStatus(e.now(), e.cfg.ModelDailyLimit)
-		modelStatus := fmt.Sprintf("AI 未配置，今日额度已用 %d 次、剩余 %d 次", used, remaining)
+		modelStatus := fmt.Sprintf("%s，今日额度已用 %d 次、剩余 %d 次", e.modelAvailabilityStatus(event.Sender.UserID), used, remaining)
 		if e.model != nil {
 			agentStatus := "Planner 未配置"
 			if e.agent != nil {
 				agentStatus = "Planner 已配置"
 			}
-			modelStatus = fmt.Sprintf("AI 已配置、%s，今日额度已用 %d 次、剩余 %d 次", agentStatus, used, remaining)
+			modelStatus = fmt.Sprintf("%s、%s，今日额度已用 %d 次、剩余 %d 次", e.modelAvailabilityStatus(event.Sender.UserID), agentStatus, used, remaining)
 		}
 		e.reply(ctx, messenger, event, groupStatus+"；"+memoryStatus+"；"+factStatus+"；"+modelStatus+"。")
 		return true
@@ -863,6 +866,23 @@ func (e *Engine) handleManagement(
 		}
 	}
 	return false
+}
+
+func (e *Engine) modelAvailabilityStatus(userID string) string {
+	if !e.cfg.ModelConfigured() {
+		return "AI 未配置"
+	}
+	switch e.cfg.EffectiveAIRolloutMode() {
+	case AIRolloutOff:
+		return "AI 已配置但生产回复已关闭"
+	case AIRolloutAllowlist:
+		if !e.cfg.AIUserAllowed(userID) {
+			return "AI 灰度未向此账号开放"
+		}
+		return "AI 灰度已向此账号开放"
+	default:
+		return "AI 已开放"
+	}
 }
 
 func (e *Engine) handleFactsCommand(ctx context.Context, messenger botMessenger, event messageEvent, argument string, isGroup bool) bool {

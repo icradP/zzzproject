@@ -1,6 +1,7 @@
 package fairy
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -261,6 +262,9 @@ func TestConfigFromEnvDefaultsConfiguredModelToProductionDisabled(t *testing.T) 
 	if cfg.AIEnabled || !cfg.ModelConfigured() || cfg.ModelEnabled() {
 		t.Fatalf("default production AI state = enabled %v configured %v active %v", cfg.AIEnabled, cfg.ModelConfigured(), cfg.ModelEnabled())
 	}
+	if cfg.EffectiveAIRolloutMode() != AIRolloutOff {
+		t.Fatalf("default rollout mode = %q", cfg.EffectiveAIRolloutMode())
+	}
 
 	t.Setenv("FAIRY_AI_ENABLED", "true")
 	cfg, err = ConfigFromEnv()
@@ -269,6 +273,51 @@ func TestConfigFromEnvDefaultsConfiguredModelToProductionDisabled(t *testing.T) 
 	}
 	if !cfg.AIEnabled || !cfg.ModelEnabled() {
 		t.Fatalf("explicit production AI state = enabled %v active %v", cfg.AIEnabled, cfg.ModelEnabled())
+	}
+	if cfg.EffectiveAIRolloutMode() != AIRolloutAll {
+		t.Fatalf("legacy enabled rollout mode = %q", cfg.EffectiveAIRolloutMode())
+	}
+
+	t.Setenv("FAIRY_AI_ROLLOUT_MODE", "allowlist")
+	t.Setenv("FAIRY_AI_ALLOWED_USERS", "alice, bob\nalice")
+	cfg, err = ConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AIEnabled || !cfg.ModelEnabled() || cfg.EffectiveAIRolloutMode() != AIRolloutAllowlist ||
+		len(cfg.AIAllowedUsers) != 2 || !cfg.AIUserAllowed("alice") || !cfg.AIUserAllowed("bob") || cfg.AIUserAllowed("mallory") {
+		t.Fatalf("allowlist rollout config = enabled %v mode %q users %#v", cfg.AIEnabled, cfg.EffectiveAIRolloutMode(), cfg.AIAllowedUsers)
+	}
+}
+
+func TestAIRolloutValidationRejectsUnsafeConfiguration(t *testing.T) {
+	cfg := testConfig(t)
+	for _, test := range []struct {
+		name  string
+		mode  AIRolloutMode
+		users []string
+	}{
+		{name: "unknown mode", mode: "automatic"},
+		{name: "empty allowlist", mode: AIRolloutAllowlist},
+		{name: "invalid account", mode: AIRolloutAllowlist, users: []string{"not an account"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := cfg
+			invalid.AIRolloutMode = test.mode
+			invalid.AIAllowedUsers = test.users
+			if err := invalid.Validate(); err == nil {
+				t.Fatal("invalid AI rollout configuration was accepted")
+			}
+		})
+	}
+	overLimit := cfg
+	overLimit.AIRolloutMode = AIRolloutAllowlist
+	overLimit.AIAllowedUsers = make([]string, maxAIAllowedUsers+1)
+	for index := range overLimit.AIAllowedUsers {
+		overLimit.AIAllowedUsers[index] = fmt.Sprintf("user-%03d", index)
+	}
+	if err := overLimit.Validate(); err == nil {
+		t.Fatal("oversized AI rollout allowlist was accepted")
 	}
 }
 

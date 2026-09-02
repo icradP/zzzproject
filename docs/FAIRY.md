@@ -87,7 +87,7 @@ FAIRY_MODEL_BASE_URL=https://provider.example/v1
 FAIRY_MODEL_PROTOCOL=openai-compatible
 FAIRY_MODEL_API_KEY=replace-with-provider-key
 FAIRY_MODEL_NAME=provider-model-name
-FAIRY_AI_ENABLED=false
+FAIRY_AI_ROLLOUT_MODE=off
 FAIRY_MODEL_DAILY_LIMIT=200
 FAIRY_MODEL_MAX_TOKENS=600
 ```
@@ -106,11 +106,11 @@ API Key 只允许替换或清除，GET 响应和管理页面都不会回显密�
 Focus、cooldown 和表达档位使用原子快照对新 Turn 热更新；模型路由、密钥、插件、
 系统提示和其他进程配置保存后仍由 Fairy 自动重启。IM 服务不需要重启。
 
-Fairy 页面同时支持 Provider、Model、Task 三层模型路由配置：Provider 保存协议、端点、重试策略和只写 API Key；Model 保存远端模型和价格；Task 保存最大输出、超时、独立日额度和 fallback 顺序。`openai-compatible` 在 Base URL 后调用 `/chat/completions`，`anthropic-compatible` 调用 `/v1/messages` 并使用标准 `x-api-key` 与 `anthropic-version` 头。Provider 与 Model 可以在没有 Task 时先保存、探测和质量评测；生产回复默认关闭，只有显式打开 `Production AI replies`、存在 `replyer` Task，且其中每个 fallback 候选都通过当前版本质量语料后才会启动模型 Router。增加 `planner` 启用 Agent Loop，增加 `vision` / `transcriber` 分别启用图片理解 / 语音转写。图片可使用两种协议，语音转写当前只能绑定 OpenAI-compatible Provider。新增 Task 的推荐顺序是 `replyer`、`planner`、`vision`、`transcriber`、`utility`。全局额度限制所有逻辑调用总数，Task 额度限制对应能力；旧 v1-v4 配置中的 Task 自动继承全局额度。
+Fairy 页面同时支持 Provider、Model、Task 三层模型路由配置：Provider 保存协议、端点、重试策略和只写 API Key；Model 保存远端模型和价格；Task 保存最大输出、超时、独立日额度和 fallback 顺序。`openai-compatible` 在 Base URL 后调用 `/chat/completions`，`anthropic-compatible` 调用 `/v1/messages` 并使用标准 `x-api-key` 与 `anthropic-version` 头。Provider 与 Model 可以在没有 Task 时先保存、探测和质量评测；生产回复默认使用 `off`，管理员可选择 `allowlist` 只向最多 128 个指定账号灰度，或选择 `all` 向全部用户开放。`allowlist` 必须至少包含一个合法账号 ID；未获准账号仍可使用管理指令和确定性插件，私聊模型请求收到固定未开放提示，群聊模型请求静默忽略。只有存在 `replyer` Task，且其中每个 fallback 候选都通过当前版本质量语料后才会启动模型 Router。增加 `planner` 启用 Agent Loop，增加 `vision` / `transcriber` 分别启用图片理解 / 语音转写。图片可使用两种协议，语音转写当前只能绑定 OpenAI-compatible Provider。新增 Task 的推荐顺序是 `replyer`、`planner`、`vision`、`transcriber`、`utility`。全局额度限制所有逻辑调用总数，Task 额度限制对应能力；旧 v1-v4 配置中的 Task 自动继承全局额度。
 
 每个已保存 Model 可在管理页执行一次安全连通性测试。探测只使用固定的无用户数据 Prompt，最多请求 256 个输出 Token，硬超时 30 秒且全进程最多同时运行一个；不会携带聊天、记忆、行为经验或工具数据，不计入聊天日额度，也不写 Turn Trace。结果只显示协议、Model / Provider ID、延迟、Token、按已配置价格估算的费用、固定失败分类和 HTTP 状态，不返回模型正文、供应商错误正文或密钥。未保存的 Model 或 Provider 修改必须先保存再测试。每次探测都会产生一次真实供应商请求和相应费用。
 
-受管配置当前版本为 v9，并兼容读取 v1-v8。v1-v7 中已经具备 `replyer` 路由的部署，以及 v8 中已经显式开启的部署，升级后保持生产 AI 运行，避免改变既有行为；但未取得当前资格前不能修改生产模型路由。没有旧配置的新部署和仅通过环境变量提供候选模型的部署默认关闭。每次成功保存或质量资格写入都会生成单调递增的 revision 和 UTC 更新时间；管理 API 分别返回期望 revision 与已生效 `active_revision`，状态固定为 `active`、`applying` 或 `restart_pending`。热更新只有成功切换运行快照后才推进 active revision，需要重启的配置则由新进程加载后推进，不能把“已写入磁盘”误报为“已生效”。最近 50 次保存只记录 `ai_activation`、`model_validation`、`model`、`prompt`、`behavior`、`runtime_limits`、`plugins`、`external_tools`、`behavior_experiences` 或 `none` 等固定分类，不记录配置值、Prompt、URL、密钥或用户身份。
+受管配置当前版本为 v10，并兼容读取 v1-v9。v1-v7 中已经具备 `replyer` 路由的部署迁移为 `all`，v8-v9 按原 `ai_enabled` 迁移为 `off` 或 `all`，避免升级时改变既有生产行为；v10 同时保存兼容字段与 rollout mode，二者自相矛盾时拒绝加载。没有旧配置的新部署和仅通过环境变量提供候选模型的部署默认关闭。每次成功保存或质量资格写入都会生成单调递增的 revision 和 UTC 更新时间；管理 API 分别返回期望 revision 与已生效 `active_revision`，状态固定为 `active`、`applying` 或 `restart_pending`。热更新只有成功切换运行快照后才推进 active revision，需要重启的配置则由新进程加载后推进，不能把“已写入磁盘”误报为“已生效”。最近 50 次保存只记录 `ai_activation`、`ai_rollout`、`model_validation`、`model`、`prompt`、`behavior`、`runtime_limits`、`plugins`、`external_tools`、`behavior_experiences` 或 `none` 等固定分类，不记录配置值、Prompt、URL、密钥或用户身份；灰度账号只写入 `0600` 配置，日志只输出名单数量。
 
 管理页还可维护只读行为经验；经验变化随完整配置受控重启，缺省字段保留现值，显式空数组清空。Live runtime 只显示经验配置数、启用数和 `auto_learning=false`，并同时显示配置 revision/生效状态、脱敏变更历史、全局额度、每个 Task 的已用/剩余/上限、出站成功/重试/失败/结果未知计数，以及最近 24 小时已评价回复数、赞、踩和正向率聚合。Model health 按 `task_id + provider_id + model_id` 汇总最近 24 小时的调用/成功/失败、fallback、P50/P95、Token、费用和固定失败码，不返回远端模型名或逐请求 Trace。Recent failures 最多展示最近 24 小时内按时间倒序排列的 20 条 Model、Tool、Admission 和 Turn 失败，只包含固定失败码、配置 ID、耗时、attempt / step / fallback 与有限队列数字；空状态固定返回 `recent_failures: []`。这些状态不包含经验正文、关键词、用户、会话、附件 URL、消息正文、Prompt、工具参数、供应商错误、Trace / Turn / Snapshot / Tool Call ID 或可逆的反馈标识。显式反馈当前仅用于质量观测，自动行为学习仍固定关闭。
 
@@ -170,10 +170,12 @@ MiMo `mimo-v2.5-pro` 已于 2026-09-03 多次通过该 Anthropic-compatible 质�
 | `FAIRY_MAX_CONVERSATION_PENDING` | `16` | 单会话待执行 Turn 上限 |
 | `FAIRY_TURN_TIMEOUT` | `60s` | 单个 Turn 硬超时 |
 | `FAIRY_DRAIN_TIMEOUT` | `10s` | 退出前等待已接纳 Turn 的时间 |
-| `FAIRY_AI_ENABLED` | `false` | 生产 AI 回复总开关；候选模型探测和评测不受影响 |
+| `FAIRY_AI_ROLLOUT_MODE` | 空，等效于 `off` | 生产 AI 模式：`off`、`allowlist` 或 `all` |
+| `FAIRY_AI_ALLOWED_USERS` | 空 | 灰度账号 ID，使用逗号或换行分隔，最多 128 个 |
+| `FAIRY_AI_ENABLED` | `false` | 旧版兼容开关；未设置 rollout mode 时 `true` 等效于 `all` |
 | `FAIRY_MODEL_DAILY_LIMIT` | `200` | 每日模型调用上限，`0` 表示全部拒绝 |
 | `FAIRY_MODEL_PROTOCOL` | `openai-compatible` | 旧版单模型环境配置协议；可选 `openai-compatible` 或 `anthropic-compatible` |
 | `FAIRY_ZZZ_API_URL` | Enka.Network | 必须包含 `{uid}` 的 HTTPS URL 模板 |
 | `FAIRY_ZZZ_PLUGIN_ENABLED` | `true` | 内置 `zzz-profile` 插件默认开关 |
 
-生产模型供应商、费用预算和内容安全服务尚未确定。在这些配置明确前，生产环境应保持 `FAIRY_AI_ENABLED=false`；候选 Provider 可先保存和评测，但不用于用户对话。
+MiMo `mimo-v2.5-pro` 已作为首个生产候选通过资格门禁，但套餐单价、月度预算和内容安全策略仍未确定。在这些配置明确前，生产环境应保持 `FAIRY_AI_ROLLOUT_MODE=off`；候选 Provider 可继续保存、探测和评测，但不用于用户对话。

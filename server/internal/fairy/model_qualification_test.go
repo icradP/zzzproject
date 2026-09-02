@@ -102,7 +102,7 @@ func TestConfigManagerPersistsQualificationsAndRedactsManagementAPI(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stored, []byte(`"version": 9`)) || !bytes.Contains(stored, []byte(`"model_qualifications"`)) {
+	if !bytes.Contains(stored, []byte(`"version": 10`)) || !bytes.Contains(stored, []byte(`"model_qualifications"`)) {
 		t.Fatalf("qualifications were not persisted: %s", stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
@@ -122,6 +122,7 @@ func TestManagedConfigActivationRequiresCurrentQualificationForEveryFallback(t *
 	update := managedRouterUpdateForConfig(manager.Current())
 	enabled := true
 	update.AIEnabled = &enabled
+	update.AIRolloutMode = string(AIRolloutAll)
 	if _, err := manager.UpdateWithResult(update); err == nil || !strings.Contains(err.Error(), "primary, fallback") {
 		t.Fatalf("unqualified activation error = %v", err)
 	}

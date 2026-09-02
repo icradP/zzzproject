@@ -335,6 +335,7 @@ td:last-child, th:last-child { width: 112px; text-align: right; }
 .field-grid { display: grid; gap: 12px; }
 .field-grid.two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .field-grid.three-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.form-note { margin: -2px 0 4px; color: #777b83; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .field { display: grid; gap: 7px; min-width: 0; }
 .badge-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .secret-control { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; align-self: end; }

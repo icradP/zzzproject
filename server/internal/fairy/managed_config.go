@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	managedConfigVersion         = 9
+	managedConfigVersion         = 10
 	maxManagedConfigAuditEntries = 50
 )
 
@@ -87,11 +87,13 @@ type ManagedBehaviorExperience struct {
 
 type ManagedConfigUpdate struct {
 	// Legacy fields remain accepted so existing admin clients can migrate to v3.
-	ModelBaseURL     string  `json:"model_base_url,omitempty"`
-	ModelName        string  `json:"model_name,omitempty"`
-	ModelAPIKey      *string `json:"model_api_key,omitempty"`
-	ClearModelAPIKey bool    `json:"clear_model_api_key,omitempty"`
-	AIEnabled        *bool   `json:"ai_enabled,omitempty"`
+	ModelBaseURL     string   `json:"model_base_url,omitempty"`
+	ModelName        string   `json:"model_name,omitempty"`
+	ModelAPIKey      *string  `json:"model_api_key,omitempty"`
+	ClearModelAPIKey bool     `json:"clear_model_api_key,omitempty"`
+	AIEnabled        *bool    `json:"ai_enabled,omitempty"`
+	AIRolloutMode    string   `json:"ai_rollout_mode,omitempty"`
+	AIAllowedUsers   []string `json:"ai_allowed_users,omitempty"`
 
 	Providers             []ManagedModelProviderUpdate  `json:"providers,omitempty"`
 	Models                []ManagedModelDefinition      `json:"models,omitempty"`
@@ -117,17 +119,19 @@ type ManagedConfigUpdate struct {
 
 type ManagedConfigView struct {
 	// Legacy projection keeps older admin clients read-compatible.
-	ModelBaseURL          string `json:"model_base_url"`
-	ModelName             string `json:"model_name"`
-	AIEnabled             bool   `json:"ai_enabled"`
-	ModelConfigured       bool   `json:"model_configured"`
-	ModelEnabled          bool   `json:"model_enabled"`
-	ProductionReady       bool   `json:"production_ready"`
-	QualityCorpusVersion  int    `json:"quality_corpus_version"`
-	AgentEnabled          bool   `json:"agent_enabled"`
-	VisionEnabled         bool   `json:"vision_enabled"`
-	TranscriberEnabled    bool   `json:"transcriber_enabled"`
-	ModelAPIKeyConfigured bool   `json:"model_api_key_configured"`
+	ModelBaseURL          string   `json:"model_base_url"`
+	ModelName             string   `json:"model_name"`
+	AIEnabled             bool     `json:"ai_enabled"`
+	AIRolloutMode         string   `json:"ai_rollout_mode"`
+	AIAllowedUsers        []string `json:"ai_allowed_users"`
+	ModelConfigured       bool     `json:"model_configured"`
+	ModelEnabled          bool     `json:"model_enabled"`
+	ProductionReady       bool     `json:"production_ready"`
+	QualityCorpusVersion  int      `json:"quality_corpus_version"`
+	AgentEnabled          bool     `json:"agent_enabled"`
+	VisionEnabled         bool     `json:"vision_enabled"`
+	TranscriberEnabled    bool     `json:"transcriber_enabled"`
+	ModelAPIKeyConfigured bool     `json:"model_api_key_configured"`
 
 	Providers                []ManagedModelProviderView      `json:"providers"`
 	Models                   []ManagedModelDefinition        `json:"models"`
@@ -219,6 +223,8 @@ type managedConfigFile struct {
 	ExternalToolProviders []ManagedExternalToolProvider `json:"external_tool_providers,omitempty"`
 	BehaviorExperiences   []ManagedBehaviorExperience   `json:"behavior_experiences,omitempty"`
 	AIEnabled             bool                          `json:"ai_enabled"`
+	AIRolloutMode         string                        `json:"ai_rollout_mode,omitempty"`
+	AIAllowedUsers        []string                      `json:"ai_allowed_users,omitempty"`
 
 	ModelDailyLimit          int             `json:"model_daily_limit"`
 	ModelMaxTokens           int             `json:"model_max_tokens"`
@@ -253,6 +259,7 @@ type ConfigUpdateResult struct {
 }
 
 func NewConfigManager(cfg Config) *ConfigManager {
+	_ = normalizeAIRolloutConfiguration(&cfg)
 	_ = normalizeModelConfiguration(&cfg)
 	_ = normalizeExternalToolConfiguration(&cfg)
 	_ = normalizeBehaviorExperienceConfiguration(&cfg)
@@ -422,6 +429,7 @@ func loadManagedConfig(base Config) (Config, error) {
 	base.managedConfigUpdatedAt = time.Time{}
 	base.managedConfigAudit = nil
 	base.ModelQualifications = nil
+	base.AIAllowedUsers = nil
 	if stored.Version >= 7 {
 		if err := validateManagedConfigMetadata(stored); err != nil {
 			return Config{}, fmt.Errorf("validate Fairy managed config metadata: %w", err)
@@ -471,6 +479,16 @@ func loadManagedConfig(base Config) (Config, error) {
 	if stored.Version >= 8 {
 		base.AIEnabled = stored.AIEnabled
 	}
+	if stored.Version >= 10 {
+		mode := AIRolloutMode(strings.ToLower(strings.TrimSpace(stored.AIRolloutMode)))
+		if !validAIRolloutMode(mode) || stored.AIEnabled != (mode != AIRolloutOff) {
+			return Config{}, fmt.Errorf("invalid Fairy managed AI rollout configuration")
+		}
+		base.AIRolloutMode = mode
+		base.AIAllowedUsers = append([]string(nil), stored.AIAllowedUsers...)
+	} else {
+		base.AIRolloutMode = ""
+	}
 	if stored.Version >= 9 {
 		base.ModelQualifications = modelQualificationsFromStored(stored.ModelQualifications)
 	}
@@ -495,6 +513,9 @@ func loadManagedConfig(base Config) (Config, error) {
 	pruneModelQualifications(&base)
 	if stored.Version < 8 {
 		base.AIEnabled = base.modelTaskConfigured(ReplyerTaskID)
+	}
+	if err := normalizeAIRolloutConfiguration(&base); err != nil {
+		return Config{}, fmt.Errorf("normalize Fairy managed AI rollout: %w", err)
 	}
 	syncLegacyModelProjection(&base)
 	if err := base.Validate(); err != nil {
@@ -526,8 +547,27 @@ func applyManagedUpdate(current Config, update ManagedConfigUpdate) (Config, err
 	}
 
 	next := cloneConfig(current)
-	if update.AIEnabled != nil {
+	rolloutMode := AIRolloutMode(strings.ToLower(strings.TrimSpace(update.AIRolloutMode)))
+	if rolloutMode != "" {
+		if !validAIRolloutMode(rolloutMode) {
+			return Config{}, fmt.Errorf("Fairy AI rollout mode must be off, allowlist, or all")
+		}
+		enabled := rolloutMode != AIRolloutOff
+		if update.AIEnabled != nil && *update.AIEnabled != enabled {
+			return Config{}, fmt.Errorf("Fairy AI activation conflicts with rollout mode")
+		}
+		next.AIRolloutMode = rolloutMode
+		next.AIEnabled = enabled
+	} else if update.AIEnabled != nil {
 		next.AIEnabled = *update.AIEnabled
+		if next.AIEnabled {
+			next.AIRolloutMode = AIRolloutAll
+		} else {
+			next.AIRolloutMode = AIRolloutOff
+		}
+	}
+	if update.AIAllowedUsers != nil {
+		next.AIAllowedUsers = append([]string(nil), update.AIAllowedUsers...)
 	}
 	structured := update.Providers != nil || update.Models != nil || update.Tasks != nil
 	var err error
@@ -591,6 +631,9 @@ func applyManagedUpdate(current Config, update ManagedConfigUpdate) (Config, err
 	if update.BehaviorExperiences != nil {
 		next.BehaviorExperiences = behaviorExperiencesFromManaged(update.BehaviorExperiences)
 	}
+	if err := normalizeAIRolloutConfiguration(&next); err != nil {
+		return Config{}, err
+	}
 	if err := normalizeModelConfiguration(&next); err != nil {
 		return Config{}, err
 	}
@@ -642,6 +685,9 @@ func applyProviderUpdates(current []ModelProviderConfig, updates []ManagedModelP
 }
 
 func persistManagedConfig(cfg Config) error {
+	if err := normalizeAIRolloutConfiguration(&cfg); err != nil {
+		return err
+	}
 	if err := normalizeModelConfiguration(&cfg); err != nil {
 		return err
 	}
@@ -664,6 +710,8 @@ func persistManagedConfig(cfg Config) error {
 		ExternalToolProviders:    managedExternalToolProviders(cfg.ExternalToolProviders),
 		BehaviorExperiences:      managedBehaviorExperiences(cfg.BehaviorExperiences),
 		AIEnabled:                cfg.AIEnabled,
+		AIRolloutMode:            string(cfg.AIRolloutMode),
+		AIAllowedUsers:           append([]string{}, cfg.AIAllowedUsers...),
 		ModelDailyLimit:          cfg.ModelDailyLimit,
 		ModelMaxTokens:           cfg.ModelMaxTokens,
 		SystemPrompt:             cfg.SystemPrompt,
@@ -719,6 +767,7 @@ func persistManagedConfig(cfg Config) error {
 }
 
 func managedConfigView(cfg Config) ManagedConfigView {
+	_ = normalizeAIRolloutConfiguration(&cfg)
 	_ = normalizeModelConfiguration(&cfg)
 	_ = normalizeExternalToolConfiguration(&cfg)
 	pruneModelQualifications(&cfg)
@@ -726,7 +775,8 @@ func managedConfigView(cfg Config) ManagedConfigView {
 	_, missingQualifications := replyerQualificationState(cfg)
 	return ManagedConfigView{
 		ModelBaseURL: projection.BaseURL, ModelName: projection.ModelName,
-		AIEnabled: cfg.AIEnabled, ModelConfigured: cfg.ModelConfigured(),
+		AIEnabled: cfg.AIEnabled, AIRolloutMode: string(cfg.AIRolloutMode),
+		AIAllowedUsers: append([]string{}, cfg.AIAllowedUsers...), ModelConfigured: cfg.ModelConfigured(),
 		ProductionReady: cfg.ProductionReady(), QualityCorpusVersion: QualityEvalCorpusVersion,
 		ModelEnabled: cfg.ModelEnabled(), AgentEnabled: cfg.AgentEnabled(),
 		VisionEnabled: cfg.TaskEnabled(VisionTaskID), TranscriberEnabled: cfg.TaskEnabled(TranscriberTaskID),
@@ -793,9 +843,13 @@ func managedConfigChangedSections(current, next Config) []string {
 	_ = normalizeExternalToolConfiguration(&next)
 	_ = normalizeBehaviorExperienceConfiguration(&current)
 	_ = normalizeBehaviorExperienceConfiguration(&next)
-	sections := make([]string, 0, 9)
+	sections := make([]string, 0, 10)
 	if current.AIEnabled != next.AIEnabled {
 		sections = append(sections, "ai_activation")
+	}
+	if current.EffectiveAIRolloutMode() != next.EffectiveAIRolloutMode() ||
+		!reflect.DeepEqual(current.AIAllowedUsers, next.AIAllowedUsers) {
+		sections = append(sections, "ai_rollout")
 	}
 	if current.ModelBaseURL != next.ModelBaseURL || current.ModelAPIKey != next.ModelAPIKey || current.ModelName != next.ModelName ||
 		current.ModelDailyLimit != next.ModelDailyLimit || current.ModelMaxTokens != next.ModelMaxTokens ||
@@ -870,13 +924,13 @@ func validateManagedConfigMetadata(stored managedConfigFile) error {
 }
 
 func validManagedConfigAuditSections(sections []string) bool {
-	if len(sections) == 0 || len(sections) > 9 {
+	if len(sections) == 0 || len(sections) > 10 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(sections))
 	for _, section := range sections {
 		switch section {
-		case "ai_activation", "model_validation", "model", "prompt", "behavior", "runtime_limits", "plugins", "external_tools", "behavior_experiences", "none":
+		case "ai_activation", "ai_rollout", "model_validation", "model", "prompt", "behavior", "runtime_limits", "plugins", "external_tools", "behavior_experiences", "none":
 		default:
 			return false
 		}
@@ -1120,6 +1174,7 @@ func behaviorExperiencesFromManaged(experiences []ManagedBehaviorExperience) []B
 func cloneConfig(cfg Config) Config {
 	clone := cfg
 	clone.PluginEnabled = clonePluginSettings(cfg.PluginEnabled)
+	clone.AIAllowedUsers = append([]string(nil), cfg.AIAllowedUsers...)
 	clone.ModelProviders = append([]ModelProviderConfig(nil), cfg.ModelProviders...)
 	clone.ModelDefinitions = append([]ModelDefinitionConfig(nil), cfg.ModelDefinitions...)
 	clone.ModelTasks = append([]ModelTaskConfig(nil), cfg.ModelTasks...)

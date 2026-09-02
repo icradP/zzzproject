@@ -293,7 +293,7 @@ func TestFairyAdminAPIAuthenticationUpdateAndRestart(t *testing.T) {
 	authorized := httptest.NewRecorder()
 	handler.ServeHTTP(authorized, authorizedRequest)
 	if authorized.Code != http.StatusOK || strings.Contains(authorized.Body.String(), cfg.ModelAPIKey) ||
-		!strings.Contains(authorized.Body.String(), `"config_status":{"schema_version":9,"revision":"0","active_revision":"0","state":"active","restart_pending":false,"recent_changes":[]}`) {
+		!strings.Contains(authorized.Body.String(), `"config_status":{"schema_version":10,"revision":"0","active_revision":"0","state":"active","restart_pending":false,"recent_changes":[]}`) {
 		t.Fatalf("GET status=%d body=%s", authorized.Code, authorized.Body.String())
 	}
 
@@ -423,7 +423,7 @@ func TestManagedConfigVersionFourPersistsExternalProvidersWithoutEnvironmentValu
 		t.Fatal(err)
 	}
 	if bytes.Contains(response, []byte(secret)) || bytes.Contains(stored, []byte(secret)) ||
-		!bytes.Contains(response, []byte("FAIRY_MCP_TEST_SECRET")) || !bytes.Contains(stored, []byte(`"version": 9`)) {
+		!bytes.Contains(response, []byte("FAIRY_MCP_TEST_SECRET")) || !bytes.Contains(stored, []byte(`"version": 10`)) {
 		t.Fatalf("external provider leaked a value or was not persisted: response=%s stored=%s", response, stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
@@ -544,8 +544,8 @@ func TestManagedBehaviorExperiencesPersistMigrateAndRequireRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stored, []byte(`"version": 9`)) || !bytes.Contains(stored, []byte(`"behavior_experiences"`)) {
-		t.Fatalf("behavior experiences were not persisted in v9: %s", stored)
+	if !bytes.Contains(stored, []byte(`"version": 10`)) || !bytes.Contains(stored, []byte(`"behavior_experiences"`)) {
+		t.Fatalf("behavior experiences were not persisted in v10: %s", stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
 	if err != nil {
@@ -689,13 +689,14 @@ func TestManagedConfigAIActivationIsExplicitAuditedAndRestarted(t *testing.T) {
 	update.Tasks = managedModelTasks(cfg.ModelTasks)
 	enabled := true
 	update.AIEnabled = &enabled
+	update.AIRolloutMode = string(AIRolloutAll)
 
 	result, err := manager.UpdateWithResult(update)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Config.AIEnabled || !result.Config.ModelEnabled() || !result.RestartRequired || result.BehaviorChanged ||
-		!reflect.DeepEqual(result.ChangedSections, []string{"ai_activation"}) {
+		!reflect.DeepEqual(result.ChangedSections, []string{"ai_activation", "ai_rollout"}) {
 		t.Fatalf("AI activation result = %#v", result)
 	}
 	response, err := json.Marshal(manager.Response(true))
@@ -710,8 +711,125 @@ func TestManagedConfigAIActivationIsExplicitAuditedAndRestarted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stored, []byte(`"version": 9`)) || !bytes.Contains(stored, []byte(`"ai_enabled": true`)) {
-		t.Fatalf("AI activation was not persisted as v9: %s", stored)
+	if !bytes.Contains(stored, []byte(`"version": 10`)) || !bytes.Contains(stored, []byte(`"ai_enabled": true`)) ||
+		!bytes.Contains(stored, []byte(`"ai_rollout_mode": "all"`)) {
+		t.Fatalf("AI activation was not persisted as v10: %s", stored)
+	}
+}
+
+func TestManagedConfigAIRolloutAllowlistPersistsAndRequiresRestart(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	syncLegacyModelProjection(&cfg)
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v10.json")
+	manager := NewConfigManager(cfg)
+	update := managedRouterUpdateForConfig(manager.Current())
+	update.AIRolloutMode = string(AIRolloutAllowlist)
+	update.AIAllowedUsers = []string{" alice ", "bob", "alice"}
+
+	result, err := manager.UpdateWithResult(update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Config.AIEnabled || result.Config.EffectiveAIRolloutMode() != AIRolloutAllowlist ||
+		!reflect.DeepEqual(result.Config.AIAllowedUsers, []string{"alice", "bob"}) ||
+		!result.RestartRequired || result.BehaviorChanged ||
+		!reflect.DeepEqual(result.ChangedSections, []string{"ai_rollout"}) {
+		t.Fatalf("AI rollout update = %#v", result)
+	}
+	response, err := json.Marshal(manager.Response(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(response, []byte(`"ai_rollout_mode":"allowlist"`)) ||
+		!bytes.Contains(response, []byte(`"ai_allowed_users":["alice","bob"]`)) {
+		t.Fatalf("AI rollout response = %s", response)
+	}
+	reloaded, err := loadManagedConfig(result.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.EffectiveAIRolloutMode() != AIRolloutAllowlist ||
+		!reflect.DeepEqual(reloaded.AIAllowedUsers, []string{"alice", "bob"}) || !reloaded.AIUserAllowed("alice") || reloaded.AIUserAllowed("mallory") {
+		t.Fatalf("reloaded AI rollout = mode %q users %#v", reloaded.EffectiveAIRolloutMode(), reloaded.AIAllowedUsers)
+	}
+}
+
+func TestManagedConfigVersionTenRejectsContradictoryAIRolloutState(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v10.json")
+	stored := managedConfigFile{
+		Version: 10, Revision: 1, UpdatedAtMS: time.Now().UnixMilli(),
+		Audit:     []managedConfigAuditEntry{{Revision: 1, UpdatedAtMS: time.Now().UnixMilli(), Sections: []string{"ai_rollout"}}},
+		Providers: storedProviders(cfg.ModelProviders), Models: managedModelDefinitions(cfg.ModelDefinitions),
+		Tasks: managedModelTasks(cfg.ModelTasks), AIEnabled: false, AIRolloutMode: string(AIRolloutAll),
+		ModelDailyLimit: cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
+		SystemPrompt: cfg.SystemPrompt, GroupDefault: cfg.GroupDefault, GroupSoftDefault: string(cfg.GroupSoftDefault),
+		FocusTTLSeconds: int64(cfg.FocusTTL / time.Second), SoftCooldownSeconds: int64(cfg.SoftCooldown / time.Second),
+		ExpressionStyle: string(cfg.ExpressionStyle), RateLimitSeconds: int64(cfg.RateLimit / time.Second),
+		ContextTTLSeconds: int64(cfg.ContextTTL / time.Second), ContextMessages: cfg.ContextMessages,
+		MaxConcurrent: cfg.MaxConcurrent, ZZZAPIURL: cfg.ZZZAPIURL,
+		ZZZRequestTimeoutSeconds: int64(cfg.ZZZRequestTimeout / time.Second), PluginEnabled: clonePluginSettings(cfg.PluginEnabled),
+	}
+	content, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ConfigFile, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadManagedConfig(cfg); err == nil || !strings.Contains(err.Error(), "invalid Fairy managed AI rollout configuration") {
+		t.Fatalf("contradictory v10 rollout state error = %v", err)
+	}
+}
+
+func TestManagedConfigVersionNineMigratesQualifiedCandidateToRolloutOff(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	cfg.AIEnabled = false
+	cfg.AIRolloutMode = ""
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v9.json")
+	qualifiedAt := time.Date(2026, time.September, 3, 8, 30, 0, 0, time.UTC)
+	for _, modelID := range []string{"primary", "fallback"} {
+		fingerprint, err := modelQualificationFingerprint(cfg, modelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.ModelQualifications = append(cfg.ModelQualifications, ModelQualification{
+			ModelID: modelID, Fingerprint: fingerprint,
+			CorpusVersion: QualityEvalCorpusVersion, QualifiedAt: qualifiedAt,
+		})
+	}
+	stored := managedConfigFile{
+		Version: 9, Revision: 2, UpdatedAtMS: qualifiedAt.UnixMilli(),
+		Audit: []managedConfigAuditEntry{
+			{Revision: 1, UpdatedAtMS: qualifiedAt.Add(-time.Second).UnixMilli(), Sections: []string{"model"}},
+			{Revision: 2, UpdatedAtMS: qualifiedAt.UnixMilli(), Sections: []string{"model_validation"}},
+		},
+		Providers: storedProviders(cfg.ModelProviders), Models: managedModelDefinitions(cfg.ModelDefinitions),
+		Tasks: managedModelTasks(cfg.ModelTasks), ModelQualifications: storedModelQualifications(cfg.ModelQualifications),
+		AIEnabled: cfg.AIEnabled, ModelDailyLimit: cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
+		SystemPrompt: cfg.SystemPrompt, GroupDefault: cfg.GroupDefault, GroupSoftDefault: string(cfg.GroupSoftDefault),
+		FocusTTLSeconds: int64(cfg.FocusTTL / time.Second), SoftCooldownSeconds: int64(cfg.SoftCooldown / time.Second),
+		ExpressionStyle: string(cfg.ExpressionStyle), RateLimitSeconds: int64(cfg.RateLimit / time.Second),
+		ContextTTLSeconds: int64(cfg.ContextTTL / time.Second), ContextMessages: cfg.ContextMessages,
+		MaxConcurrent: cfg.MaxConcurrent, ZZZAPIURL: cfg.ZZZAPIURL,
+		ZZZRequestTimeoutSeconds: int64(cfg.ZZZRequestTimeout / time.Second), PluginEnabled: clonePluginSettings(cfg.PluginEnabled),
+	}
+	content, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ConfigFile, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadManagedConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AIEnabled || loaded.ModelEnabled() || loaded.EffectiveAIRolloutMode() != AIRolloutOff ||
+		len(loaded.AIAllowedUsers) != 0 || len(loaded.ModelQualifications) != 2 || !loaded.ProductionReady() {
+		t.Fatalf("version 9 rollout migration = enabled %v mode %q users %#v qualifications %#v",
+			loaded.AIEnabled, loaded.EffectiveAIRolloutMode(), loaded.AIAllowedUsers, loaded.ModelQualifications)
 	}
 }
 
@@ -798,29 +916,30 @@ func TestManagedConfigChangedSectionsUseFixedCategories(t *testing.T) {
 	tests := []struct {
 		name   string
 		change func(*Config)
-		want   string
+		want   []string
 	}{
-		{name: "none", change: func(*Config) {}, want: "none"},
-		{name: "AI activation", change: func(cfg *Config) { cfg.AIEnabled = !cfg.AIEnabled }, want: "ai_activation"},
-		{name: "model", change: func(cfg *Config) { cfg.ModelDailyLimit++ }, want: "model"},
-		{name: "prompt", change: func(cfg *Config) { cfg.SystemPrompt = "private prompt text" }, want: "prompt"},
-		{name: "behavior", change: func(cfg *Config) { cfg.GroupSoftDefault = GroupSoftOn }, want: "behavior"},
-		{name: "runtime limits", change: func(cfg *Config) { cfg.ContextMessages++ }, want: "runtime_limits"},
-		{name: "plugins", change: func(cfg *Config) { cfg.ZZZAPIURL = "https://private.example.test/value" }, want: "plugins"},
+		{name: "none", change: func(*Config) {}, want: []string{"none"}},
+		{name: "AI activation", change: func(cfg *Config) { cfg.AIEnabled = !cfg.AIEnabled }, want: []string{"ai_activation", "ai_rollout"}},
+		{name: "AI rollout", change: func(cfg *Config) { cfg.AIAllowedUsers = []string{"private-user"} }, want: []string{"ai_rollout"}},
+		{name: "model", change: func(cfg *Config) { cfg.ModelDailyLimit++ }, want: []string{"model"}},
+		{name: "prompt", change: func(cfg *Config) { cfg.SystemPrompt = "private prompt text" }, want: []string{"prompt"}},
+		{name: "behavior", change: func(cfg *Config) { cfg.GroupSoftDefault = GroupSoftOn }, want: []string{"behavior"}},
+		{name: "runtime limits", change: func(cfg *Config) { cfg.ContextMessages++ }, want: []string{"runtime_limits"}},
+		{name: "plugins", change: func(cfg *Config) { cfg.ZZZAPIURL = "https://private.example.test/value" }, want: []string{"plugins"}},
 		{name: "external tools", change: func(cfg *Config) {
 			cfg.ExternalToolProviders = []ExternalToolProviderConfig{{ID: "private-provider"}}
-		}, want: "external_tools"},
+		}, want: []string{"external_tools"}},
 		{name: "behavior experiences", change: func(cfg *Config) {
 			cfg.BehaviorExperiences = []BehaviorExperienceConfig{{ID: "private-experience"}}
-		}, want: "behavior_experiences"},
+		}, want: []string{"behavior_experiences"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			next := cloneConfig(base)
 			test.change(&next)
 			sections := managedConfigChangedSections(base, next)
-			if !reflect.DeepEqual(sections, []string{test.want}) {
-				t.Fatalf("changed sections = %#v, want %q", sections, test.want)
+			if !reflect.DeepEqual(sections, test.want) {
+				t.Fatalf("changed sections = %#v, want %#v", sections, test.want)
 			}
 			encoded, err := json.Marshal(sections)
 			if err != nil {
@@ -899,6 +1018,8 @@ func managedUpdateForConfig(cfg Config) ManagedConfigUpdate {
 	aiEnabled := cfg.AIEnabled
 	return ManagedConfigUpdate{
 		AIEnabled:             &aiEnabled,
+		AIRolloutMode:         string(cfg.EffectiveAIRolloutMode()),
+		AIAllowedUsers:        append([]string{}, cfg.AIAllowedUsers...),
 		ModelBaseURL:          cfg.ModelBaseURL,
 		ModelName:             cfg.ModelName,
 		ModelDailyLimit:       cfg.ModelDailyLimit,

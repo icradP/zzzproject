@@ -1342,6 +1342,16 @@ function collectFairyBehaviorExperiences() {
   }));
 }
 
+function fairyAIRolloutMode(config) {
+  if (["off", "allowlist", "all"].includes(config.ai_rollout_mode)) return config.ai_rollout_mode;
+  return config.ai_enabled ? "all" : "off";
+}
+
+function updateFairyAIRolloutControls() {
+  const mode = document.querySelector("#fairy-ai-rollout-mode").value;
+  document.querySelector("#fairy-ai-allowed-users").disabled = mode !== "allowlist";
+}
+
 function renderFairy(payload) {
   state.fairy = payload;
   const config = payload.config || {};
@@ -1351,12 +1361,12 @@ function renderFairy(payload) {
   connectionBadge.className = `status-badge ${payload.connected ? "enabled" : "offline"}`;
   const modelBadge = document.querySelector("#fairy-model-state");
   const restartPending = payload.config_status?.restart_pending;
-  if (restartPending && config.ai_enabled) {
-    modelBadge.textContent = "AI enable pending";
-  } else if (restartPending && !config.ai_enabled) {
-    modelBadge.textContent = "AI disable pending";
+  const rolloutMode = fairyAIRolloutMode(config);
+  const allowedUsers = config.ai_allowed_users || [];
+  if (restartPending) {
+    modelBadge.textContent = "AI rollout pending";
   } else if (config.model_enabled) {
-    modelBadge.textContent = "AI active";
+    modelBadge.textContent = rolloutMode === "allowlist" ? "AI canary" : "AI active";
   } else if (config.model_configured) {
     modelBadge.textContent = "AI off";
   } else {
@@ -1366,7 +1376,8 @@ function renderFairy(payload) {
   const readiness = document.querySelector("#fairy-ai-readiness");
   const missingQualifications = config.unqualified_replyer_models || [];
   if (config.production_ready) {
-    readiness.textContent = `Ready: every replyer model passed quality corpus v${config.quality_corpus_version}`;
+    const rollout = rolloutMode === "allowlist" ? `; ${allowedUsers.length} account${allowedUsers.length === 1 ? "" : "s"} allowed` : "";
+    readiness.textContent = `Ready: every replyer model passed quality corpus v${config.quality_corpus_version}${rollout}`;
   } else if (missingQualifications.length > 0) {
     readiness.textContent = `Quality gate required: ${missingQualifications.join(", ")}`;
   } else if (config.ai_enabled) {
@@ -1386,7 +1397,9 @@ function renderFairy(payload) {
   renderFairyModelRouting(config);
   renderFairyExternalProviders(config);
   renderFairyBehaviorExperiences(config);
-  document.querySelector("#fairy-ai-enabled").checked = Boolean(config.ai_enabled);
+  document.querySelector("#fairy-ai-rollout-mode").value = rolloutMode;
+  document.querySelector("#fairy-ai-allowed-users").value = allowedUsers.join("\n");
+  updateFairyAIRolloutControls();
   document.querySelector("#fairy-system-prompt").value = config.system_prompt || "";
   document.querySelector("#fairy-group-default").checked = Boolean(config.group_default_enabled);
   document.querySelector("#fairy-group-soft-trigger").value = config.group_soft_trigger || "shadow";
@@ -1981,6 +1994,7 @@ function handleFairyConfigEdit(event) {
 
 fairyConfigForm.addEventListener("input", handleFairyConfigEdit);
 fairyConfigForm.addEventListener("change", handleFairyConfigEdit);
+document.querySelector("#fairy-ai-rollout-mode").addEventListener("change", updateFairyAIRolloutControls);
 
 window.addEventListener("beforeunload", (event) => {
   if (!state.fairyDirty) return;
@@ -2001,7 +2015,13 @@ fairyConfigForm.addEventListener("submit", async (event) => {
     return;
   }
   const replyerTask = routing.tasks.find((task) => task.id === "replyer");
-  const aiEnabled = document.querySelector("#fairy-ai-enabled").checked;
+  const aiRolloutMode = document.querySelector("#fairy-ai-rollout-mode").value;
+  const aiAllowedUsers = fairyLineValues(document.querySelector("#fairy-ai-allowed-users"));
+  const aiEnabled = aiRolloutMode !== "off";
+  if (aiRolloutMode === "allowlist" && aiAllowedUsers.length === 0) {
+    showToast("Allowlist rollout requires at least one account ID", true);
+    return;
+  }
   if (aiEnabled && !replyerTask) {
     showToast("Production AI requires a replyer task", true);
     return;
@@ -2018,6 +2038,8 @@ fairyConfigForm.addEventListener("submit", async (event) => {
   }
   const payload = {
     ai_enabled: aiEnabled,
+    ai_rollout_mode: aiRolloutMode,
+    ai_allowed_users: aiAllowedUsers,
     providers: routing.providers,
     models: routing.models,
     tasks: routing.tasks,

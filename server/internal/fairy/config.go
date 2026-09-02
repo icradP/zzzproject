@@ -31,6 +31,15 @@ const (
 	ExpressionDetailed ExpressionStyle = "detailed"
 )
 
+type AIRolloutMode string
+
+const (
+	AIRolloutOff       AIRolloutMode = "off"
+	AIRolloutAllowlist AIRolloutMode = "allowlist"
+	AIRolloutAll       AIRolloutMode = "all"
+	maxAIAllowedUsers                = 128
+)
+
 // Config contains only Fairy process settings. The IM server remains unaware
 // of model credentials and plugin upstreams.
 type Config struct {
@@ -63,6 +72,8 @@ type Config struct {
 	TurnTimeout            time.Duration
 	DrainTimeout           time.Duration
 	AIEnabled              bool
+	AIRolloutMode          AIRolloutMode
+	AIAllowedUsers         []string
 	ModelBaseURL           string
 	ModelProtocol          string
 	ModelAPIKey            string
@@ -115,10 +126,14 @@ func ConfigFromEnv() (Config, error) {
 		ModelProtocol: strings.ToLower(strings.TrimSpace(envOrDefault(
 			"FAIRY_MODEL_PROTOCOL", OpenAICompatibleProtocol,
 		))),
-		ModelAPIKey:  os.Getenv("FAIRY_MODEL_API_KEY"),
-		ModelName:    strings.TrimSpace(os.Getenv("FAIRY_MODEL_NAME")),
-		SystemPrompt: envOrDefault("FAIRY_SYSTEM_PROMPT", defaultSystemPrompt),
-		ZZZAPIURL:    envOrDefault("FAIRY_ZZZ_API_URL", defaultZZZAPIURL),
+		ModelAPIKey: os.Getenv("FAIRY_MODEL_API_KEY"),
+		ModelName:   strings.TrimSpace(os.Getenv("FAIRY_MODEL_NAME")),
+		AIRolloutMode: AIRolloutMode(strings.ToLower(strings.TrimSpace(
+			os.Getenv("FAIRY_AI_ROLLOUT_MODE"),
+		))),
+		AIAllowedUsers: envAccountIDs("FAIRY_AI_ALLOWED_USERS"),
+		SystemPrompt:   envOrDefault("FAIRY_SYSTEM_PROMPT", defaultSystemPrompt),
+		ZZZAPIURL:      envOrDefault("FAIRY_ZZZ_API_URL", defaultZZZAPIURL),
 		PluginEnabled: map[string]bool{
 			ZZZProfilePluginID: true,
 		},
@@ -178,6 +193,9 @@ func ConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err := normalizeAIRolloutConfiguration(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := normalizeModelConfiguration(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -194,6 +212,9 @@ func ConfigFromEnv() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := normalizeAIRolloutConfiguration(&c); err != nil {
+		return err
+	}
 	if err := normalizeModelConfiguration(&c); err != nil {
 		return err
 	}
@@ -281,7 +302,7 @@ func (c Config) Validate() error {
 }
 
 func (c Config) ModelEnabled() bool {
-	if !c.AIEnabled {
+	if c.EffectiveAIRolloutMode() == AIRolloutOff {
 		return false
 	}
 	return c.modelTaskConfigured(ReplyerTaskID)
@@ -319,10 +340,68 @@ func (c Config) AgentEnabled() bool {
 }
 
 func (c Config) TaskEnabled(taskID string) bool {
-	if !c.AIEnabled || !c.modelTaskConfigured(ReplyerTaskID) {
+	if c.EffectiveAIRolloutMode() == AIRolloutOff || !c.modelTaskConfigured(ReplyerTaskID) {
 		return false
 	}
 	return c.modelTaskConfigured(taskID)
+}
+
+func (c Config) EffectiveAIRolloutMode() AIRolloutMode {
+	mode := AIRolloutMode(strings.ToLower(strings.TrimSpace(string(c.AIRolloutMode))))
+	if mode != "" {
+		return mode
+	}
+	if c.AIEnabled {
+		return AIRolloutAll
+	}
+	return AIRolloutOff
+}
+
+func (c Config) AIUserAllowed(userID string) bool {
+	switch c.EffectiveAIRolloutMode() {
+	case AIRolloutAll:
+		return true
+	case AIRolloutAllowlist:
+		for _, allowed := range c.AIAllowedUsers {
+			if allowed == userID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeAIRolloutConfiguration(cfg *Config) error {
+	mode := cfg.EffectiveAIRolloutMode()
+	if !validAIRolloutMode(mode) {
+		return fmt.Errorf("FAIRY_AI_ROLLOUT_MODE must be off, allowlist, or all")
+	}
+	if len(cfg.AIAllowedUsers) > maxAIAllowedUsers {
+		return fmt.Errorf("Fairy AI allowlist supports at most %d accounts", maxAIAllowedUsers)
+	}
+	allowed := make([]string, 0, len(cfg.AIAllowedUsers))
+	seen := make(map[string]struct{}, len(cfg.AIAllowedUsers))
+	for _, raw := range cfg.AIAllowedUsers {
+		userID := strings.TrimSpace(raw)
+		if userID == "" {
+			continue
+		}
+		if !validAccountID(userID) {
+			return fmt.Errorf("invalid Fairy AI allowlist account %q", userID)
+		}
+		if _, exists := seen[userID]; exists {
+			continue
+		}
+		seen[userID] = struct{}{}
+		allowed = append(allowed, userID)
+	}
+	if mode == AIRolloutAllowlist && len(allowed) == 0 {
+		return fmt.Errorf("Fairy AI allowlist mode requires at least one account")
+	}
+	cfg.AIRolloutMode = mode
+	cfg.AIAllowedUsers = allowed
+	cfg.AIEnabled = mode != AIRolloutOff
+	return nil
 }
 
 func (c Config) IsPluginEnabled(id string) bool {
@@ -347,6 +426,15 @@ func validGroupSoftMode(value GroupSoftMode) bool {
 func validExpressionStyle(value ExpressionStyle) bool {
 	switch value {
 	case ExpressionBrief, ExpressionNormal, ExpressionDetailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAIRolloutMode(value AIRolloutMode) bool {
+	switch value {
+	case AIRolloutOff, AIRolloutAllowlist, AIRolloutAll:
 		return true
 	default:
 		return false
@@ -428,4 +516,10 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be an integer", key)
 	}
 	return parsed, nil
+}
+
+func envAccountIDs(key string) []string {
+	return strings.FieldsFunc(os.Getenv(key), func(character rune) bool {
+		return character == ',' || character == '\n' || character == '\r'
+	})
 }

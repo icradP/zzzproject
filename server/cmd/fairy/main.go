@@ -60,7 +60,10 @@ func run() int {
 			return 1
 		}
 		model = modelRouter
-		log.Printf("[fairy] AI model router enabled (%d providers, %d models), daily limit %d", len(cfg.ModelProviders), len(cfg.ModelDefinitions), cfg.ModelDailyLimit)
+		log.Printf(
+			"[fairy] AI model router enabled (%d providers, %d models), rollout %s (%d allowlisted accounts), daily limit %d",
+			len(cfg.ModelProviders), len(cfg.ModelDefinitions), cfg.EffectiveAIRolloutMode(), len(cfg.AIAllowedUsers), cfg.ModelDailyLimit,
+		)
 	} else if cfg.ModelConfigured() {
 		log.Printf("[fairy] AI model routing is configured; production replies are disabled")
 	} else {
