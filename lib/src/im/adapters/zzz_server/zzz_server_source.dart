@@ -776,7 +776,7 @@ class ZzzServerSource implements ImMessageSource {
           type: ImConversationType.group,
           title: '${json['name'] ?? id}',
           participantIds: participants,
-          avatarAssetPath: _resolveAvatar(id, json['avatar_url'] as String?),
+          avatarAssetPath: _resolveMediaUrl(json['avatar_url'] as String?),
           avatarLocalPath: existing?.avatarLocalPath,
           subtitle: existing?.subtitle,
           updatedAt: existing?.updatedAt,
@@ -995,7 +995,7 @@ class ZzzServerSource implements ImMessageSource {
       participantIds:
           (data['participants'] as List?)?.map((v) => '$v').toList() ??
           [_selfId],
-      avatarAssetPath: _resolveAvatar(id, data['avatar_url'] as String?),
+      avatarAssetPath: _resolveMediaUrl(data['avatar_url'] as String?),
       sourceId: null,
     );
     _conversations[id] = conversation;
@@ -1065,7 +1065,7 @@ class ZzzServerSource implements ImMessageSource {
       title: '${data['name'] ?? existing?.title ?? groupId}',
       participantIds: participants,
       subtitle: existing?.subtitle,
-      avatarAssetPath: _resolveAvatar(groupId, data['avatar_url'] as String?),
+      avatarAssetPath: _resolveMediaUrl(data['avatar_url'] as String?),
       avatarLocalPath: existing?.avatarLocalPath,
       updatedAt: existing?.updatedAt,
       unreadCount: existing?.unreadCount ?? 0,
@@ -2359,7 +2359,7 @@ class ZzzServerSource implements ImMessageSource {
   }) {
     final remote = _resolveMediaUrl(value);
     if (remote != null) return remote;
-    if (isGroup) return _avatarResolver?.call(id);
+    if (isGroup) return null;
     String? otherUserId;
     for (final participantId in participantIds) {
       if (participantId != _selfId) {

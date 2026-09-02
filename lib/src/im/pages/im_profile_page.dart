@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../../assets/app_assets.dart';
 import '../../widgets/zzz_widgets.dart';
@@ -149,6 +150,82 @@ class _ImProfilePageState extends State<ImProfilePage> {
       _backgroundBytes = null;
       _backgroundName = null;
       _backgroundMime = null;
+    });
+  }
+
+  Future<void> _pickBackgroundColor() async {
+    var selectedColor =
+        _parseHexColor(_backgroundColorController.text) ??
+        const Color(0xFF17191D);
+    final result = await showZzzModalPanel<String>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setPanelState) {
+              final pickerWidth =
+                  (MediaQuery.sizeOf(dialogContext).width - 72)
+                      .clamp(220.0, 360.0)
+                      .toDouble();
+              return ZzzModalPanel(
+                key: const ValueKey('background-color-picker-panel'),
+                title: 'Solid background color',
+                icon: Icons.palette_outlined,
+                maxWidth: 460,
+                maxHeight: 620,
+                actions: [
+                  TextButton(
+                    key: const ValueKey('clear-background-color'),
+                    onPressed: () => Navigator.of(dialogContext).pop(''),
+                    child: const Text('Clear'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton.icon(
+                    key: const ValueKey('apply-background-color'),
+                    onPressed:
+                        () => Navigator.of(
+                          dialogContext,
+                        ).pop(_colorToHex(selectedColor)),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Apply'),
+                  ),
+                ],
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Center(
+                    child: ColorPicker(
+                      key: const ValueKey('background-color-picker'),
+                      pickerColor: selectedColor,
+                      onColorChanged:
+                          (color) => setPanelState(() => selectedColor = color),
+                      paletteType: PaletteType.hsvWithHue,
+                      enableAlpha: false,
+                      displayThumbColor: true,
+                      labelTypes: const [],
+                      portraitOnly: true,
+                      hexInputBar: true,
+                      colorPickerWidth: pickerWidth,
+                      pickerAreaHeightPercent: 0.72,
+                      pickerAreaBorderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _backgroundColorController.text = result;
+      if (result.isNotEmpty) {
+        _backgroundController.clear();
+        _backgroundBytes = null;
+        _backgroundName = null;
+        _backgroundMime = null;
+      }
+      _error = null;
     });
   }
 
@@ -449,46 +526,7 @@ class _ImProfilePageState extends State<ImProfilePage> {
                             ],
                           ),
                           const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Container(
-                                width: 42,
-                                height: 42,
-                                decoration: BoxDecoration(
-                                  color:
-                                      _parseHexColor(
-                                        _backgroundColorController.text,
-                                      ) ??
-                                      const Color(0xFF17191D),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: Colors.white24),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: ZzzTextInput(
-                                  controller: _backgroundColorController,
-                                  hintText: 'Solid color #RRGGBB',
-                                  prefixIcon: const Icon(
-                                    Icons.palette_outlined,
-                                  ),
-                                  fillColor: Colors.white.withValues(
-                                    alpha: 0.06,
-                                  ),
-                                  foregroundColor: Colors.white,
-                                  onChanged: (value) {
-                                    if (value.trim().isNotEmpty) {
-                                      _backgroundController.clear();
-                                      _backgroundBytes = null;
-                                      _backgroundName = null;
-                                      _backgroundMime = null;
-                                    }
-                                    setState(() {});
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
+                          _buildBackgroundColorButton(),
                           const SizedBox(height: 10),
                           _buildBackgroundPreview(),
                           const SizedBox(height: 6),
@@ -636,10 +674,50 @@ class _ImProfilePageState extends State<ImProfilePage> {
     );
   }
 
+  Widget _buildBackgroundColorButton() {
+    final color = _parseHexColor(_backgroundColorController.text);
+    return OutlinedButton(
+      key: const ValueKey('card-background-color-picker'),
+      onPressed: _saving ? null : _pickBackgroundColor,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size.fromHeight(48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: color ?? const Color(0xFF17191D),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: Colors.white24),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              color == null
+                  ? 'Choose solid color'
+                  : _backgroundColorController.text.toUpperCase(),
+              textAlign: TextAlign.left,
+            ),
+          ),
+          const Icon(Icons.palette_outlined, size: 20),
+        ],
+      ),
+    );
+  }
+
   Color? _parseHexColor(String raw) {
     final value = raw.trim();
     if (!RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) return null;
     return Color(int.parse('FF${value.substring(1)}', radix: 16));
+  }
+
+  String _colorToHex(Color color) {
+    final rgb = color.toARGB32() & 0xFFFFFF;
+    return '#${rgb.toRadixString(16).padLeft(6, '0').toUpperCase()}';
   }
 
   Widget _backgroundPlaceholder(IconData icon) => ColoredBox(

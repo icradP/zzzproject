@@ -101,4 +101,96 @@ void main() {
       expect(contactIds, isNot(contains('smoke-stranger')));
     },
   );
+
+  test('ZZZ groups without uploaded images keep a composite avatar', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final sockets = <WebSocket>[];
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      sockets.add(socket);
+      socket.listen((raw) {
+        final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
+        final action = requestJson['action'];
+        final group = {
+          'group_id': 'group_team',
+          'name': 'Team',
+          'avatar_url': '',
+          'participants': ['me', 'alice', 'bob'],
+        };
+        final data = switch (action) {
+          'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+          'get_friends' => <Object?>[],
+          'get_friend_requests' => <Object?>[],
+          'get_conversations' => [
+            {
+              'conversation_id': 'group_team',
+              'type': 'group',
+              'title': 'Team',
+              'participants': ['me', 'alice', 'bob'],
+              'avatar_url': '',
+            },
+          ],
+          'get_group_list' => [group],
+          'create_group' => group,
+          'get_group_info' => {
+            ...group,
+            'members': [
+              for (final id in ['me', 'alice', 'bob'])
+                {
+                  'user_id': id,
+                  'nickname': id,
+                  'avatar_url': '',
+                  'role': id == 'me' ? 'owner' : 'member',
+                },
+            ],
+          },
+          'get_group_announcements' => <Object?>[],
+          'get_messages' => <Object?>[],
+          _ => <String, Object?>{},
+        };
+        socket.add(
+          jsonEncode({
+            'status': 'ok',
+            'retcode': 0,
+            'data': data,
+            'echo': requestJson['echo'],
+          }),
+        );
+      });
+    });
+
+    final source = ZzzServerSource(
+      config: ZzzServerConfig(
+        serverUrl: 'ws://127.0.0.1:${server.port}',
+        selfId: 'me',
+      ),
+      allowReconnect: false,
+      avatarResolver: AppAssets.fallbackAvatarForId,
+    );
+    addTearDown(() async {
+      source.disconnect();
+      for (final socket in sockets) {
+        await socket.close();
+      }
+      await server.close(force: true);
+    });
+
+    await source.connect();
+    expect(
+      (await source.getConversation('group_team'))?.avatarAssetPath,
+      isNull,
+    );
+    expect((await source.getGroupList()).single.avatarAssetPath, isNull);
+    expect(
+      (await source.getGroupDetails('group_team')).conversation.avatarAssetPath,
+      isNull,
+    );
+    expect(
+      (await source.createGroup(
+        name: 'Team',
+        memberIds: const ['alice', 'bob'],
+      )).avatarAssetPath,
+      isNull,
+    );
+  });
 }

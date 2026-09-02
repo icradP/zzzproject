@@ -58,6 +58,7 @@ dependencies:
   http_parser: ^4.1.2
   crypto: ^3.0.7
   flutter_secure_storage: ^10.3.1
+  flutter_colorpicker: ^1.1.0
 
 dev_dependencies:
   flutter_test:
