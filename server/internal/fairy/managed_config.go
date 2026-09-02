@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	managedConfigVersion         = 8
+	managedConfigVersion         = 9
 	maxManagedConfigAuditEntries = 50
 )
 
@@ -122,33 +122,37 @@ type ManagedConfigView struct {
 	AIEnabled             bool   `json:"ai_enabled"`
 	ModelConfigured       bool   `json:"model_configured"`
 	ModelEnabled          bool   `json:"model_enabled"`
+	ProductionReady       bool   `json:"production_ready"`
+	QualityCorpusVersion  int    `json:"quality_corpus_version"`
 	AgentEnabled          bool   `json:"agent_enabled"`
 	VisionEnabled         bool   `json:"vision_enabled"`
 	TranscriberEnabled    bool   `json:"transcriber_enabled"`
 	ModelAPIKeyConfigured bool   `json:"model_api_key_configured"`
 
-	Providers             []ManagedModelProviderView    `json:"providers"`
-	Models                []ManagedModelDefinition      `json:"models"`
-	Tasks                 []ManagedModelTask            `json:"tasks"`
-	ExternalToolProviders []ManagedExternalToolProvider `json:"external_tool_providers"`
-	BehaviorExperiences   []ManagedBehaviorExperience   `json:"behavior_experiences"`
-	BehaviorAutoLearning  bool                          `json:"behavior_auto_learning"`
-	ModelDailyLimit       int                           `json:"model_daily_limit"`
-	ModelMaxTokens        int                           `json:"model_max_tokens"`
-	TurnTimeoutSeconds    int64                         `json:"turn_timeout_seconds"`
-	SystemPrompt          string                        `json:"system_prompt"`
-	GroupDefault          bool                          `json:"group_default_enabled"`
-	GroupSoftDefault      string                        `json:"group_soft_trigger"`
-	FocusTTLSeconds       int64                         `json:"focus_ttl_seconds"`
-	SoftCooldownSeconds   int64                         `json:"soft_cooldown_seconds"`
-	ExpressionStyle       string                        `json:"expression_style"`
-	RateLimitSeconds      int64                         `json:"rate_limit_seconds"`
-	ContextTTLSeconds     int64                         `json:"context_ttl_seconds"`
-	ContextMessages       int                           `json:"context_messages"`
-	MaxConcurrent         int                           `json:"max_concurrent"`
-	ZZZAPIURL             string                        `json:"zzz_api_url"`
-	ZZZRequestTimeoutSecs int64                         `json:"zzz_request_timeout_seconds"`
-	PluginEnabled         map[string]bool               `json:"plugin_enabled"`
+	Providers                []ManagedModelProviderView      `json:"providers"`
+	Models                   []ManagedModelDefinition        `json:"models"`
+	Tasks                    []ManagedModelTask              `json:"tasks"`
+	ModelQualifications      []ManagedModelQualificationView `json:"model_qualifications"`
+	UnqualifiedReplyerModels []string                        `json:"unqualified_replyer_models"`
+	ExternalToolProviders    []ManagedExternalToolProvider   `json:"external_tool_providers"`
+	BehaviorExperiences      []ManagedBehaviorExperience     `json:"behavior_experiences"`
+	BehaviorAutoLearning     bool                            `json:"behavior_auto_learning"`
+	ModelDailyLimit          int                             `json:"model_daily_limit"`
+	ModelMaxTokens           int                             `json:"model_max_tokens"`
+	TurnTimeoutSeconds       int64                           `json:"turn_timeout_seconds"`
+	SystemPrompt             string                          `json:"system_prompt"`
+	GroupDefault             bool                            `json:"group_default_enabled"`
+	GroupSoftDefault         string                          `json:"group_soft_trigger"`
+	FocusTTLSeconds          int64                           `json:"focus_ttl_seconds"`
+	SoftCooldownSeconds      int64                           `json:"soft_cooldown_seconds"`
+	ExpressionStyle          string                          `json:"expression_style"`
+	RateLimitSeconds         int64                           `json:"rate_limit_seconds"`
+	ContextTTLSeconds        int64                           `json:"context_ttl_seconds"`
+	ContextMessages          int                             `json:"context_messages"`
+	MaxConcurrent            int                             `json:"max_concurrent"`
+	ZZZAPIURL                string                          `json:"zzz_api_url"`
+	ZZZRequestTimeoutSecs    int64                           `json:"zzz_request_timeout_seconds"`
+	PluginEnabled            map[string]bool                 `json:"plugin_enabled"`
 }
 
 type ManagedConfigResponse struct {
@@ -190,6 +194,13 @@ type storedModelProvider struct {
 	RetryBackoffMillis int64  `json:"retry_backoff_millis"`
 }
 
+type storedModelQualification struct {
+	ModelID       string `json:"model_id"`
+	Fingerprint   string `json:"config_fingerprint"`
+	CorpusVersion int    `json:"corpus_version"`
+	QualifiedAtMS int64  `json:"qualified_at_ms"`
+}
+
 type managedConfigFile struct {
 	Version     int                       `json:"version"`
 	Revision    uint64                    `json:"revision,omitempty"`
@@ -204,6 +215,7 @@ type managedConfigFile struct {
 	Providers             []storedModelProvider         `json:"providers,omitempty"`
 	Models                []ManagedModelDefinition      `json:"models,omitempty"`
 	Tasks                 []ManagedModelTask            `json:"tasks,omitempty"`
+	ModelQualifications   []storedModelQualification    `json:"model_qualifications,omitempty"`
 	ExternalToolProviders []ManagedExternalToolProvider `json:"external_tool_providers,omitempty"`
 	BehaviorExperiences   []ManagedBehaviorExperience   `json:"behavior_experiences,omitempty"`
 	AIEnabled             bool                          `json:"ai_enabled"`
@@ -307,14 +319,83 @@ func (m *ConfigManager) UpdateWithResult(update ManagedConfigUpdate) (ConfigUpda
 	return result, nil
 }
 
+func (m *ConfigManager) RecordModelQualification(modelID, fingerprint string, corpusVersion int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if corpusVersion != QualityEvalCorpusVersion {
+		return fmt.Errorf("Fairy model qualification uses an outdated corpus")
+	}
+	currentFingerprint, err := modelQualificationFingerprint(m.current, modelID)
+	if err != nil || currentFingerprint != fingerprint {
+		return ErrModelQualificationStale
+	}
+	if m.current.managedConfigRevision == ^uint64(0) {
+		return fmt.Errorf("Fairy managed config revision is exhausted")
+	}
+
+	next := cloneConfig(m.current)
+	qualifiedAt := m.now().UTC().Truncate(time.Millisecond)
+	if !qualifiedAt.After(m.current.managedConfigUpdatedAt) {
+		qualifiedAt = m.current.managedConfigUpdatedAt.Add(time.Millisecond)
+	}
+	replacement := ModelQualification{
+		ModelID: modelID, Fingerprint: fingerprint,
+		CorpusVersion: corpusVersion, QualifiedAt: qualifiedAt,
+	}
+	found := false
+	for index := range next.ModelQualifications {
+		if next.ModelQualifications[index].ModelID == modelID {
+			next.ModelQualifications[index] = replacement
+			found = true
+			break
+		}
+	}
+	if !found {
+		next.ModelQualifications = append(next.ModelQualifications, replacement)
+	}
+	pruneModelQualifications(&next)
+	next.managedConfigRevision = m.current.managedConfigRevision + 1
+	next.managedConfigUpdatedAt = qualifiedAt
+	next.managedConfigAudit = appendManagedConfigAudit(m.current.managedConfigAudit, managedConfigAuditEntry{
+		Revision: next.managedConfigRevision, UpdatedAtMS: qualifiedAt.UnixMilli(), Sections: []string{"model_validation"},
+	})
+	wasFullyApplied := m.active.managedConfigRevision == m.current.managedConfigRevision
+	if err := persistManagedConfig(next); err != nil {
+		return err
+	}
+	m.current = cloneConfig(next)
+	if wasFullyApplied {
+		m.active = cloneConfig(next)
+	}
+	return nil
+}
+
 func (m *ConfigManager) MarkApplied(revision uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.current.managedConfigRevision != revision || restartConfigChanged(m.active, m.current) {
+	if revision > m.current.managedConfigRevision || restartConfigChanged(m.active, m.current) {
+		return false
+	}
+	if revision != m.current.managedConfigRevision &&
+		!onlyModelValidationChangesAfter(m.current.managedConfigAudit, revision, m.current.managedConfigRevision) {
 		return false
 	}
 	m.active = cloneConfig(m.current)
 	return true
+}
+
+func onlyModelValidationChangesAfter(entries []managedConfigAuditEntry, revision, current uint64) bool {
+	expected := revision + 1
+	for _, entry := range entries {
+		if entry.Revision <= revision {
+			continue
+		}
+		if entry.Revision != expected || len(entry.Sections) != 1 || entry.Sections[0] != "model_validation" {
+			return false
+		}
+		expected++
+	}
+	return expected == current+1
 }
 
 func loadManagedConfig(base Config) (Config, error) {
@@ -340,6 +421,7 @@ func loadManagedConfig(base Config) (Config, error) {
 	base.managedConfigRevision = 0
 	base.managedConfigUpdatedAt = time.Time{}
 	base.managedConfigAudit = nil
+	base.ModelQualifications = nil
 	if stored.Version >= 7 {
 		if err := validateManagedConfigMetadata(stored); err != nil {
 			return Config{}, fmt.Errorf("validate Fairy managed config metadata: %w", err)
@@ -389,6 +471,9 @@ func loadManagedConfig(base Config) (Config, error) {
 	if stored.Version >= 8 {
 		base.AIEnabled = stored.AIEnabled
 	}
+	if stored.Version >= 9 {
+		base.ModelQualifications = modelQualificationsFromStored(stored.ModelQualifications)
+	}
 	if stored.Version >= 4 {
 		base.ExternalToolProviders = externalToolProvidersFromManaged(stored.ExternalToolProviders)
 	}
@@ -404,6 +489,10 @@ func loadManagedConfig(base Config) (Config, error) {
 	if err := normalizeBehaviorExperienceConfiguration(&base); err != nil {
 		return Config{}, fmt.Errorf("normalize Fairy managed behavior experience config: %w", err)
 	}
+	if err := validateModelQualifications(base.ModelQualifications); err != nil {
+		return Config{}, fmt.Errorf("validate Fairy managed model qualifications: %w", err)
+	}
+	pruneModelQualifications(&base)
 	if stored.Version < 8 {
 		base.AIEnabled = base.modelTaskConfigured(ReplyerTaskID)
 	}
@@ -511,9 +600,14 @@ func applyManagedUpdate(current Config, update ManagedConfigUpdate) (Config, err
 	if err := normalizeBehaviorExperienceConfiguration(&next); err != nil {
 		return Config{}, err
 	}
+	pruneModelQualifications(&next)
 	syncLegacyModelProjection(&next)
 	if err := next.Validate(); err != nil {
 		return Config{}, err
+	}
+	if next.AIEnabled && (!current.AIEnabled || modelRoutingChanged(current, next)) && !next.ProductionReady() {
+		_, missing := replyerQualificationState(next)
+		return Config{}, fmt.Errorf("Fairy production AI requires current quality qualification for replyer models: %s", strings.Join(missing, ", "))
 	}
 	return next, nil
 }
@@ -551,6 +645,10 @@ func persistManagedConfig(cfg Config) error {
 	if err := normalizeModelConfiguration(&cfg); err != nil {
 		return err
 	}
+	if err := validateModelQualifications(cfg.ModelQualifications); err != nil {
+		return err
+	}
+	pruneModelQualifications(&cfg)
 	if err := normalizeExternalToolConfiguration(&cfg); err != nil {
 		return err
 	}
@@ -562,6 +660,7 @@ func persistManagedConfig(cfg Config) error {
 		Providers:                storedProviders(cfg.ModelProviders),
 		Models:                   managedModelDefinitions(cfg.ModelDefinitions),
 		Tasks:                    managedModelTasks(cfg.ModelTasks),
+		ModelQualifications:      storedModelQualifications(cfg.ModelQualifications),
 		ExternalToolProviders:    managedExternalToolProviders(cfg.ExternalToolProviders),
 		BehaviorExperiences:      managedBehaviorExperiences(cfg.BehaviorExperiences),
 		AIEnabled:                cfg.AIEnabled,
@@ -622,20 +721,25 @@ func persistManagedConfig(cfg Config) error {
 func managedConfigView(cfg Config) ManagedConfigView {
 	_ = normalizeModelConfiguration(&cfg)
 	_ = normalizeExternalToolConfiguration(&cfg)
+	pruneModelQualifications(&cfg)
 	projection := primaryModelProjection(cfg)
+	_, missingQualifications := replyerQualificationState(cfg)
 	return ManagedConfigView{
 		ModelBaseURL: projection.BaseURL, ModelName: projection.ModelName,
 		AIEnabled: cfg.AIEnabled, ModelConfigured: cfg.ModelConfigured(),
+		ProductionReady: cfg.ProductionReady(), QualityCorpusVersion: QualityEvalCorpusVersion,
 		ModelEnabled: cfg.ModelEnabled(), AgentEnabled: cfg.AgentEnabled(),
 		VisionEnabled: cfg.TaskEnabled(VisionTaskID), TranscriberEnabled: cfg.TaskEnabled(TranscriberTaskID),
-		ModelAPIKeyConfigured: projection.APIKey != "",
-		Providers:             managedProviderViews(cfg.ModelProviders),
-		Models:                managedModelDefinitions(cfg.ModelDefinitions),
-		Tasks:                 managedModelTasks(cfg.ModelTasks),
-		ExternalToolProviders: managedExternalToolProviders(cfg.ExternalToolProviders),
-		BehaviorExperiences:   managedBehaviorExperiences(cfg.BehaviorExperiences),
-		BehaviorAutoLearning:  false,
-		ModelDailyLimit:       cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
+		ModelAPIKeyConfigured:    projection.APIKey != "",
+		Providers:                managedProviderViews(cfg.ModelProviders),
+		Models:                   managedModelDefinitions(cfg.ModelDefinitions),
+		Tasks:                    managedModelTasks(cfg.ModelTasks),
+		ModelQualifications:      modelQualificationViews(cfg),
+		UnqualifiedReplyerModels: append([]string(nil), missingQualifications...),
+		ExternalToolProviders:    managedExternalToolProviders(cfg.ExternalToolProviders),
+		BehaviorExperiences:      managedBehaviorExperiences(cfg.BehaviorExperiences),
+		BehaviorAutoLearning:     false,
+		ModelDailyLimit:          cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
 		TurnTimeoutSeconds: int64(cfg.TurnTimeout / time.Second),
 		SystemPrompt:       cfg.SystemPrompt, GroupDefault: cfg.GroupDefault,
 		GroupSoftDefault: string(cfg.GroupSoftDefault), FocusTTLSeconds: int64(cfg.FocusTTL / time.Second),
@@ -661,11 +765,23 @@ func restartConfigChanged(current, next Config) bool {
 	right.managedConfigRevision = 0
 	right.managedConfigUpdatedAt = time.Time{}
 	right.managedConfigAudit = nil
+	left.ModelQualifications = nil
+	right.ModelQualifications = nil
 	right.GroupSoftDefault = left.GroupSoftDefault
 	right.FocusTTL = left.FocusTTL
 	right.SoftCooldown = left.SoftCooldown
 	right.ExpressionStyle = left.ExpressionStyle
 	return !reflect.DeepEqual(left, right)
+}
+
+func modelRoutingChanged(current, next Config) bool {
+	current = cloneConfig(current)
+	next = cloneConfig(next)
+	_ = normalizeModelConfiguration(&current)
+	_ = normalizeModelConfiguration(&next)
+	return !reflect.DeepEqual(current.ModelProviders, next.ModelProviders) ||
+		!reflect.DeepEqual(current.ModelDefinitions, next.ModelDefinitions) ||
+		!reflect.DeepEqual(current.ModelTasks, next.ModelTasks)
 }
 
 func managedConfigChangedSections(current, next Config) []string {
@@ -677,7 +793,7 @@ func managedConfigChangedSections(current, next Config) []string {
 	_ = normalizeExternalToolConfiguration(&next)
 	_ = normalizeBehaviorExperienceConfiguration(&current)
 	_ = normalizeBehaviorExperienceConfiguration(&next)
-	sections := make([]string, 0, 8)
+	sections := make([]string, 0, 9)
 	if current.AIEnabled != next.AIEnabled {
 		sections = append(sections, "ai_activation")
 	}
@@ -754,13 +870,13 @@ func validateManagedConfigMetadata(stored managedConfigFile) error {
 }
 
 func validManagedConfigAuditSections(sections []string) bool {
-	if len(sections) == 0 || len(sections) > 8 {
+	if len(sections) == 0 || len(sections) > 9 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(sections))
 	for _, section := range sections {
 		switch section {
-		case "ai_activation", "model", "prompt", "behavior", "runtime_limits", "plugins", "external_tools", "behavior_experiences", "none":
+		case "ai_activation", "model_validation", "model", "prompt", "behavior", "runtime_limits", "plugins", "external_tools", "behavior_experiences", "none":
 		default:
 			return false
 		}
@@ -916,6 +1032,29 @@ func modelTasksFromManaged(tasks []ManagedModelTask) []ModelTaskConfig {
 	return result
 }
 
+func storedModelQualifications(qualifications []ModelQualification) []storedModelQualification {
+	stored := make([]storedModelQualification, 0, len(qualifications))
+	for _, qualification := range qualifications {
+		stored = append(stored, storedModelQualification{
+			ModelID: qualification.ModelID, Fingerprint: qualification.Fingerprint,
+			CorpusVersion: qualification.CorpusVersion, QualifiedAtMS: qualification.QualifiedAt.UnixMilli(),
+		})
+	}
+	return stored
+}
+
+func modelQualificationsFromStored(qualifications []storedModelQualification) []ModelQualification {
+	result := make([]ModelQualification, 0, len(qualifications))
+	for _, qualification := range qualifications {
+		result = append(result, ModelQualification{
+			ModelID: qualification.ModelID, Fingerprint: qualification.Fingerprint,
+			CorpusVersion: qualification.CorpusVersion,
+			QualifiedAt:   time.UnixMilli(qualification.QualifiedAtMS).UTC(),
+		})
+	}
+	return result
+}
+
 func managedExternalToolProviders(providers []ExternalToolProviderConfig) []ManagedExternalToolProvider {
 	managed := make([]ManagedExternalToolProvider, 0, len(providers))
 	for _, provider := range providers {
@@ -984,6 +1123,7 @@ func cloneConfig(cfg Config) Config {
 	clone.ModelProviders = append([]ModelProviderConfig(nil), cfg.ModelProviders...)
 	clone.ModelDefinitions = append([]ModelDefinitionConfig(nil), cfg.ModelDefinitions...)
 	clone.ModelTasks = append([]ModelTaskConfig(nil), cfg.ModelTasks...)
+	clone.ModelQualifications = append([]ModelQualification(nil), cfg.ModelQualifications...)
 	clone.ExternalToolProviders = cloneExternalToolProviders(cfg.ExternalToolProviders)
 	clone.BehaviorExperiences = cloneBehaviorExperiences(cfg.BehaviorExperiences)
 	clone.managedConfigAudit = cloneManagedConfigAudit(cfg.managedConfigAudit)

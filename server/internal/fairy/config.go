@@ -73,6 +73,7 @@ type Config struct {
 	ModelProviders         []ModelProviderConfig
 	ModelDefinitions       []ModelDefinitionConfig
 	ModelTasks             []ModelTaskConfig
+	ModelQualifications    []ModelQualification
 	ExternalToolProviders  []ExternalToolProviderConfig
 	BehaviorExperiences    []BehaviorExperienceConfig
 	ZZZAPIURL              string
@@ -263,6 +264,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("FAIRY_SYSTEM_PROMPT must contain 1-8000 characters")
 	}
 	if err := validateModelConfiguration(c); err != nil {
+		return err
+	}
+	if err := validateModelQualifications(c.ModelQualifications); err != nil {
 		return err
 	}
 	if err := validateTemplateURL(c.ZZZAPIURL); err != nil {

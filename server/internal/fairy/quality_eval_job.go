@@ -10,13 +10,15 @@ import (
 )
 
 const (
-	QualityEvalJobSchemaVersion = "fairy-quality-eval-job/v1"
-	QualityEvalJobIdle          = "idle"
-	QualityEvalJobRunning       = "running"
-	QualityEvalJobPassed        = "passed"
-	QualityEvalJobFailed        = "failed"
-	QualityEvalJobError         = "error"
-	QualityEvalJobCancelled     = "cancelled"
+	QualityEvalJobSchemaVersion     = "fairy-quality-eval-job/v1"
+	QualityEvalJobIdle              = "idle"
+	QualityEvalJobRunning           = "running"
+	QualityEvalJobPassed            = "passed"
+	QualityEvalJobFailed            = "failed"
+	QualityEvalJobError             = "error"
+	QualityEvalJobCancelled         = "cancelled"
+	QualityEvalQualificationChanged = "configuration_changed"
+	QualityEvalQualificationStore   = "qualification_store"
 
 	qualityEvalAdminTimeout = 4 * time.Minute
 )
@@ -66,11 +68,12 @@ type qualityEvalRunner func(context.Context, QualityEvalTarget, QualityEvalLimit
 // only the redacted report; provider credentials remain in the goroutine's
 // immutable call snapshot and are discarded when the run finishes.
 type qualityEvalJobManager struct {
-	ctx       context.Context
-	slot      chan struct{}
-	run       qualityEvalRunner
-	mu        sync.RWMutex
-	latestJob QualityEvalJob
+	ctx                 context.Context
+	slot                chan struct{}
+	run                 qualityEvalRunner
+	recordQualification func(string, string, int) error
+	mu                  sync.RWMutex
+	latestJob           QualityEvalJob
 }
 
 func newQualityEvalJobManager(ctx context.Context, slot chan struct{}) *qualityEvalJobManager {
@@ -85,6 +88,10 @@ func newQualityEvalJobManager(ctx context.Context, slot chan struct{}) *qualityE
 
 func (m *qualityEvalJobManager) Start(cfg Config, modelID string) (QualityEvalJob, error) {
 	target, limits, err := qualityEvalTargetForConfiguredModel(cfg, modelID)
+	if err != nil {
+		return QualityEvalJob{}, err
+	}
+	fingerprint, err := modelQualificationFingerprint(cfg, modelID)
 	if err != nil {
 		return QualityEvalJob{}, err
 	}
@@ -111,7 +118,7 @@ func (m *qualityEvalJobManager) Start(cfg Config, modelID string) (QualityEvalJo
 	m.mu.Lock()
 	m.latestJob = job
 	m.mu.Unlock()
-	go m.evaluate(jobID, target, limits)
+	go m.evaluate(jobID, modelID, fingerprint, target, limits)
 	return cloneQualityEvalJob(job), nil
 }
 
@@ -121,11 +128,14 @@ func (m *qualityEvalJobManager) Snapshot() QualityEvalJob {
 	return cloneQualityEvalJob(m.latestJob)
 }
 
-func (m *qualityEvalJobManager) evaluate(jobID string, target QualityEvalTarget, limits QualityEvalLimits) {
+func (m *qualityEvalJobManager) evaluate(jobID, modelID, fingerprint string, target QualityEvalTarget, limits QualityEvalLimits) {
 	defer func() { <-m.slot }()
 	ctx, cancel := context.WithTimeout(m.ctx, qualityEvalAdminTimeout)
 	defer cancel()
 	report, err := m.run(ctx, target, limits)
+	if err == nil && report.Passed && m.recordQualification != nil {
+		err = m.recordQualification(modelID, fingerprint, report.CorpusVersion)
+	}
 	completedAt := time.Now().UTC()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -144,6 +154,9 @@ func (m *qualityEvalJobManager) evaluate(jobID string, target QualityEvalTarget,
 		return
 	}
 	switch {
+	case errors.Is(err, ErrModelQualificationStale):
+		m.latestJob.Status = QualityEvalJobError
+		m.latestJob.FailureCode = QualityEvalQualificationChanged
 	case errors.Is(err, context.Canceled):
 		m.latestJob.Status = QualityEvalJobCancelled
 		m.latestJob.FailureCode = string(ModelFailureCancelled)
@@ -152,7 +165,11 @@ func (m *qualityEvalJobManager) evaluate(jobID string, target QualityEvalTarget,
 		m.latestJob.FailureCode = string(ModelFailureDeadline)
 	default:
 		m.latestJob.Status = QualityEvalJobError
-		m.latestJob.FailureCode = "evaluation_error"
+		if report.Passed {
+			m.latestJob.FailureCode = QualityEvalQualificationStore
+		} else {
+			m.latestJob.FailureCode = "evaluation_error"
+		}
 	}
 }
 

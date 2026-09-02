@@ -293,7 +293,7 @@ func TestFairyAdminAPIAuthenticationUpdateAndRestart(t *testing.T) {
 	authorized := httptest.NewRecorder()
 	handler.ServeHTTP(authorized, authorizedRequest)
 	if authorized.Code != http.StatusOK || strings.Contains(authorized.Body.String(), cfg.ModelAPIKey) ||
-		!strings.Contains(authorized.Body.String(), `"config_status":{"schema_version":8,"revision":"0","active_revision":"0","state":"active","restart_pending":false,"recent_changes":[]}`) {
+		!strings.Contains(authorized.Body.String(), `"config_status":{"schema_version":9,"revision":"0","active_revision":"0","state":"active","restart_pending":false,"recent_changes":[]}`) {
 		t.Fatalf("GET status=%d body=%s", authorized.Code, authorized.Body.String())
 	}
 
@@ -423,7 +423,7 @@ func TestManagedConfigVersionFourPersistsExternalProvidersWithoutEnvironmentValu
 		t.Fatal(err)
 	}
 	if bytes.Contains(response, []byte(secret)) || bytes.Contains(stored, []byte(secret)) ||
-		!bytes.Contains(response, []byte("FAIRY_MCP_TEST_SECRET")) || !bytes.Contains(stored, []byte(`"version": 8`)) {
+		!bytes.Contains(response, []byte("FAIRY_MCP_TEST_SECRET")) || !bytes.Contains(stored, []byte(`"version": 9`)) {
 		t.Fatalf("external provider leaked a value or was not persisted: response=%s stored=%s", response, stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
@@ -544,8 +544,8 @@ func TestManagedBehaviorExperiencesPersistMigrateAndRequireRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stored, []byte(`"version": 8`)) || !bytes.Contains(stored, []byte(`"behavior_experiences"`)) {
-		t.Fatalf("behavior experiences were not persisted in v7: %s", stored)
+	if !bytes.Contains(stored, []byte(`"version": 9`)) || !bytes.Contains(stored, []byte(`"behavior_experiences"`)) {
+		t.Fatalf("behavior experiences were not persisted in v9: %s", stored)
 	}
 	reloaded, err := loadManagedConfig(cfg)
 	if err != nil {
@@ -667,7 +667,18 @@ func TestManagedConfigAIActivationIsExplicitAuditedAndRestarted(t *testing.T) {
 	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
 	cfg.AIEnabled = false
 	syncLegacyModelProjection(&cfg)
-	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v8.json")
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v9.json")
+	qualifiedAt := time.Date(2026, time.September, 3, 7, 0, 0, 0, time.UTC)
+	for _, modelID := range []string{"primary", "fallback"} {
+		fingerprint, err := modelQualificationFingerprint(cfg, modelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.ModelQualifications = append(cfg.ModelQualifications, ModelQualification{
+			ModelID: modelID, Fingerprint: fingerprint,
+			CorpusVersion: QualityEvalCorpusVersion, QualifiedAt: qualifiedAt,
+		})
+	}
 	manager := NewConfigManager(cfg)
 	update := managedUpdateForConfig(cfg)
 	update.Providers = []ManagedModelProviderUpdate{{
@@ -699,8 +710,8 @@ func TestManagedConfigAIActivationIsExplicitAuditedAndRestarted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stored, []byte(`"version": 8`)) || !bytes.Contains(stored, []byte(`"ai_enabled": true`)) {
-		t.Fatalf("AI activation was not persisted as v8: %s", stored)
+	if !bytes.Contains(stored, []byte(`"version": 9`)) || !bytes.Contains(stored, []byte(`"ai_enabled": true`)) {
+		t.Fatalf("AI activation was not persisted as v9: %s", stored)
 	}
 }
 

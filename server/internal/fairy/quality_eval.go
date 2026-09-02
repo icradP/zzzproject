@@ -17,6 +17,7 @@ import (
 
 const (
 	QualityEvalSchemaVersion = "fairy-quality-eval/v1"
+	QualityEvalCorpusVersion = 1
 	qualityEvalMarker        = "FAIRY_QUALITY_EVAL_PRIVATE_7A91"
 	qualityEvalProviderID    = "quality-eval-provider"
 	qualityEvalModelID       = "quality-eval-model"
@@ -381,7 +382,7 @@ func loadQualityEvalCorpus(payload []byte) (qualityEvalCorpus, error) {
 	if err := ensureQualityEvalEOF(decoder); err != nil {
 		return qualityEvalCorpus{}, err
 	}
-	if corpus.Version != 1 || len(corpus.Cases) < 5 || len(corpus.Cases) > 64 {
+	if corpus.Version != QualityEvalCorpusVersion || len(corpus.Cases) < 5 || len(corpus.Cases) > 64 {
 		return qualityEvalCorpus{}, fmt.Errorf("invalid Fairy quality corpus metadata")
 	}
 	seen := make(map[string]struct{}, len(corpus.Cases))

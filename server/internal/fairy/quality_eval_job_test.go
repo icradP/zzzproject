@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -135,7 +137,7 @@ func TestQualityEvalJobReportsFixedFailureAndCancellationStates(t *testing.T) {
 
 func TestFairyAdminAPIModelEvaluationLifecycleAndSharedDiagnosticLimit(t *testing.T) {
 	cfg := probeTestConfig(t, "https://provider.example.test/v1", OpenAICompatibleProtocol, "never-return-eval-key")
-	cfg.ConfigFile = ""
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed.json")
 	handler := NewAdminAPI(NewConfigManager(cfg), "local-admin-token", nil, nil)
 
 	unauthorized := httptest.NewRecorder()
@@ -170,7 +172,9 @@ func TestFairyAdminAPIModelEvaluationLifecycleAndSharedDiagnosticLimit(t *testin
 		close(started)
 		select {
 		case <-release:
-			return QualityEvalReport{SchemaVersion: QualityEvalSchemaVersion, Passed: true}, nil
+			return QualityEvalReport{
+				SchemaVersion: QualityEvalSchemaVersion, CorpusVersion: QualityEvalCorpusVersion, Passed: true,
+			}, nil
 		case <-ctx.Done():
 			return QualityEvalReport{}, ctx.Err()
 		}
@@ -199,6 +203,69 @@ func TestFairyAdminAPIModelEvaluationLifecycleAndSharedDiagnosticLimit(t *testin
 	close(release)
 	job := waitForQualityJob(t, handler.qualityEval, QualityEvalJobPassed)
 	assertQualityJobRedacted(t, job, "never-return-eval-key", cfg.ModelProviders[0].BaseURL)
+}
+
+func TestQualityEvalJobRejectsQualificationAfterConfigurationChange(t *testing.T) {
+	cfg := probeTestConfig(t, "https://provider.example.test/v1", OpenAICompatibleProtocol, "stale-eval-key")
+	cfg.AIEnabled = false
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed.json")
+	configManager := NewConfigManager(cfg)
+	jobManager := newQualityEvalJobManager(context.Background(), make(chan struct{}, 1))
+	jobManager.recordQualification = configManager.RecordModelQualification
+	started := make(chan struct{})
+	release := make(chan struct{})
+	jobManager.run = func(ctx context.Context, _ QualityEvalTarget, _ QualityEvalLimits) (QualityEvalReport, error) {
+		close(started)
+		select {
+		case <-release:
+			return passingQualityEvalReport(), nil
+		case <-ctx.Done():
+			return QualityEvalReport{}, ctx.Err()
+		}
+	}
+	if _, err := jobManager.Start(configManager.Current(), "probe-model"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	update := managedRouterUpdateForConfig(configManager.Current())
+	update.Providers[0].BaseURL = "https://replacement.example.test/v1"
+	if _, err := configManager.UpdateWithResult(update); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	job := waitForQualityJob(t, jobManager, QualityEvalJobError)
+	if job.FailureCode != QualityEvalQualificationChanged || len(configManager.Current().ModelQualifications) != 0 {
+		t.Fatalf("stale quality job = %#v qualifications=%#v", job, configManager.Current().ModelQualifications)
+	}
+}
+
+func TestQualityEvalJobReportsQualificationStoreFailure(t *testing.T) {
+	cfg := probeTestConfig(t, "https://provider.example.test/v1", OpenAICompatibleProtocol, "store-eval-key")
+	cfg.AIEnabled = false
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed.json")
+	if err := os.Mkdir(cfg.ConfigFile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configManager := NewConfigManager(cfg)
+	jobManager := newQualityEvalJobManager(context.Background(), make(chan struct{}, 1))
+	jobManager.recordQualification = configManager.RecordModelQualification
+	jobManager.run = func(context.Context, QualityEvalTarget, QualityEvalLimits) (QualityEvalReport, error) {
+		return passingQualityEvalReport(), nil
+	}
+	if _, err := jobManager.Start(configManager.Current(), "probe-model"); err != nil {
+		t.Fatal(err)
+	}
+	job := waitForQualityJob(t, jobManager, QualityEvalJobError)
+	if job.FailureCode != QualityEvalQualificationStore || len(configManager.Current().ModelQualifications) != 0 {
+		t.Fatalf("qualification store failure = %#v qualifications=%#v", job, configManager.Current().ModelQualifications)
+	}
+}
+
+func passingQualityEvalReport() QualityEvalReport {
+	return QualityEvalReport{
+		SchemaVersion: QualityEvalSchemaVersion, CorpusVersion: QualityEvalCorpusVersion,
+		Passed: true, CaseCount: 5, PassedCases: 5, GateFailures: []string{}, Cases: []QualityEvalCaseResult{},
+	}
 }
 
 func waitForQualityJob(t *testing.T, manager *qualityEvalJobManager, status string) QualityEvalJob {

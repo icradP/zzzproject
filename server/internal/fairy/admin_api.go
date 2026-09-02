@@ -59,7 +59,7 @@ func NewAdminAPIWithRuntimeContext(
 		restart = func() {}
 	}
 	modelTestSlot := make(chan struct{}, 1)
-	return &AdminAPI{
+	api := &AdminAPI{
 		manager:       manager,
 		tokenDigest:   sha256.Sum256([]byte(strings.TrimSpace(token))),
 		connected:     connected,
@@ -69,6 +69,8 @@ func NewAdminAPIWithRuntimeContext(
 		probe:         ProbeConfiguredModel,
 		qualityEval:   newQualityEvalJobManager(ctx, modelTestSlot),
 	}
+	api.qualityEval.recordQualification = manager.RecordModelQualification
+	return api
 }
 
 func (a *AdminAPI) ServeHTTP(response http.ResponseWriter, request *http.Request) {

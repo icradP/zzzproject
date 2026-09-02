@@ -757,6 +757,9 @@ function createFairyProviderRow(provider = {}) {
 
 function createFairyModelRow(model = {}) {
   const row = element("div", "route-entry fairy-model-row");
+  const qualification = model.qualification || null;
+  if (qualification?.qualified_at) row.dataset.qualifiedAt = qualification.qualified_at;
+  if (qualification?.corpus_version) row.dataset.qualificationCorpus = String(qualification.corpus_version);
   const remove = () => {
     row.remove();
     refreshFairyModelOptions();
@@ -811,7 +814,9 @@ function createFairyModelRow(model = {}) {
       probeButton.disabled = false;
     }
   });
-  const qualityBadge = element("span", "status-badge offline model-quality-badge", "Not evaluated");
+  const qualityBadge = element("span",
+    `status-badge ${qualification ? "enabled" : "offline"} model-quality-badge`,
+    qualification ? "Qualified" : "Not qualified");
   const qualityButton = element("button", "secondary-button compact model-quality-button", "Quality");
   qualityButton.type = "button";
   qualityButton.title = "Run the fixed five-case quality gate";
@@ -844,7 +849,9 @@ function createFairyModelRow(model = {}) {
   const diagnostics = element("div", "model-diagnostic-results");
   diagnostics.append(
     element("div", "model-probe-result", "Connectivity: one minimal request; response text is never shown or stored."),
-    element("div", "model-quality-result", "Quality: fixed synthetic cases; model responses are never shown or stored."),
+    element("div", "model-quality-result", qualification
+      ? `Quality: qualified with corpus v${qualification.corpus_version} at ${formatDate(qualification.qualified_at)}.`
+      : "Quality: fixed synthetic cases; model responses are never shown or stored."),
   );
   row.append(heading, primaryGrid, metadataGrid, diagnostics);
   return row;
@@ -898,6 +905,8 @@ function fairyQualityFailureLabel(code) {
     network_error: "Network error",
     cancelled: "Cancelled",
     evaluation_error: "Evaluation failed",
+    configuration_changed: "Configuration changed during evaluation",
+    qualification_store: "Qualification could not be saved",
   };
   return labels[code] || "Evaluation failed";
 }
@@ -906,6 +915,13 @@ async function startFairyModelEvaluation(row) {
   const modelID = row.querySelector("[data-field='id']").value.trim();
   const badge = row.querySelector(".model-quality-badge");
   const button = row.querySelector(".model-quality-button");
+  if (state.fairyDirty) {
+    badge.textContent = "Save first";
+    badge.className = "status-badge offline model-quality-badge";
+    setFairyModelQualityDetails(row, "save all pending configuration changes before evaluating.");
+    showToast("Save pending Fairy configuration changes before evaluating", true);
+    return;
+  }
   if (!fairyModelProbeUsesSavedConfig(row)) {
     badge.textContent = "Save first";
     badge.className = "status-badge offline model-quality-badge";
@@ -940,10 +956,13 @@ function renderFairyModelEvaluation(job = {}) {
   rows.forEach((row) => {
     const badge = row.querySelector(".model-quality-badge");
     const button = row.querySelector(".model-quality-button");
-    badge.textContent = "Not evaluated";
-    badge.className = "status-badge offline model-quality-badge";
+    const qualifiedAt = row.dataset.qualifiedAt;
+    badge.textContent = qualifiedAt ? "Qualified" : "Not qualified";
+    badge.className = `status-badge ${qualifiedAt ? "enabled" : "offline"} model-quality-badge`;
     button.disabled = !fairyModelProbeUsesSavedConfig(row);
-    setFairyModelQualityDetails(row, "fixed synthetic cases; model responses are never shown or stored.");
+    setFairyModelQualityDetails(row, qualifiedAt
+      ? `qualified with corpus v${row.dataset.qualificationCorpus} at ${formatDate(qualifiedAt)}.`
+      : "fixed synthetic cases; model responses are never shown or stored.");
   });
   if (!job.model_id || job.status === "idle") return;
   const row = rows.find((candidate) => candidate.querySelector("[data-field='id']").value.trim() === job.model_id);
@@ -987,6 +1006,7 @@ function scheduleFairyEvaluationPoll(jobID) {
       const job = await api("fairy/model-eval");
       renderFairyModelEvaluation(job);
       if (job.status === "running") scheduleFairyEvaluationPoll(job.job_id || jobID);
+      else if (job.status === "passed") await loadFairy();
     } catch (_) {
       scheduleFairyEvaluationPoll(jobID);
     }
@@ -1080,7 +1100,12 @@ function renderFairyModelRouting(config) {
   const modelList = document.querySelector("#fairy-model-list");
   const taskList = document.querySelector("#fairy-task-list");
   providerList.replaceChildren(...(config.providers || []).map(createFairyProviderRow));
-  modelList.replaceChildren(...(config.models || []).map(createFairyModelRow));
+  const qualifications = new Map((config.model_qualifications || [])
+    .map((qualification) => [qualification.model_id, qualification]));
+  modelList.replaceChildren(...(config.models || []).map((model) => createFairyModelRow({
+    ...model,
+    qualification: qualifications.get(model.id),
+  })));
   taskList.replaceChildren(...(config.tasks || []).map(createFairyTaskRow));
   refreshFairyProviderOptions();
   refreshFairyModelOptions();
@@ -1338,6 +1363,17 @@ function renderFairy(payload) {
     modelBadge.textContent = "AI unconfigured";
   }
   modelBadge.className = `status-badge ${config.model_enabled && !restartPending ? "enabled" : "offline"}`;
+  const readiness = document.querySelector("#fairy-ai-readiness");
+  const missingQualifications = config.unqualified_replyer_models || [];
+  if (config.production_ready) {
+    readiness.textContent = `Ready: every replyer model passed quality corpus v${config.quality_corpus_version}`;
+  } else if (missingQualifications.length > 0) {
+    readiness.textContent = `Quality gate required: ${missingQualifications.join(", ")}`;
+  } else if (config.ai_enabled) {
+    readiness.textContent = "Legacy AI is active; qualify models before changing its routing";
+  } else {
+    readiness.textContent = "Configure a replyer task and qualify every candidate model before activation";
+  }
   const agentBadge = document.querySelector("#fairy-agent-state");
   agentBadge.textContent = config.agent_enabled ? "Planner enabled" : "Planner disabled";
   agentBadge.className = `status-badge ${config.agent_enabled ? "enabled" : "offline"}`;
@@ -1457,6 +1493,7 @@ function renderFairyRuntime(runtime, configStatus) {
 
   const configSectionLabels = {
     ai_activation: "AI activation",
+    model_validation: "Model validation",
     model: "Model routing",
     prompt: "System prompt",
     behavior: "Behavior",
@@ -1921,8 +1958,29 @@ document.querySelector("#fairy-add-behavior-experience").addEventListener("click
 });
 
 const fairyConfigForm = document.querySelector("#fairy-config-form");
-fairyConfigForm.addEventListener("input", markFairyDirty);
-fairyConfigForm.addEventListener("change", markFairyDirty);
+function markFairyQualificationStaleForEdit(event) {
+  const modelRow = event.target.closest(".fairy-model-row");
+  const affectedRows = event.target.closest(".fairy-provider-row")
+    ? [...document.querySelectorAll(".fairy-model-row")]
+    : modelRow ? [modelRow] : [];
+  affectedRows.forEach((row) => {
+    if (!row.dataset.qualifiedAt) return;
+    delete row.dataset.qualifiedAt;
+    delete row.dataset.qualificationCorpus;
+    const badge = row.querySelector(".model-quality-badge");
+    badge.textContent = "Requalify";
+    badge.className = "status-badge offline model-quality-badge";
+    setFairyModelQualityDetails(row, "save changed Provider/Model settings, then run Quality again.");
+  });
+}
+
+function handleFairyConfigEdit(event) {
+  markFairyQualificationStaleForEdit(event);
+  markFairyDirty();
+}
+
+fairyConfigForm.addEventListener("input", handleFairyConfigEdit);
+fairyConfigForm.addEventListener("change", handleFairyConfigEdit);
 
 window.addEventListener("beforeunload", (event) => {
   if (!state.fairyDirty) return;
@@ -1947,6 +2005,16 @@ fairyConfigForm.addEventListener("submit", async (event) => {
   if (aiEnabled && !replyerTask) {
     showToast("Production AI requires a replyer task", true);
     return;
+  }
+  if (aiEnabled && !state.fairy?.config?.ai_enabled) {
+    const qualifiedModels = new Set([...document.querySelectorAll(".fairy-model-row")]
+      .filter((row) => Boolean(row.dataset.qualifiedAt))
+      .map((row) => row.querySelector("[data-field='id']").value.trim()));
+    const missingQualifications = replyerTask.candidate_models.filter((modelID) => !qualifiedModels.has(modelID));
+    if (missingQualifications.length > 0) {
+      showToast(`Run and pass Quality before enabling: ${missingQualifications.join(", ")}`, true);
+      return;
+    }
   }
   const payload = {
     ai_enabled: aiEnabled,
