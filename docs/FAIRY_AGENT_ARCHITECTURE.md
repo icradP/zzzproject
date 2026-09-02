@@ -591,6 +591,8 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 
 F0-F5.14 已随提交 `a787ce8` 推送并部署到 `icrad.ltd`。本地静态 Linux x86_64 构建、Alpine SQLite/Fairy lifecycle smoke、GitHub Actions CI/CD（Go、Flutter/PWA、Docker、Pages）和远端 `/ready`、管理 API schema v7 验收均通过。生产 Fairy 当前保持无模型配置；MiMo `mimo-v2.5-pro` 只作为隔离候选模型完成质量评测，未写入生产环境。
 
+F5.15 完善连接恢复退避：拨号或认证持续失败仍按指数退避并封顶；已完成认证的会话断开后，下一次重连从最小延迟重新开始，避免历史故障延迟短暂断线恢复。退避倍增在到达上限前显式截断，避免时长溢出。
+
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
 F5.2 使用官方 Go MCP SDK 启动管理员预装的可信 stdio Provider。配置只允许绝对命令路径、参数数组、工作目录、环境变量名称 allowlist 和工具 allowlist，不允许 shell 拼接或网页上传代码；环境变量值不进入配置 API。只有明确只读、非破坏且 Schema 兼容的工具才注册到统一 Tool Pipeline。timeout 或协议错误关闭子进程并打开熔断，Provider 故障不阻止 Fairy 启动；stderr、命令参数和工具正文不进入管理运行态。

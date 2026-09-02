@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"sync/atomic"
 	"time"
@@ -53,11 +52,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
-		err := r.runSession(ctx)
+		established, err := r.runSession(ctx)
 		r.connected.Store(false)
 		if ctx.Err() != nil {
 			return nil
 		}
+		delay = reconnectDelayAfterSession(delay, r.cfg.ReconnectMin, established)
 		log.Printf("[fairy] session ended: %v; reconnecting in %s", err, delay)
 		jitter := time.Duration(rand.Int63n(int64(delay/4 + 1)))
 		select {
@@ -65,20 +65,37 @@ func (r *Runner) Run(ctx context.Context) error {
 			return nil
 		case <-time.After(delay + jitter):
 		}
-		delay = time.Duration(math.Min(float64(r.cfg.ReconnectMax), float64(delay*2)))
+		delay = nextReconnectDelay(delay, r.cfg.ReconnectMin, r.cfg.ReconnectMax)
 	}
 }
 
-func (r *Runner) runSession(ctx context.Context) error {
+func nextReconnectDelay(current, minimum, maximum time.Duration) time.Duration {
+	if current < minimum {
+		return minimum
+	}
+	if current >= maximum || current > maximum/2 {
+		return maximum
+	}
+	return current * 2
+}
+
+func reconnectDelayAfterSession(current, minimum time.Duration, established bool) time.Duration {
+	if established {
+		return minimum
+	}
+	return current
+}
+
+func (r *Runner) runSession(ctx context.Context) (bool, error) {
 	dialCtx, cancel := requestTimeout(ctx, 15*time.Second)
 	client, err := Dial(dialCtx, r.cfg.ServerURL)
 	cancel()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer client.Close()
 	if err := r.authenticate(ctx, client); err != nil {
-		return err
+		return false, err
 	}
 	r.messenger.Attach(client)
 	r.connected.Store(true)
@@ -100,9 +117,9 @@ func (r *Runner) runSession(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			r.shutdownScheduler()
-			return nil
+			return true, nil
 		case <-client.Done():
-			return client.closeError()
+			return true, client.closeError()
 		case payload := <-client.Events():
 			r.dispatch(ctx, client, payload)
 		case <-heartbeat.C:
@@ -110,7 +127,7 @@ func (r *Runner) runSession(ctx context.Context) error {
 			err := client.Request(pingCtx, protocol.ActionPing, map[string]interface{}{}, nil)
 			pingCancel()
 			if err != nil {
-				return fmt.Errorf("heartbeat failed: %w", err)
+				return true, fmt.Errorf("heartbeat failed: %w", err)
 			}
 		}
 	}
