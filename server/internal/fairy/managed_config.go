@@ -735,7 +735,7 @@ func managedConfigView(cfg Config) ManagedConfigView {
 		Models:                   managedModelDefinitions(cfg.ModelDefinitions),
 		Tasks:                    managedModelTasks(cfg.ModelTasks),
 		ModelQualifications:      modelQualificationViews(cfg),
-		UnqualifiedReplyerModels: append([]string(nil), missingQualifications...),
+		UnqualifiedReplyerModels: append([]string{}, missingQualifications...),
 		ExternalToolProviders:    managedExternalToolProviders(cfg.ExternalToolProviders),
 		BehaviorExperiences:      managedBehaviorExperiences(cfg.BehaviorExperiences),
 		BehaviorAutoLearning:     false,

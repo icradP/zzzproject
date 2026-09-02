@@ -53,6 +53,15 @@ func TestReplyerQualificationRequiresEveryCandidateAndTracksModelConfiguration(t
 	}
 }
 
+func TestManagedConfigQualificationCollectionsUseEmptyArrays(t *testing.T) {
+	view := managedConfigView(testConfig(t))
+	if view.ModelQualifications == nil || view.UnqualifiedReplyerModels == nil ||
+		len(view.ModelQualifications) != 0 || len(view.UnqualifiedReplyerModels) != 0 {
+		t.Fatalf("empty qualification view = qualifications %#v missing %#v",
+			view.ModelQualifications, view.UnqualifiedReplyerModels)
+	}
+}
+
 func TestConfigManagerPersistsQualificationsAndRedactsManagementAPI(t *testing.T) {
 	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
 	cfg.AIEnabled = false
