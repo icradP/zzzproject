@@ -183,7 +183,9 @@ func TestAdminLoginRateLimitAndStaticSecurity(t *testing.T) {
 	}
 
 	page := performRequest(handler, http.MethodGet, "/admin/", nil, nil, false)
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "ZZZ IM Server") {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "ZZZ IM Server") ||
+		!strings.Contains(page.Body.String(), `id="view-fairy"`) ||
+		!strings.Contains(page.Body.String(), `id="fairy-config-form"`) {
 		t.Fatalf("admin page failed: %d", page.Code)
 	}
 	if page.Header().Get("Content-Security-Policy") == "" || page.Header().Get("X-Frame-Options") != "DENY" {

@@ -40,6 +40,7 @@
         <button class="nav-button" type="button" data-view="conversations">Conversations</button>
         <button class="nav-button" type="button" data-view="messages">Messages</button>
         <button class="nav-button" type="button" data-view="media">Media</button>
+        <button class="nav-button" type="button" data-view="fairy">Fairy</button>
         <button class="nav-button" type="button" data-view="settings">Settings</button>
       </nav>
       <div class="sidebar-footer">
@@ -215,6 +216,124 @@
           </div>
           <p id="media-empty" class="empty-state" hidden>No media found.</p>
         </section>
+      </section>
+
+      <section id="view-fairy" class="view" data-section="fairy" hidden>
+        <form id="fairy-config-form" class="fairy-layout">
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">BOT RUNTIME</p>
+                <h3>Fairy service</h3>
+              </div>
+              <div class="badge-row">
+                <span id="fairy-connection-state" class="status-badge offline">Unavailable</span>
+                <span id="fairy-model-state" class="status-badge offline">AI disabled</span>
+              </div>
+            </div>
+            <div class="settings-form">
+              <div class="field-grid two-columns">
+                <label class="field" for="fairy-model-base-url">
+                  <span>Model API base URL</span>
+                  <input id="fairy-model-base-url" type="url" maxlength="2048" placeholder="https://provider.example/v1">
+                </label>
+                <label class="field" for="fairy-model-name">
+                  <span>Model</span>
+                  <input id="fairy-model-name" type="text" maxlength="256" placeholder="Model identifier">
+                </label>
+              </div>
+              <div class="field-grid two-columns">
+                <label class="field" for="fairy-model-api-key">
+                  <span>API key</span>
+                  <input id="fairy-model-api-key" type="password" maxlength="8192" autocomplete="new-password" placeholder="Leave blank to keep the current key">
+                </label>
+                <div class="secret-control">
+                  <span id="fairy-api-key-state" class="status-badge offline">No key</span>
+                  <label class="checkbox-row compact-checkbox">
+                    <input id="fairy-clear-api-key" type="checkbox">
+                    <span>Clear stored key</span>
+                  </label>
+                </div>
+              </div>
+              <label class="field" for="fairy-system-prompt">
+                <span>System prompt</span>
+                <textarea id="fairy-system-prompt" rows="7" maxlength="8000" required></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">BEHAVIOR</p>
+                <h3>Context and limits</h3>
+              </div>
+            </div>
+            <div class="settings-form">
+              <label class="switch-row">
+                <span>
+                  <strong>Enable new groups by default</strong>
+                  <small>Existing group overrides remain unchanged</small>
+                </span>
+                <input id="fairy-group-default" type="checkbox" role="switch">
+              </label>
+              <div class="field-grid three-columns">
+                <label class="field" for="fairy-daily-limit">
+                  <span>Daily model calls</span>
+                  <input id="fairy-daily-limit" type="number" min="0" max="1000000" required>
+                </label>
+                <label class="field" for="fairy-max-tokens">
+                  <span>Maximum output tokens</span>
+                  <input id="fairy-max-tokens" type="number" min="64" max="4096" required>
+                </label>
+                <label class="field" for="fairy-max-concurrent">
+                  <span>Concurrent requests</span>
+                  <input id="fairy-max-concurrent" type="number" min="1" max="32" required>
+                </label>
+                <label class="field" for="fairy-rate-limit">
+                  <span>Rate limit (seconds)</span>
+                  <input id="fairy-rate-limit" type="number" min="0" max="86400" required>
+                </label>
+                <label class="field" for="fairy-context-ttl">
+                  <span>Context lifetime (seconds)</span>
+                  <input id="fairy-context-ttl" type="number" min="60" max="604800" required>
+                </label>
+                <label class="field" for="fairy-context-messages">
+                  <span>Context messages</span>
+                  <input id="fairy-context-messages" type="number" min="2" max="50" required>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="surface">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">PLUGINS</p>
+                <h3>Registered plugins</h3>
+              </div>
+              <span id="fairy-plugin-count" class="status-badge offline">0 enabled</span>
+            </div>
+            <div class="settings-form">
+              <div id="fairy-plugin-list" class="plugin-list"></div>
+              <div class="field-grid two-columns">
+                <label class="field" for="fairy-zzz-api-url">
+                  <span>ZZZ profile endpoint</span>
+                  <input id="fairy-zzz-api-url" type="url" maxlength="2048" required>
+                </label>
+                <label class="field" for="fairy-zzz-timeout">
+                  <span>ZZZ request timeout (seconds)</span>
+                  <input id="fairy-zzz-timeout" type="number" min="1" max="120" required>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <div class="settings-actions">
+            <span>Saving restarts Fairy and keeps the IM server online.</span>
+            <button id="fairy-save-button" class="primary-button" type="submit">Save and restart Fairy</button>
+          </div>
+        </form>
       </section>
 
       <section id="view-settings" class="view" data-section="settings" hidden>

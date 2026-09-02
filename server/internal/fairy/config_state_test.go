@@ -141,6 +141,7 @@ func testConfig(t *testing.T) Config {
 		Bio:               "Test assistant",
 		DeviceID:          "fairy-test",
 		StateFile:         filepath.Join(t.TempDir(), "state.json"),
+		ConfigFile:        filepath.Join(t.TempDir(), "config.json"),
 		HealthAddr:        "127.0.0.1:18081",
 		GroupDefault:      true,
 		RateLimit:         0,
@@ -152,6 +153,7 @@ func testConfig(t *testing.T) Config {
 		SystemPrompt:      defaultSystemPrompt,
 		ZZZAPIURL:         "https://enka.network/api/zzz/uid/{uid}",
 		ZZZRequestTimeout: time.Second,
+		PluginEnabled:     map[string]bool{ZZZProfilePluginID: true},
 		ReconnectMin:      10 * time.Millisecond,
 		ReconnectMax:      50 * time.Millisecond,
 	}

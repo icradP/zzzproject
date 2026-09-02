@@ -57,6 +57,7 @@ type Config struct {
 	Media         MediaController
 	Registration  RegistrationController
 	Performance   PerformanceController
+	Fairy         FairyController
 	AdminToken    string
 	PublicPath    string
 	StorageDriver string
@@ -76,6 +77,7 @@ type Server struct {
 	media            MediaController
 	registration     RegistrationController
 	performance      PerformanceController
+	fairy            FairyController
 	adminTokenDigest [sha256.Size]byte
 	publicPath       string
 	storageDriver    string
@@ -106,6 +108,7 @@ func New(config Config) *Server {
 		media:            config.Media,
 		registration:     config.Registration,
 		performance:      config.Performance,
+		fairy:            config.Fairy,
 		adminTokenDigest: sha256.Sum256([]byte(strings.TrimSpace(config.AdminToken))),
 		publicPath:       publicPath,
 		storageDriver:    config.StorageDriver,
@@ -215,6 +218,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleRegistrationSettings(w)
 	case path == "/settings/registration" && r.Method == http.MethodPatch:
 		s.handleUpdateRegistration(w, r)
+	case path == "/fairy/config" && (r.Method == http.MethodGet || r.Method == http.MethodPatch):
+		s.handleFairyConfig(w, r)
 	default:
 		w.Header().Set("Allow", s.allowedMethods(path))
 		s.writeError(w, http.StatusNotFound, "admin endpoint not found")
@@ -753,7 +758,7 @@ func (s *Server) allowedMethods(path string) string {
 	switch path {
 	case "/session":
 		return "GET, POST, DELETE"
-	case "/users", "/settings/registration":
+	case "/users", "/settings/registration", "/fairy/config":
 		return "GET, PATCH"
 	case "/users/password":
 		return "PATCH"

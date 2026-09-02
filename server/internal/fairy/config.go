@@ -27,7 +27,9 @@ type Config struct {
 	Bio               string
 	DeviceID          string
 	StateFile         string
+	ConfigFile        string
 	HealthAddr        string
+	AdminToken        string
 	GroupDefault      bool
 	RateLimit         time.Duration
 	ContextTTL        time.Duration
@@ -41,6 +43,7 @@ type Config struct {
 	SystemPrompt      string
 	ZZZAPIURL         string
 	ZZZRequestTimeout time.Duration
+	PluginEnabled     map[string]bool
 	ReconnectMin      time.Duration
 	ReconnectMax      time.Duration
 }
@@ -58,12 +61,17 @@ func ConfigFromEnv() (Config, error) {
 		Bio:          envOrDefault("FAIRY_BIO", "ZZZ IM 智能助手。私聊直接提问，群聊请先 @Fairy。"),
 		DeviceID:     envOrDefault("FAIRY_DEVICE_ID", "fairy-service"),
 		StateFile:    envOrDefault("FAIRY_STATE_FILE", "/var/lib/zzz-fairy/state.json"),
+		ConfigFile:   envOrDefault("FAIRY_CONFIG_FILE", "/var/lib/zzz-fairy/config.json"),
 		HealthAddr:   envOrDefault("FAIRY_HEALTH_ADDR", "127.0.0.1:18081"),
+		AdminToken:   strings.TrimSpace(os.Getenv("FAIRY_ADMIN_TOKEN")),
 		ModelBaseURL: strings.TrimSpace(os.Getenv("FAIRY_MODEL_BASE_URL")),
 		ModelAPIKey:  os.Getenv("FAIRY_MODEL_API_KEY"),
 		ModelName:    strings.TrimSpace(os.Getenv("FAIRY_MODEL_NAME")),
 		SystemPrompt: envOrDefault("FAIRY_SYSTEM_PROMPT", defaultSystemPrompt),
 		ZZZAPIURL:    envOrDefault("FAIRY_ZZZ_API_URL", defaultZZZAPIURL),
+		PluginEnabled: map[string]bool{
+			ZZZProfilePluginID: true,
+		},
 		ReconnectMin: 2 * time.Second,
 		ReconnectMax: 30 * time.Second,
 	}
@@ -92,6 +100,13 @@ func ConfigFromEnv() (Config, error) {
 	if cfg.ModelMaxTokens, err = envInt("FAIRY_MODEL_MAX_TOKENS", 600); err != nil {
 		return Config{}, err
 	}
+	if cfg.PluginEnabled[ZZZProfilePluginID], err = envBool("FAIRY_ZZZ_PLUGIN_ENABLED", true); err != nil {
+		return Config{}, err
+	}
+	cfg, err = loadManagedConfig(cfg)
+	if err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -112,8 +127,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Nickname) == "" || len([]rune(c.Nickname)) > 64 {
 		return fmt.Errorf("FAIRY_NICKNAME must contain 1-64 characters")
 	}
-	if c.StateFile == "" {
-		return fmt.Errorf("FAIRY_STATE_FILE is required")
+	if c.StateFile == "" || c.ConfigFile == "" {
+		return fmt.Errorf("FAIRY_STATE_FILE and FAIRY_CONFIG_FILE are required")
 	}
 	if c.HealthAddr != "" {
 		if _, _, err := net.SplitHostPort(c.HealthAddr); err != nil {
@@ -132,6 +147,9 @@ func (c Config) Validate() error {
 	if c.ModelDailyLimit < 0 || c.ModelMaxTokens < 64 || c.ModelMaxTokens > 4096 {
 		return fmt.Errorf("Fairy model limits are invalid")
 	}
+	if strings.TrimSpace(c.SystemPrompt) == "" || len([]rune(c.SystemPrompt)) > 8000 {
+		return fmt.Errorf("FAIRY_SYSTEM_PROMPT must contain 1-8000 characters")
+	}
 	if (c.ModelBaseURL == "") != (c.ModelName == "") {
 		return fmt.Errorf("FAIRY_MODEL_BASE_URL and FAIRY_MODEL_NAME must be configured together")
 	}
@@ -144,11 +162,26 @@ func (c Config) Validate() error {
 	if err := validateTemplateURL(c.ZZZAPIURL); err != nil {
 		return err
 	}
+	for id := range c.PluginEnabled {
+		if !knownPlugin(id) {
+			return fmt.Errorf("unknown Fairy plugin %q", id)
+		}
+	}
 	return nil
 }
 
 func (c Config) ModelEnabled() bool {
 	return c.ModelBaseURL != "" && c.ModelName != ""
+}
+
+func (c Config) IsPluginEnabled(id string) bool {
+	if enabled, ok := c.PluginEnabled[id]; ok {
+		return enabled
+	}
+	if descriptor, ok := pluginDescriptorByID(id); ok {
+		return descriptor.DefaultEnabled
+	}
+	return true
 }
 
 func validateTemplateURL(value string) error {

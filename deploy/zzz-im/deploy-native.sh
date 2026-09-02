@@ -34,6 +34,8 @@ if [[ ! -s ${env_file} ]]; then
     echo "ZZZ_ACCESS_TOKEN=$(openssl rand -hex 32)"
     echo "ZZZ_ADMIN_TOKEN=$(openssl rand -hex 32)"
     echo "ZZZ_ADMIN_PUBLIC_PATH=/im/admin"
+    echo "ZZZ_FAIRY_ADMIN_URL=http://127.0.0.1:18081/admin"
+    echo "ZZZ_FAIRY_ADMIN_TOKEN=$(openssl rand -hex 32)"
     echo "ZZZ_INVITE_CODE=diaogan"
   } >"${env_file}"
   echo "Generated ${env_file}; keep it private and backed up."
@@ -46,6 +48,14 @@ fi
 if ! grep -q '^ZZZ_ADMIN_PUBLIC_PATH=' "${env_file}"; then
   umask 077
   echo "ZZZ_ADMIN_PUBLIC_PATH=/im/admin" >>"${env_file}"
+fi
+if ! grep -q '^ZZZ_FAIRY_ADMIN_URL=' "${env_file}"; then
+  umask 077
+  echo "ZZZ_FAIRY_ADMIN_URL=http://127.0.0.1:18081/admin" >>"${env_file}"
+fi
+if ! grep -q '^ZZZ_FAIRY_ADMIN_TOKEN=' "${env_file}"; then
+  umask 077
+  echo "ZZZ_FAIRY_ADMIN_TOKEN=$(openssl rand -hex 32)" >>"${env_file}"
 fi
 
 install -m 0644 "${repo_root}/deploy/zzz-im/zzz-im.service" /etc/systemd/system/zzz-im.service

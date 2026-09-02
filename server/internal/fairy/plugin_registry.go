@@ -1,0 +1,55 @@
+package fairy
+
+const ZZZProfilePluginID = "zzz-profile"
+
+type PluginDescriptor struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	Command        string `json:"command"`
+	DefaultEnabled bool   `json:"default_enabled"`
+}
+
+type PluginStatus struct {
+	PluginDescriptor
+	Enabled bool `json:"enabled"`
+}
+
+var builtinPluginDescriptors = []PluginDescriptor{
+	{
+		ID:             ZZZProfilePluginID,
+		Name:           "ZZZ public profile",
+		Description:    "Read-only public profile lookup through the configured ZZZ data endpoint.",
+		Command:        "/zzz <UID>",
+		DefaultEnabled: true,
+	},
+}
+
+func BuiltinPluginStatuses(cfg Config) []PluginStatus {
+	statuses := make([]PluginStatus, 0, len(builtinPluginDescriptors))
+	for _, descriptor := range builtinPluginDescriptors {
+		statuses = append(statuses, PluginStatus{
+			PluginDescriptor: descriptor,
+			Enabled:          cfg.IsPluginEnabled(descriptor.ID),
+		})
+	}
+	return statuses
+}
+
+func NewBuiltinPlugins(cfg Config) []Plugin {
+	return []Plugin{NewZZZPlugin(cfg)}
+}
+
+func knownPlugin(id string) bool {
+	_, ok := pluginDescriptorByID(id)
+	return ok
+}
+
+func pluginDescriptorByID(id string) (PluginDescriptor, bool) {
+	for _, descriptor := range builtinPluginDescriptors {
+		if descriptor.ID == id {
+			return descriptor, true
+		}
+	}
+	return PluginDescriptor{}, false
+}

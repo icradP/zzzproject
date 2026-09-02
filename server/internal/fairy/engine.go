@@ -87,6 +87,10 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		if !plugin.Match(request) {
 			continue
 		}
+		if !e.cfg.IsPluginEnabled(plugin.Name()) {
+			e.reply(ctx, messenger, event, "该 Fairy 插件已由服务器管理员停用。")
+			return
+		}
 		response, err := plugin.Handle(ctx, request)
 		if err != nil {
 			log.Printf("[fairy] plugin %s failed: %v", plugin.Name(), err)

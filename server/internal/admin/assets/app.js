@@ -9,6 +9,7 @@ const state = {
   conversations: [],
   messages: [],
   media: [],
+  fairy: null,
   selectedGroup: null,
   selectedMessage: null,
   selectedMedia: null,
@@ -537,6 +538,69 @@ async function loadRegistration() {
   badge.className = `status-badge ${enabled ? "enabled" : "offline"}`;
 }
 
+function renderFairy(payload) {
+  state.fairy = payload;
+  const config = payload.config || {};
+  const plugins = payload.plugins || [];
+  const connectionBadge = document.querySelector("#fairy-connection-state");
+  connectionBadge.textContent = payload.connected ? "Connected" : "Connecting";
+  connectionBadge.className = `status-badge ${payload.connected ? "enabled" : "offline"}`;
+  const modelBadge = document.querySelector("#fairy-model-state");
+  modelBadge.textContent = config.model_enabled ? "AI enabled" : "AI disabled";
+  modelBadge.className = `status-badge ${config.model_enabled ? "enabled" : "offline"}`;
+  const keyBadge = document.querySelector("#fairy-api-key-state");
+  keyBadge.textContent = config.model_api_key_configured ? "Key configured" : "No key";
+  keyBadge.className = `status-badge ${config.model_api_key_configured ? "enabled" : "offline"}`;
+
+  document.querySelector("#fairy-model-base-url").value = config.model_base_url || "";
+  document.querySelector("#fairy-model-name").value = config.model_name || "";
+  document.querySelector("#fairy-model-api-key").value = "";
+  document.querySelector("#fairy-clear-api-key").checked = false;
+  document.querySelector("#fairy-system-prompt").value = config.system_prompt || "";
+  document.querySelector("#fairy-group-default").checked = Boolean(config.group_default_enabled);
+  document.querySelector("#fairy-daily-limit").value = config.model_daily_limit ?? 0;
+  document.querySelector("#fairy-max-tokens").value = config.model_max_tokens ?? 600;
+  document.querySelector("#fairy-max-concurrent").value = config.max_concurrent ?? 4;
+  document.querySelector("#fairy-rate-limit").value = config.rate_limit_seconds ?? 8;
+  document.querySelector("#fairy-context-ttl").value = config.context_ttl_seconds ?? 1800;
+  document.querySelector("#fairy-context-messages").value = config.context_messages ?? 12;
+  document.querySelector("#fairy-zzz-api-url").value = config.zzz_api_url || "";
+  document.querySelector("#fairy-zzz-timeout").value = config.zzz_request_timeout_seconds ?? 15;
+
+  const pluginRows = plugins.map((plugin) => {
+    const row = document.createElement("label");
+    row.className = "plugin-row";
+    const identity = document.createElement("span");
+    identity.append(
+      element("strong", "", plugin.name || plugin.id),
+      element("small", "", `${plugin.description || ""} ${plugin.command || ""}`.trim()),
+    );
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.role = "switch";
+    toggle.checked = Boolean(plugin.enabled);
+    toggle.dataset.pluginId = plugin.id;
+    row.append(identity, toggle);
+    return row;
+  });
+  document.querySelector("#fairy-plugin-list").replaceChildren(...pluginRows);
+  const enabledPlugins = plugins.filter((plugin) => plugin.enabled).length;
+  const pluginBadge = document.querySelector("#fairy-plugin-count");
+  pluginBadge.textContent = `${enabledPlugins} enabled`;
+  pluginBadge.className = `status-badge ${enabledPlugins ? "enabled" : "offline"}`;
+}
+
+async function loadFairy() {
+  try {
+    renderFairy(await api("fairy/config"));
+  } catch (error) {
+    const badge = document.querySelector("#fairy-connection-state");
+    badge.textContent = "Unavailable";
+    badge.className = "status-badge offline";
+    throw error;
+  }
+}
+
 async function setActiveView(view) {
   state.activeView = view;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
@@ -558,6 +622,7 @@ async function refreshActiveView() {
     conversations: loadConversations,
     messages: loadMessages,
     media: loadMedia,
+    fairy: loadFairy,
     settings: loadRegistration,
   };
   try {
@@ -733,6 +798,46 @@ document.querySelector("#registration-form").addEventListener("submit", async (e
     await loadRegistration();
   } catch (error) {
     showToast(error.message, true);
+  }
+});
+
+document.querySelector("#fairy-config-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const saveButton = document.querySelector("#fairy-save-button");
+  const pluginEnabled = {};
+  document.querySelectorAll("#fairy-plugin-list input[data-plugin-id]").forEach((toggle) => {
+    pluginEnabled[toggle.dataset.pluginId] = toggle.checked;
+  });
+  const payload = {
+    model_base_url: document.querySelector("#fairy-model-base-url").value,
+    model_name: document.querySelector("#fairy-model-name").value,
+    clear_model_api_key: document.querySelector("#fairy-clear-api-key").checked,
+    model_daily_limit: Number(document.querySelector("#fairy-daily-limit").value),
+    model_max_tokens: Number(document.querySelector("#fairy-max-tokens").value),
+    system_prompt: document.querySelector("#fairy-system-prompt").value,
+    group_default_enabled: document.querySelector("#fairy-group-default").checked,
+    rate_limit_seconds: Number(document.querySelector("#fairy-rate-limit").value),
+    context_ttl_seconds: Number(document.querySelector("#fairy-context-ttl").value),
+    context_messages: Number(document.querySelector("#fairy-context-messages").value),
+    max_concurrent: Number(document.querySelector("#fairy-max-concurrent").value),
+    zzz_api_url: document.querySelector("#fairy-zzz-api-url").value,
+    zzz_request_timeout_seconds: Number(document.querySelector("#fairy-zzz-timeout").value),
+    plugin_enabled: pluginEnabled,
+  };
+  const replacementKey = document.querySelector("#fairy-model-api-key").value;
+  if (replacementKey) payload.model_api_key = replacementKey;
+  saveButton.disabled = true;
+  try {
+    const response = await api("fairy/config", { method: "PATCH", body: JSON.stringify(payload) });
+    renderFairy(response);
+    showToast("Fairy configuration saved; service is restarting");
+    window.setTimeout(() => {
+      if (state.activeView === "fairy") loadFairy().catch(() => {});
+    }, 2500);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    saveButton.disabled = false;
   }
 });
 

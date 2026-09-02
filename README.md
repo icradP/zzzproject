@@ -87,10 +87,12 @@ The server admin console is available at `/im/admin/` when
 HttpOnly admin session and is never stored by the page. The console exposes
 service statistics, user and password management, groups, conversations,
 message moderation, uploaded-media preview and deletion, and runtime
-registration controls. Password resets can revoke stored account sessions;
-media deletion removes both metadata and local bytes. Invitation-code changes
-made there last until the server restarts; update `ZZZ_INVITE_CODE` in
-`/etc/zzz-im/server.env` for a persistent change.
+registration controls. It also proxies Fairy's loopback-only management API
+for model, context, quota, personality, and registered-plugin settings. Model
+API keys are write-only and never returned to the browser. Password resets can
+revoke stored account sessions; media deletion removes both metadata and local
+bytes. Invitation-code changes made there last until the server restarts;
+update `ZZZ_INVITE_CODE` in `/etc/zzz-im/server.env` for a persistent change.
 
 The custom Web bootstrap keeps CanvasKit on the application origin, shows
 measured startup download progress, and starts the versioned `app-sw.js` cache
@@ -142,10 +144,12 @@ on the login page. For GitHub Actions, set the repository Actions variable
 
 Web Push on iOS requires iOS 16.4 or later, HTTPS, and installation to the Home Screen. The GitHub Actions workflow tests Flutter and Go on pull requests and deploys the PWA after a successful push to `master`. Deploying the Go server requires a separate HTTPS/WSS hosting target.
 
-Fairy runs as a separate process and ordinary ZZZ account. Build and deploy it
+Fairy runs as a separate process and ordinary ZZZ account. Its plugin registry
+and service boundaries follow the MaiBot-inspired roadmap without loading
+arbitrary uploaded code from the admin console. Build and deploy it
 after the IM server; the deployment script provisions an isolated system user,
 state directory, password, systemd unit, and local health endpoint. Model
-credentials are optional and remain in Fairy's own environment file. See
+credentials are optional and remain in Fairy-owned private configuration. See
 [`docs/FAIRY.md`](docs/FAIRY.md) for commands, privacy limits, configuration,
 and deployment instructions.
 

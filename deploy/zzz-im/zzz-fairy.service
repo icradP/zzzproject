@@ -10,6 +10,8 @@ Group=zzz-fairy
 WorkingDirectory=/var/lib/zzz-fairy
 EnvironmentFile=/etc/zzz-im/fairy.env
 ExecStart=/usr/local/bin/zzz-im-fairy
+# Configuration updates exit with a non-zero status after the response is
+# flushed, so systemd applies the persisted settings through a clean restart.
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=15s

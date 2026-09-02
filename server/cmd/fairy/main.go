@@ -30,12 +30,13 @@ func main() {
 	} else {
 		log.Printf("[fairy] AI model is not configured; command plugins remain available")
 	}
-	engine := fairy.NewEngine(cfg, state, model, fairy.NewZZZPlugin(cfg))
+	engine := fairy.NewEngine(cfg, state, model, fairy.NewBuiltinPlugins(cfg)...)
 	runner := fairy.NewRunner(cfg, engine)
+	configManager := fairy.NewConfigManager(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	healthServer := startHealthServer(cfg.HealthAddr, runner)
+	healthServer := startHealthServer(cfg, runner, configManager)
 	if healthServer != nil {
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -48,8 +49,8 @@ func main() {
 	}
 }
 
-func startHealthServer(address string, runner *fairy.Runner) *http.Server {
-	if address == "" {
+func startHealthServer(cfg fairy.Config, runner *fairy.Runner, configManager *fairy.ConfigManager) *http.Server {
+	if cfg.HealthAddr == "" {
 		return nil
 	}
 	mux := http.NewServeMux()
@@ -73,14 +74,22 @@ func startHealthServer(address string, runner *fairy.Runner) *http.Server {
 			"connected": connected,
 		})
 	})
+	if cfg.AdminToken != "" {
+		adminAPI := fairy.NewAdminAPI(configManager, cfg.AdminToken, runner.Connected, func() {
+			time.Sleep(300 * time.Millisecond)
+			os.Exit(75)
+		})
+		mux.Handle("/admin/", adminAPI)
+		log.Printf("[fairy] local admin API enabled")
+	}
 	server := &http.Server{
-		Addr:              address,
+		Addr:              cfg.HealthAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
 	go func() {
-		log.Printf("[fairy] health endpoint listening on %s", address)
+		log.Printf("[fairy] health endpoint listening on %s", cfg.HealthAddr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("[fairy] health endpoint stopped: %v", err)
 		}

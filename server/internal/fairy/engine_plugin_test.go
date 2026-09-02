@@ -258,6 +258,28 @@ func TestZZZPluginFormatsAndCachesPublicProfile(t *testing.T) {
 	}
 }
 
+func TestEngineHonorsDisabledPlugin(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		response.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	cfg := testConfig(t)
+	cfg.ZZZAPIURL = server.URL + "/{uid}"
+	cfg.PluginEnabled[ZZZProfilePluginID] = false
+	state, err := OpenStateStore(cfg.StateFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(cfg, state, nil, NewZZZPlugin(cfg))
+	messenger := &fakeMessenger{}
+	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/zzz 123456789"))
+	if requests != 0 || !strings.Contains(messenger.lastReply().text, "已由服务器管理员停用") {
+		t.Fatalf("disabled plugin requests=%d reply=%q", requests, messenger.lastReply().text)
+	}
+}
+
 func testMessage(conversationID, messageType, senderID, text string) messageEvent {
 	return messageEvent{
 		PostType:       "message",

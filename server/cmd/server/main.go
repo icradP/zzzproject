@@ -26,6 +26,8 @@ func main() {
 	inviteCode := flag.String("invite-code", os.Getenv("ZZZ_INVITE_CODE"), "invite code required for account registration")
 	adminToken := flag.String("admin-token", os.Getenv("ZZZ_ADMIN_TOKEN"), "token required to access the admin console")
 	adminPublicPath := flag.String("admin-public-path", envOrDefault("ZZZ_ADMIN_PUBLIC_PATH", "/admin"), "public URL path used for admin session cookies")
+	fairyAdminURL := flag.String("fairy-admin-url", envOrDefault("ZZZ_FAIRY_ADMIN_URL", "http://127.0.0.1:18081/admin"), "loopback Fairy management URL")
+	fairyAdminToken := flag.String("fairy-admin-token", os.Getenv("ZZZ_FAIRY_ADMIN_TOKEN"), "token for the loopback Fairy management API")
 	vapidPublicKey := flag.String("vapid-public-key", os.Getenv("ZZZ_VAPID_PUBLIC_KEY"), "VAPID public key")
 	vapidPrivateKey := flag.String("vapid-private-key", os.Getenv("ZZZ_VAPID_PRIVATE_KEY"), "VAPID private key")
 	vapidSubject := flag.String("vapid-subject", envOrDefault("ZZZ_VAPID_SUBJECT", "mailto:admin@localhost"), "VAPID contact URI")
@@ -102,11 +104,21 @@ func main() {
 	})
 	mux.Handle("/files/", mediaStore)
 	if strings.TrimSpace(*adminToken) != "" {
+		var fairyController adminserver.FairyController
+		if strings.TrimSpace(*fairyAdminToken) != "" {
+			controller, controllerErr := adminserver.NewFairyHTTPController(*fairyAdminURL, *fairyAdminToken)
+			if controllerErr != nil {
+				log.Printf("[server] Fairy management disabled: %v", controllerErr)
+			} else {
+				fairyController = controller
+			}
+		}
 		adminConsole := adminserver.New(adminserver.Config{
 			Store:         db,
 			Media:         mediaStore,
 			Registration:  gw,
 			Performance:   performanceCollector,
+			Fairy:         fairyController,
 			AdminToken:    *adminToken,
 			PublicPath:    *adminPublicPath,
 			StorageDriver: *dbDriver,

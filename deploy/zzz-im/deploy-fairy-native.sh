@@ -28,6 +28,12 @@ install -d -m 0700 /etc/zzz-im
 install -d -m 0750 -o zzz-fairy -g zzz-fairy "${data_dir}"
 install -m 0755 "${fairy_binary}" /usr/local/bin/zzz-im-fairy
 
+admin_token=$(sed -n 's/^ZZZ_FAIRY_ADMIN_TOKEN=//p' "${server_env}" | head -n 1)
+if [[ -z ${admin_token} ]]; then
+  echo "ZZZ_FAIRY_ADMIN_TOKEN is required in ${server_env}." >&2
+  exit 1
+fi
+
 if [[ ! -s ${env_file} ]]; then
   invite_code=$(sed -n 's/^ZZZ_INVITE_CODE=//p' "${server_env}" | head -n 1)
   if [[ -z ${invite_code} ]]; then
@@ -44,13 +50,27 @@ if [[ ! -s ${env_file} ]]; then
     echo "FAIRY_AVATAR_URL=https://icrad.ltd/assets/assets/characters/temp/Fairy.png"
     echo "FAIRY_BIO=ZZZ IM 智能助手。私聊直接提问，群聊请先 @Fairy。"
     echo "FAIRY_STATE_FILE=${data_dir}/state.json"
+    echo "FAIRY_CONFIG_FILE=${data_dir}/config.json"
     echo "FAIRY_HEALTH_ADDR=127.0.0.1:18081"
+    echo "FAIRY_ADMIN_TOKEN=${admin_token}"
     echo "FAIRY_GROUP_DEFAULT_ENABLED=true"
     echo "FAIRY_MODEL_DAILY_LIMIT=200"
     echo "FAIRY_CONTEXT_TTL=30m"
     echo "FAIRY_CONTEXT_MESSAGES=12"
   } >"${env_file}"
   echo "Generated ${env_file}; add model settings there when a provider is selected."
+fi
+
+if ! grep -q '^FAIRY_CONFIG_FILE=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_CONFIG_FILE=${data_dir}/config.json" >>"${env_file}"
+fi
+if ! grep -q '^FAIRY_ADMIN_TOKEN=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_ADMIN_TOKEN=${admin_token}" >>"${env_file}"
+elif [[ $(sed -n 's/^FAIRY_ADMIN_TOKEN=//p' "${env_file}" | head -n 1) != "${admin_token}" ]]; then
+  echo "Fairy and server admin tokens do not match; reconcile ${env_file} and ${server_env}." >&2
+  exit 1
 fi
 
 install -m 0644 "${repo_root}/deploy/zzz-im/zzz-fairy.service" /etc/systemd/system/zzz-fairy.service
