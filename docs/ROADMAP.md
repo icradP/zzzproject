@@ -519,6 +519,14 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 全量 Go test/vet/race、JavaScript/发布脚本静态检查，以及本地 Linux x86_64 交叉编译与 Alpine SQLite/Fairy lifecycle smoke 均通过。实现提交 `0ad94dc` 已推送，GitHub Actions CI/CD 运行 `33694897420` 成功；本地构建的 release `0ad94dc3ffe5` 已通过校验和与回滚保护部署，生产机未参与编译。
 - 生产 `zzz-im`、`zzz-fairy` 均为 active，Fairy `/ready` 通过；管理 API 将原 v9 revision 2 文件兼容投影为 schema v10 revision 2 active，资格 1/1 保留且 `production_ready=true`。生产 rollout 仍为 `off`、名单为空、Model Router 未启动；磁盘配置继续保持 v9 与 `0600`，直到下一次管理员保存才写为 v10。M8 继续暂停。
 
+当前进度（M7 Agent 化 F5.20，固定合成 Agent 诊断已本地实现，待发布）：
+
+- 管理端新增固定 `pipeline-basic` 诊断请求，实际运行 Planner -> Replyer 链路；不接受自定义 Prompt，不读取用户聊天、事实记忆或行为经验，不执行工具、不发送 IM 消息，也不占用聊天日额度。
+- Agent 诊断与 Model Probe / Quality Eval 共用单诊断并发槽；生产 rollout 为 `off` 时，针对已保存模型建立临时隔离 Router，诊断结束后不会改变用户消息运行态。管理响应只返回固定场景、状态、耗时和经过 Output Policy 的短回复。
+- 已通过无模型、错误场景、并发冲突、工具/额度隔离和关闭 rollout 隔离 Router 测试，并完成 Fairy/Admin 回归、JavaScript 静态检查与差异检查。
+- 已从本机 CC Switch 向一次性测试进程注入 MiMo `mimo-v2.5-pro` 配置完成真实验证：5/5 固定质量 Case 通过，使用 1576 input / 364 output tokens，P50 约 5.24 秒、P95 约 8.57 秒；256 Token 安全探针约 1.83 秒通过，使用 25 input / 28 output tokens。凭据未回显、落盘或写入生产配置。
+- F5.20 尚未提交、推送或部署；生产 rollout 继续为 `off`，M8 继续暂停。
+
 ### M1-M7 使用体验修复批次（已完成并上线）
 
 M8 暂停期间，优先处理生产使用中确认的以下问题：
@@ -574,7 +582,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.19 已部署；MiMo 已取得资格，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.19 已部署，F5.20 Agent 诊断已本地实现；MiMo 已取得资格，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

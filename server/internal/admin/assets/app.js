@@ -1677,6 +1677,29 @@ function renderFairyRuntime(runtime, configStatus) {
   document.querySelector(".runtime-tool-table").hidden = tools.length === 0;
 }
 
+async function runFairyAgentDiagnostic() {
+  const button = document.querySelector("#fairy-agent-diagnostic");
+  const result = document.querySelector("#fairy-agent-diagnostic-result");
+  if (!button || !result || button.disabled) return;
+  button.disabled = true;
+  result.textContent = "Running";
+  try {
+    const payload = await api("fairy/agent-diagnostic", {
+      method: "POST",
+      body: JSON.stringify({ case_id: "pipeline-basic" }),
+    });
+    const status = payload.status === "passed" ? "Passed" : payload.status === "stopped" ? "Stopped" : "Completed";
+    const reply = String(payload.reply || "").replace(/\s+/g, " ").trim().slice(0, 240);
+    result.textContent = `${status} · ${formatMilliseconds(payload.duration_ms)}${reply ? ` · ${reply}` : ""}`;
+    showToast(`Fairy agent check ${status.toLowerCase()}`);
+  } catch (error) {
+    result.textContent = "Unavailable";
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadFairy() {
   try {
     const [payload, evaluation] = await Promise.all([api("fairy/config"), api("fairy/model-eval")]);
@@ -1995,6 +2018,7 @@ function handleFairyConfigEdit(event) {
 fairyConfigForm.addEventListener("input", handleFairyConfigEdit);
 fairyConfigForm.addEventListener("change", handleFairyConfigEdit);
 document.querySelector("#fairy-ai-rollout-mode").addEventListener("change", updateFairyAIRolloutControls);
+document.querySelector("#fairy-agent-diagnostic").addEventListener("click", runFairyAgentDiagnostic);
 
 window.addEventListener("beforeunload", (event) => {
   if (!state.fairyDirty) return;

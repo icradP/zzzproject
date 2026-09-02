@@ -30,7 +30,7 @@ func (s *Server) handleFairy(response http.ResponseWriter, request *http.Request
 		s.writeError(response, http.StatusBadGateway, "Fairy management returned an invalid response")
 		return
 	}
-	if status == http.StatusTooManyRequests && (resource == "model-probe" || resource == "model-eval") {
+	if status == http.StatusTooManyRequests && (resource == "model-probe" || resource == "model-eval" || resource == "agent-diagnostic") {
 		response.Header().Set("Retry-After", "1")
 	}
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")

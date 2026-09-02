@@ -332,7 +332,12 @@
               <div class="badge-row">
                 <span id="fairy-config-state" class="status-badge offline">Config unavailable</span>
                 <span id="fairy-trace-state" class="status-badge offline">Trace unavailable</span>
+                <button id="fairy-agent-diagnostic" class="secondary-button compact" type="button">Run agent check</button>
               </div>
+            </div>
+            <div class="runtime-diagnostic" role="status" aria-live="polite">
+              <strong>Agent pipeline</strong>
+              <span id="fairy-agent-diagnostic-result">Ready for a fixed synthetic check</span>
             </div>
             <dl id="fairy-runtime-details" class="detail-grid"></dl>
             <div class="table-scroll runtime-config-history-table">

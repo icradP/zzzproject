@@ -589,6 +589,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 显式生产 AI 总开关、v8 配置迁移和固定启停审计（F5.17 已部署）；候选模型诊断与用户回复运行态分离。
 - 生产模型准入资格、v9 配置迁移和配置绑定失效（F5.18 已部署）；每个 `replyer` fallback 都必须通过当前质量语料后才能首次启用或变更生产路由。
 - `off / allowlist / all` 生产灰度、v10 配置迁移和模型前账号门控（F5.19 已部署）；未获准账号仍可使用管理指令和确定性插件。
+- 固定合成 Agent 诊断（F5.20）：管理端可验证实际 Planner -> Replyer 链路；场景 ID 固定为 `pipeline-basic`，不接受自定义 Prompt，不读取用户上下文、不执行工具、不发送 IM 消息，不计入聊天额度；与 Model Probe / Quality Eval 共用单诊断并发槽。生产 rollout 为 `off` 时针对已保存模型建立临时隔离 Router，诊断结束后不改变用户消息运行态。
 
 ### 发布状态（2026-09-03）
 
@@ -605,6 +606,8 @@ F5.18 将固定质量评测提升为生产准入条件：评测通过后持久�
 F5.18 实现提交 `b2f7009` 与兼容修复 `ed900ef` 已通过 GitHub Actions 运行 `33690542568`、`33691267095`，并以本地构建的静态 Linux x86_64 制品部署 `ed900ef79667` 到 `icrad.ltd`。生产已保存 MiMo `mimo-v2.5-pro` 候选和 `replyer` 路由；256 Token 探针约 3.6 秒通过，固定语料 5/5 Case 通过，P50 约 3.89 秒、P95 约 10.80 秒，共使用 1256 input / 518 output tokens。资格已持久化到 schema v9 revision 2，`production_ready=true`；`ai_enabled=false`，生产用户回复仍未启用。管理 API 与日志未暴露密钥或配置摘要，配置文件保持 `0600`。套餐单价未知，成本门禁未启用；M8 继续暂停。
 
 F5.19 将生产 AI 开关扩展为 `off / allowlist / all`：灰度名单最多 128 个合法账号并去重，空名单 fail closed；未获准账号的私聊模型请求返回固定提示，群聊模型请求静默忽略，管理指令与确定性插件不受影响。门控位于任何媒体下载、Planner、Replyer、Vision 或 Transcriber 调用前。受管配置升级为 v10 并兼容 v1-v9，旧 `ai_enabled` 稳定迁移为 `off` 或 `all`，矛盾的 v10 状态拒绝加载；名单不进入日志和审计。实现提交 `0ad94dc` 已通过 GitHub Actions CI/CD 运行 `33694897420`，本地构建的 release `0ad94dc3ffe5` 已部署到 `icrad.ltd`，生产机未编译源码。生产管理 API 为 schema v10 revision 2 active，MiMo 资格 1/1 保留且 `production_ready=true`；rollout 仍为 `off`、名单为空、Model Router 未启动。磁盘配置保持 v9 与 `0600`，下一次管理员保存时才写为 v10；M8 继续暂停。
+
+F5.20 已在本地实现固定合成 Agent 诊断：管理端只接受 `pipeline-basic`，实际运行 Planner -> Replyer；不携带用户上下文、事实记忆、行为经验或工具，不产生 IM 出站消息，不计入聊天日额度。诊断与探测、质量评测共享单并发槽，生产 rollout 关闭时使用临时隔离 Router。2026-09-03 从本机 CC Switch 注入一次性 MiMo 配置完成真实验证，5/5 固定质量 Case 通过（1576 input / 364 output tokens，P50 5.24 秒，P95 8.57 秒），256 Token 探针通过（1.83 秒，25 input / 28 output tokens）；凭据未回显或落盘。F5.20 尚未提交、推送或部署，生产 rollout 继续为 `off`，M8 继续暂停。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 

@@ -224,6 +224,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleFairy(w, r, "model-probe")
 	case path == "/fairy/model-eval" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		s.handleFairy(w, r, "model-eval")
+	case path == "/fairy/agent-diagnostic" && r.Method == http.MethodPost:
+		s.handleFairy(w, r, "agent-diagnostic")
 	default:
 		w.Header().Set("Allow", s.allowedMethods(path))
 		s.writeError(w, http.StatusNotFound, "admin endpoint not found")
@@ -768,6 +770,8 @@ func (s *Server) allowedMethods(path string) string {
 		return "POST"
 	case "/fairy/model-eval":
 		return "GET, POST"
+	case "/fairy/agent-diagnostic":
+		return "POST"
 	case "/users/password":
 		return "PATCH"
 	case "/titles":

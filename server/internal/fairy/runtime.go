@@ -84,6 +84,12 @@ type AdminRuntime interface {
 	Snapshot(context.Context) RuntimeStatus
 }
 
+// AgentDiagnosticRunner is optional so older embedders can keep implementing
+// AdminRuntime without exposing a model test capability.
+type AgentDiagnosticRunner interface {
+	RunAgentDiagnostic(context.Context, string) (AgentDiagnosticResult, error)
+}
+
 type RuntimeInspector struct {
 	engine        *Engine
 	runner        *Runner
@@ -111,6 +117,13 @@ func (r *RuntimeInspector) ApplyBehaviorConfig(cfg Config) {
 	if r != nil && r.engine != nil {
 		r.engine.ApplyBehaviorConfig(cfg)
 	}
+}
+
+func (r *RuntimeInspector) RunAgentDiagnostic(ctx context.Context, caseID string) (AgentDiagnosticResult, error) {
+	if r == nil || r.engine == nil {
+		return AgentDiagnosticResult{}, ErrAgentDiagnosticUnavailable
+	}
+	return r.engine.RunAgentDiagnostic(ctx, caseID)
 }
 
 func (r *RuntimeInspector) Snapshot(ctx context.Context) RuntimeStatus {

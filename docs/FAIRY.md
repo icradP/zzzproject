@@ -17,7 +17,7 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 - 事实召回按“私聊用户 + 会话”或群聊范围隔离，以 `user` 角色的不可信 JSON 注入，不会成为 system 指令；单范围最多 30 条、6000 字，单条最多 300 字，疑似凭据拒绝保存。关闭只停止召回，不暗中删除已有事实。
 - 在调用外部模型前拦截高置信的私钥、Bearer、密码、API Key、Token 和 Cookie；被拦截内容不进入上下文、不消耗额度，也不会发送给模型供应商。
 - AI 支持 OpenAI-compatible Chat Completions 与 Anthropic-compatible Messages，可按供应商动态配置；模型未配置时，帮助、群管理和 ZZZ 插件仍可使用。
-- 管理后台通过回环地址代理 Fairy 自己的管理 API，可配置模型、人格、行为、上下文、额度和已注册插件，并查看不含正文的 Scheduler、Gate、Tool、Token、成本与事实数量聚合；管理响应不返回事实内容、用户 ID 或 scope ID，IM 核心不执行模型或插件代码。
+- 管理后台通过回环地址代理 Fairy 自己的管理 API，可配置模型、人格、行为、上下文、额度和已注册插件，并查看不含正文的 Scheduler、Gate、Tool、Token、成本与事实数量聚合；管理响应不返回事实内容、用户 ID 或 scope ID，IM 核心不执行模型或插件代码。Fairy 页面还提供固定合成 Agent 诊断，可验证 Planner -> Replyer 链路而不发送 IM 消息、不执行工具、不读取用户会话，结果只显示状态、耗时和经过输出策略的短回复。
 - AI 调用默认每天最多 200 次；全局总额度与各 Task 独立额度原子持久化并按 UTC 日期重置。
 - `/zzz <UID>` 通过 Enka.Network 查询游戏内公开展示资料，按上游 TTL 缓存；不需要也不接收米游社 Cookie。
 - `zzz-profile` 已迁移到统一 Tool Pipeline：注册时校验输入/输出 Schema，执行时依次经过可见性、授权、风险、副作用、调用次数、超时、输出大小和脱敏检查。工具只返回结构化结果，模型投影会标记为不可信外部数据。
@@ -108,7 +108,7 @@ Focus、cooldown 和表达档位使用原子快照对新 Turn 热更新；模型
 
 Fairy 页面同时支持 Provider、Model、Task 三层模型路由配置：Provider 保存协议、端点、重试策略和只写 API Key；Model 保存远端模型和价格；Task 保存最大输出、超时、独立日额度和 fallback 顺序。`openai-compatible` 在 Base URL 后调用 `/chat/completions`，`anthropic-compatible` 调用 `/v1/messages` 并使用标准 `x-api-key` 与 `anthropic-version` 头。Provider 与 Model 可以在没有 Task 时先保存、探测和质量评测；生产回复默认使用 `off`，管理员可选择 `allowlist` 只向最多 128 个指定账号灰度，或选择 `all` 向全部用户开放。`allowlist` 必须至少包含一个合法账号 ID；未获准账号仍可使用管理指令和确定性插件，私聊模型请求收到固定未开放提示，群聊模型请求静默忽略。只有存在 `replyer` Task，且其中每个 fallback 候选都通过当前版本质量语料后才会启动模型 Router。增加 `planner` 启用 Agent Loop，增加 `vision` / `transcriber` 分别启用图片理解 / 语音转写。图片可使用两种协议，语音转写当前只能绑定 OpenAI-compatible Provider。新增 Task 的推荐顺序是 `replyer`、`planner`、`vision`、`transcriber`、`utility`。全局额度限制所有逻辑调用总数，Task 额度限制对应能力；旧 v1-v4 配置中的 Task 自动继承全局额度。
 
-每个已保存 Model 可在管理页执行一次安全连通性测试。探测只使用固定的无用户数据 Prompt，最多请求 256 个输出 Token，硬超时 30 秒且全进程最多同时运行一个；不会携带聊天、记忆、行为经验或工具数据，不计入聊天日额度，也不写 Turn Trace。结果只显示协议、Model / Provider ID、延迟、Token、按已配置价格估算的费用、固定失败分类和 HTTP 状态，不返回模型正文、供应商错误正文或密钥。未保存的 Model 或 Provider 修改必须先保存再测试。每次探测都会产生一次真实供应商请求和相应费用。
+每个已保存 Model 可在管理页执行一次安全连通性测试。探测只使用固定的无用户数据 Prompt，最多请求 256 个输出 Token，硬超时 30 秒且全进程最多同时运行一个；不会携带聊天、记忆、行为经验或工具数据，不计入聊天日额度，也不写 Turn Trace。结果只显示协议、Model / Provider ID、延迟、Token、按已配置价格估算的费用、固定失败分类和 HTTP 状态，不返回模型正文、供应商错误正文或密钥。未保存的 Model 或 Provider 修改必须先保存再测试。每次探测都会产生一次真实供应商请求和相应费用。Agent 诊断使用同一个诊断并发槽，固定请求 `POST /admin/agent-diagnostic`（JSON `{"case_id":"pipeline-basic"}`），生产 rollout 为 `off` 时也可以针对已保存模型建立隔离 Router；该请求不计入聊天额度，失败只返回固定状态。
 
 受管配置当前版本为 v10，并兼容读取 v1-v9。v1-v7 中已经具备 `replyer` 路由的部署迁移为 `all`，v8-v9 按原 `ai_enabled` 迁移为 `off` 或 `all`，避免升级时改变既有生产行为；v10 同时保存兼容字段与 rollout mode，二者自相矛盾时拒绝加载。没有旧配置的新部署和仅通过环境变量提供候选模型的部署默认关闭。每次成功保存或质量资格写入都会生成单调递增的 revision 和 UTC 更新时间；管理 API 分别返回期望 revision 与已生效 `active_revision`，状态固定为 `active`、`applying` 或 `restart_pending`。热更新只有成功切换运行快照后才推进 active revision，需要重启的配置则由新进程加载后推进，不能把“已写入磁盘”误报为“已生效”。最近 50 次保存只记录 `ai_activation`、`ai_rollout`、`model_validation`、`model`、`prompt`、`behavior`、`runtime_limits`、`plugins`、`external_tools`、`behavior_experiences` 或 `none` 等固定分类，不记录配置值、Prompt、URL、密钥或用户身份；灰度账号只写入 `0600` 配置，日志只输出名单数量。
 

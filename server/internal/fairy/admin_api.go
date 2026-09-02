@@ -13,16 +13,18 @@ import (
 
 const maxManagedConfigRequestBytes = 256 * 1024
 const maxModelProbeRequestBytes = 1024
+const agentDiagnosticTimeout = 90 * time.Second
 
 type AdminAPI struct {
-	manager       *ConfigManager
-	tokenDigest   [sha256.Size]byte
-	connected     func() bool
-	restart       func()
-	runtime       AdminRuntime
-	modelTestSlot chan struct{}
-	probe         func(context.Context, Config, string) (ModelProbeResult, error)
-	qualityEval   *qualityEvalJobManager
+	manager         *ConfigManager
+	tokenDigest     [sha256.Size]byte
+	connected       func() bool
+	restart         func()
+	runtime         AdminRuntime
+	modelTestSlot   chan struct{}
+	probe           func(context.Context, Config, string) (ModelProbeResult, error)
+	agentDiagnostic func(context.Context, string) (AgentDiagnosticResult, error)
+	qualityEval     *qualityEvalJobManager
 }
 
 func NewAdminAPI(
@@ -70,6 +72,9 @@ func NewAdminAPIWithRuntimeContext(
 		qualityEval:   newQualityEvalJobManager(ctx, modelTestSlot),
 	}
 	api.qualityEval.recordQualification = manager.RecordModelQualification
+	if runner, ok := runtime.(AgentDiagnosticRunner); ok {
+		api.agentDiagnostic = runner.RunAgentDiagnostic
+	}
 	return api
 }
 
@@ -88,10 +93,61 @@ func (a *AdminAPI) ServeHTTP(response http.ResponseWriter, request *http.Request
 		a.serveModelProbe(response, request)
 	case "/admin/model-eval":
 		a.serveModelEvaluation(response, request)
+	case "/admin/agent-diagnostic":
+		a.serveAgentDiagnostic(response, request)
 	default:
 		a.writeError(response, http.StatusNotFound, "Fairy admin endpoint not found")
 	}
 	return
+}
+
+func (a *AdminAPI) serveAgentDiagnostic(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", "POST")
+		a.writeError(response, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if a.agentDiagnostic == nil {
+		a.writeError(response, http.StatusServiceUnavailable, "Fairy agent diagnostic unavailable")
+		return
+	}
+	select {
+	case a.modelTestSlot <- struct{}{}:
+		defer func() { <-a.modelTestSlot }()
+	default:
+		a.writeModelDiagnosticBusy(response)
+		return
+	}
+	var input struct {
+		CaseID string `json:"case_id"`
+	}
+	request.Body = http.MaxBytesReader(response, request.Body, maxModelProbeRequestBytes)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || requireJSONEOF(decoder) != nil {
+		a.writeError(response, http.StatusBadRequest, "invalid Fairy agent diagnostic")
+		return
+	}
+	if strings.TrimSpace(input.CaseID) != AgentDiagnosticCasePipeline {
+		a.writeError(response, http.StatusBadRequest, "invalid Fairy agent diagnostic")
+		return
+	}
+	diagnosticContext, cancel := context.WithTimeout(request.Context(), agentDiagnosticTimeout)
+	defer cancel()
+	result, err := a.agentDiagnostic(diagnosticContext, input.CaseID)
+	if err != nil {
+		if errors.Is(err, ErrAgentDiagnosticUnavailable) {
+			a.writeError(response, http.StatusServiceUnavailable, "Fairy agent diagnostic unavailable")
+			return
+		}
+		if errors.Is(err, ErrAgentDiagnosticInvalidCase) {
+			a.writeError(response, http.StatusBadRequest, "invalid Fairy agent diagnostic")
+			return
+		}
+		a.writeError(response, http.StatusBadGateway, "Fairy agent diagnostic failed")
+		return
+	}
+	a.writeJSON(response, http.StatusOK, result)
 }
 
 func (a *AdminAPI) serveConfig(response http.ResponseWriter, request *http.Request) {
