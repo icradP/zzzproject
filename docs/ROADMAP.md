@@ -564,7 +564,17 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 新增插件 Manifest、组件注册、Capability Context、Hook/Event Bus、依赖与最低版本排序、生命周期 disposer、卸载和热重载。可信编译期插件使用进程内 Runner；宿主保留隔离 Runner 注入边界，外部工具继续使用既有 MCP 子进程和 Tool Runtime 安全层，不开放网页上传或执行任意插件代码。
 - `context-memory`、`fact-memory`、`self-cognition` 已迁为内置插件；命令、Prompt 和 Tool 从宿主当前运行快照动态解析，插件卸载后立即不可见，重载不会继续调用旧实例。Manifest 默认启用值仅在没有显式配置时生效。
 - 私聊 Fairy 的最终回复不再引用触发消息；群聊仍保留引用，后续平台 Adapter 可在插件业务配置中覆盖引用策略。
+- `zzz-profile` 的功能与交互基准固定为 [ZZZeroUID](https://github.com/ZZZure/ZZZeroUID)（审计基线 `063856f0cf812365890e74536f3ec82d5fd075d8`）。已按参考实现将 UID 输入、命令解析与 Tool Schema 统一为 8–10 位，并补充真实 8 位 UID `27280531` 穿过 Tool Runtime 的回归；当前仍是只读公开资料查询子集。
+- 后续按独立组件增量迁移 `uid-binding`、`profile-summary`、`character-detail`、`gacha`、`daily-note`、`abyss` 与 `admin/config`；其中 UID 绑定必须使用 Fairy 自有持久化和 IM 用户作用域，不能依赖参考项目的 `gsuid_core.GsBind`。
 - 当前代码与管理页面尚未提交、推送或部署；生产仍运行 F5.23，rollout 保持 `off`，M8 继续暂停。
+
+当前进度（M7 Agent 化 F5.25，米游社账号、抽卡与式舆能力已本地实现、待发布）：
+
+- 新增独立 `zzz-account` 插件，第一版限定国服米游社，支持 `/zzz login`、`/zzz account`、`/zzz gacha sync`、`/zzz gacha`、`/zzz abyss [previous]` 与 `/zzz logout`。扫码二维码由 Fairy 本地生成并上传到现有 ZZZ 媒体服务，确认轮询和首次抽卡同步均脱离单 Turn 在插件生命周期内后台执行。
+- 账号库使用独立 SQLite 文件；Cookie 与 Stoken 分字段采用 AES-256-GCM 加密，随机 32-byte 密钥不复用 Trace Key，AAD 绑定 IM `owner_id` 和凭据类型，数据库与密钥权限均为 `0600`。聊天、模型、Planner、Trace、日志和管理 API 均不接收或返回明文凭据。
+- 个人账号、抽卡和式舆 Tool 使用运行时注入的 `ToolScope.SenderID`，Schema 不存在 `owner_id` 参数，群聊查询也只能读取发送者本人；登录、账号信息和退出绑定只允许私聊。管理运行态仅增加绑定数、有效数和缓存记录数聚合。
+- 已按 `gsuid_core` 扫码登录链路和 `ZZZeroUID` 的 AuthKey、调频记录、`hadal_info_v2` 协议实现固定上游客户端；上游响应正文不进入错误或日志，凭据失效、风控、限流和二维码过期只映射为固定错误文案。
+- 本地全量 `go test ./...`、`go vet ./...`、CI 同范围 `-race` 与 Linux x86-64 `release-native.sh validate` 均已通过；加密落盘、错误脱敏、本地 PNG 二维码、私聊边界、后台同步和跨用户 Tool 作用域均有专项回归。当前尚未提交、推送或部署，M8 继续暂停。
 
 ### M1-M7 使用体验修复批次（已完成并上线）
 

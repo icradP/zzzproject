@@ -11,11 +11,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/icradp/zzz-im-server/internal/protocol"
 )
 
 type PluginRequest struct {
 	Text           string
 	ConversationID string
+	MessageID      string
 	MessageType    string
 	SenderID       string
 	SenderNickname string
@@ -35,6 +38,21 @@ type ToolPlugin interface {
 
 type ToolIntentMatcher interface {
 	MatchToolIntent(request PluginRequest) bool
+}
+
+type PluginToolProvider interface {
+	Tools() []Tool
+}
+
+type interactiveMessenger interface {
+	botMessenger
+	SendSegments(context.Context, string, []protocol.MessageSegment) error
+	UploadFile(context.Context, string, string, string, []byte) (UploadedFile, error)
+}
+
+type InteractivePlugin interface {
+	Plugin
+	HandleInteractive(context.Context, interactiveMessenger, PluginRequest) (bool, error)
 }
 
 type zzzCacheEntry struct {
@@ -102,7 +120,7 @@ func (p *ZZZPlugin) Spec() ToolSpec {
 		Description: "Query a Zenless Zone Zero player's public in-game profile by UID.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
-			"properties":{"uid":{"type":"string","minLength":9,"maxLength":10,"pattern":"^[0-9]{9,10}$"}},
+			"properties":{"uid":{"type":"string","minLength":8,"maxLength":10,"pattern":"^[0-9]{8,10}$"}},
 			"required":["uid"],
 			"additionalProperties":false
 		}`),
@@ -110,7 +128,7 @@ func (p *ZZZPlugin) Spec() ToolSpec {
 			"type":"object",
 			"properties":{
 				"status":{"type":"string","pattern":"^(found|not_found)$"},
-				"uid":{"type":"string","pattern":"^[0-9]{9,10}$"},
+				"uid":{"type":"string","pattern":"^[0-9]{8,10}$"},
 				"nickname":{"type":"string","maxLength":64},
 				"level":{"type":"string","maxLength":32},
 				"description":{"type":"string","maxLength":200},
@@ -325,7 +343,7 @@ func zzzUIDFromRequest(text string) (string, bool) {
 		return "", false
 	}
 	digitRuns := zzzDigitRunPattern.FindAllString(lower, -1)
-	if len(digitRuns) != 1 || len(digitRuns[0]) != 9 && len(digitRuns[0]) != 10 {
+	if len(digitRuns) != 1 || len(digitRuns[0]) < 8 || len(digitRuns[0]) > 10 {
 		return "", false
 	}
 	return digitRuns[0], true
@@ -341,7 +359,7 @@ func zzzUIDFromCommand(text string) (string, bool) {
 		return "", false
 	}
 	uid := fields[len(fields)-1]
-	if len(uid) != 9 && len(uid) != 10 {
+	if len(uid) < 8 || len(uid) > 10 {
 		return "", false
 	}
 	for _, character := range uid {

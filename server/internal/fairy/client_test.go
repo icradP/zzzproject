@@ -1,7 +1,9 @@
 package fairy
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,6 +22,58 @@ func TestClientRequestRejectsCancelledContextBeforeWriting(t *testing.T) {
 	client := &Client{}
 	if err := client.Request(ctx, "test", nil, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled request error = %v", err)
+	}
+}
+
+func TestClientUploadFileUsesBase64AndMIMEType(t *testing.T) {
+	requests := make(chan protocol.Request, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		var received protocol.Request
+		if err := connection.ReadJSON(&received); err != nil {
+			return
+		}
+		requests <- received
+		_ = connection.WriteJSON(protocol.Response{
+			Status: "ok", RetCode: 0, Echo: received.Echo,
+			Data: map[string]interface{}{"file_id": "qr-file", "url": "https://example.test/qr.png", "mime_type": "image/png"},
+		})
+	}))
+	defer server.Close()
+	client, err := Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	png := []byte("png bytes")
+	upload, err := client.UploadFile(context.Background(), "qr.png", "image", "image/png", png)
+	if err != nil || upload.FileID != "qr-file" {
+		t.Fatalf("UploadFile() = %#v, %v", upload, err)
+	}
+	select {
+	case request := <-requests:
+		encoded, err := json.Marshal(request.Params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var params protocol.UploadFileParams
+		if err := json.Unmarshal(encoded, &params); err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(params.File)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.Action != protocol.ActionUploadFile || params.MimeType != "image/png" || !bytes.Equal(decoded, png) {
+			t.Fatalf("upload request = %#v, params = %#v", request, params)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not receive Fairy upload request")
 	}
 }
 

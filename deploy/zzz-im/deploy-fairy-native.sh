@@ -55,6 +55,8 @@ if [[ ! -s ${env_file} ]]; then
     echo "FAIRY_TRACE_DB=${data_dir}/fairy.db"
     echo "FAIRY_FACT_DB=${data_dir}/facts.db"
     echo "FAIRY_TRACE_KEY_FILE=${data_dir}/trace.key"
+    echo "FAIRY_ZZZ_ACCOUNT_DB=${data_dir}/zzz-accounts.db"
+    echo "FAIRY_ZZZ_CREDENTIAL_KEY_FILE=${data_dir}/zzz-credentials.key"
     echo "FAIRY_HEALTH_ADDR=127.0.0.1:18081"
     echo "FAIRY_ADMIN_TOKEN=${admin_token}"
     echo "FAIRY_GROUP_DEFAULT_ENABLED=true"
@@ -81,6 +83,14 @@ fi
 if ! grep -q '^FAIRY_FACT_DB=' "${env_file}"; then
   umask 077
   echo "FAIRY_FACT_DB=${data_dir}/facts.db" >>"${env_file}"
+fi
+if ! grep -q '^FAIRY_ZZZ_ACCOUNT_DB=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_ZZZ_ACCOUNT_DB=${data_dir}/zzz-accounts.db" >>"${env_file}"
+fi
+if ! grep -q '^FAIRY_ZZZ_CREDENTIAL_KEY_FILE=' "${env_file}"; then
+  umask 077
+  echo "FAIRY_ZZZ_CREDENTIAL_KEY_FILE=${data_dir}/zzz-credentials.key" >>"${env_file}"
 fi
 if ! grep -q '^FAIRY_ADMIN_TOKEN=' "${env_file}"; then
   umask 077

@@ -19,9 +19,11 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 - AI 支持 OpenAI-compatible Chat Completions 与 Anthropic-compatible Messages，可按供应商动态配置；模型未配置时，帮助、群管理和 ZZZ 插件仍可使用。
 - 管理后台通过回环地址代理 Fairy 自己的管理 API，可配置模型、人格、行为、上下文、额度和已注册插件。Fairy 页面按 Runtime、Models、Behavior、Plugins & Tools、Decisions 分类：运行态继续展示脱敏聚合，Decisions 则作为受管理鉴权保护的敏感数据面，按 Turn 展示 Provider 明文 thinking、Planner、Replyer、工具调用与结果。IM 核心不执行模型或插件代码。页面还提供固定合成 Agent 诊断，可验证 Planner -> Replyer 链路而不发送 IM 消息、不执行工具、不读取用户会话。
 - AI 调用默认每天最多 200 次；全局总额度与各 Task 独立额度原子持久化并按 UTC 日期重置。
-- `/zzz <UID>` 通过 Enka.Network 查询游戏内公开展示资料，按上游 TTL 缓存；不需要也不接收米游社 Cookie。
+- `/zzz <UID>` 通过 Enka.Network 查询游戏内公开展示资料，按上游 TTL 缓存；不需要也不接收米游社 Cookie。功能与交互基准为 [ZZZeroUID](https://github.com/ZZZure/ZZZeroUID)，公开资料查询与米游社账号能力彼此隔离。
+- `zzz-account` 第一版只支持国服米游社：私聊 `/zzz login` 由 Fairy 本地生成二维码并通过 ZZZ 媒体服务发送，后台轮询确认后绑定发送者自己的绝区零 UID；`/zzz gacha sync` 缓存抽卡记录，`/zzz gacha` 和 `/zzz abyss [previous]` 查询发送者本人的数据。群聊不能登录、查看账号或退出绑定。
+- 米游社 Cookie 与 Stoken 使用独立随机 32-byte 密钥和 AES-256-GCM 加密，AAD 绑定 IM 用户与凭据种类；数据库和密钥均为 `0600`。凭据不进入模型、Planner、Trace、日志或管理 API，管理运行态只显示绑定数、有效数和抽卡缓存记录数。`/zzz logout` 会事务删除凭据和关联抽卡缓存。
 - `zzz-profile` 已迁移到统一 Tool Pipeline：注册时校验输入/输出 Schema，执行时依次经过可见性、授权、风险、副作用、调用次数、超时、输出大小和脱敏检查。工具只返回结构化结果，模型投影会标记为不可信外部数据。
-- 私聊或明确 `@Fairy` 的群消息可用包含唯一 9/10 位 UID 且同时包含“绝区零”“UID”“代理人”或“公开资料”的自然语言查询；没有关键词、包含多个 UID 或长度不合法时不会调用工具。
+- 私聊或明确 `@Fairy` 的群消息可用包含唯一 8–10 位 UID 且同时包含“绝区零”“UID”“代理人”或“公开资料”的自然语言查询；没有关键词、包含多个 UID 或长度不合法时不会调用工具。
 - 消息按会话 FIFO 执行，同一会话最多一个活跃 Turn；重复入站 message ID 会被 SQLite 幂等记录拦截，达到并发上限时进入有界队列而不是静默丢弃。
 - Fairy 回复在确认超时或连接断开时会在当前进程内最多尝试 3 次；所有尝试复用同一个 `client_message_id`，服务端返回原消息而不会重复广播。私聊直接发送最终回复，不引用触发消息；群聊仍引用触发消息。回复正文可作为受限决策链事件保存在 `fairy.db`，但进程重启后不自动重放。
 - 只有确认发送成功的模型最终回复可以接收显式质量反馈。用户用 `👍`（Reaction ID `76`）或 `👎`（Reaction ID `fairy-negative`）评价；改评按同一用户覆盖，取消 Reaction 删除当前匹配评价，回复被撤回后同步删除关联记录。命令、插件直出、错误和限流回复不参与统计。
@@ -63,6 +65,13 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 | `/fairy on` | 群主或管理员开启群回复 |
 | `/fairy off` | 群主或管理员关闭群回复 |
 | `/zzz <UID>` | 查询绝区零公开展示资料 |
+| `/zzz login` | 私聊发起国服米游社扫码绑定 |
+| `/zzz account` | 私聊查看脱敏账号和绑定 UID |
+| `/zzz gacha sync` | 同步并缓存自己的抽卡记录 |
+| `/zzz gacha` | 查询自己的本地抽卡统计 |
+| `/zzz abyss` | 查询自己的本期式舆防卫战 |
+| `/zzz abyss previous` | 查询自己的上期式舆防卫战 |
+| `/zzz logout` | 私聊删除米游社凭据和抽卡缓存 |
 
 ## 构建与部署
 
@@ -91,6 +100,8 @@ FAIRY_MODEL_NAME=provider-model-name
 FAIRY_AI_ROLLOUT_MODE=off
 FAIRY_MODEL_DAILY_LIMIT=200
 FAIRY_MODEL_MAX_TOKENS=600
+FAIRY_ZZZ_ACCOUNT_DB=/var/lib/zzz-fairy/zzz-accounts.db
+FAIRY_ZZZ_CREDENTIAL_KEY_FILE=/var/lib/zzz-fairy/zzz-credentials.key
 ```
 
 修改后执行：

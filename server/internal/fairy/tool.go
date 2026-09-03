@@ -71,6 +71,14 @@ type Tool interface {
 	Project(output json.RawMessage) (ToolProjection, error)
 }
 
+// ScopedTool receives identity established by the IM gateway. The scope is
+// never sourced from model arguments, so account-bound tools cannot impersonate
+// another sender.
+type ScopedTool interface {
+	Tool
+	ExecuteScoped(ctx context.Context, scope ToolScope, arguments json.RawMessage) (json.RawMessage, error)
+}
+
 type ToolCall struct {
 	Name      string
 	Arguments json.RawMessage
@@ -413,7 +421,14 @@ func (s *ToolSession) Execute(ctx context.Context, call ToolCall) ToolResult {
 			return finish(&ToolFailure{Code: ToolFailureCancelled})
 		}
 	}
-	output, executeErr := registered.tool.Execute(toolCtx, append(json.RawMessage(nil), call.Arguments...))
+	arguments := append(json.RawMessage(nil), call.Arguments...)
+	var output json.RawMessage
+	var executeErr error
+	if scoped, ok := registered.tool.(ScopedTool); ok {
+		output, executeErr = scoped.ExecuteScoped(toolCtx, s.scope, arguments)
+	} else {
+		output, executeErr = registered.tool.Execute(toolCtx, arguments)
+	}
 	contextErr := toolCtx.Err()
 	if contextErr != nil {
 		if errors.Is(contextErr, context.DeadlineExceeded) {

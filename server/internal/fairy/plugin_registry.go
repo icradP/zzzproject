@@ -24,6 +24,13 @@ var builtinPluginDescriptors = []PluginDescriptor{
 		DefaultEnabled: true,
 	},
 	{
+		ID:             ZZZAccountPluginID,
+		Name:           "ZZZ MYS account",
+		Description:    "Encrypted MYS account binding, gacha cache, and Shiyu Defense queries for the current sender.",
+		Command:        "/zzz login|account|gacha|abyss|logout",
+		DefaultEnabled: true,
+	},
+	{
 		ID:             ContextMemoryPluginID,
 		Name:           "Conversation context memory",
 		Description:    "Keeps explicitly triggered conversation context in the Fairy process scope.",
@@ -58,7 +65,7 @@ func BuiltinPluginStatuses(cfg Config) []PluginStatus {
 }
 
 func NewBuiltinPlugins(cfg Config) []Plugin {
-	return []Plugin{NewZZZPlugin(cfg)}
+	return []Plugin{NewZZZPlugin(cfg), NewZZZAccountPlugin(cfg)}
 }
 
 const (

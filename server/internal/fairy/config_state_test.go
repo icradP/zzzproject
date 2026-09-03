@@ -57,6 +57,14 @@ func TestConfigValidation(t *testing.T) {
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("invalid external tool name was accepted")
 	}
+	invalid = cfg
+	invalid.PluginEnabled = cloneBoolMap(cfg.PluginEnabled)
+	invalid.PluginEnabled[ZZZAccountPluginID] = true
+	invalid.ZZZAccountDB = filepath.Join(t.TempDir(), "zzz.db")
+	invalid.ZZZCredentialKeyFile = invalid.TraceKeyFile
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("ZZZ credentials were allowed to reuse the trace key")
+	}
 }
 
 func TestStateStorePersistsSwitchesAndDailyQuota(t *testing.T) {

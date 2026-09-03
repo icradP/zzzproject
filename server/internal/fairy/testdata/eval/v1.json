@@ -52,7 +52,9 @@
   ],
   "zzz_intent": [
     {"id":"zzz-command-slash","text":"/zzz 123456789","direct_match":true,"uid":"123456789","agent_intent":false},
+    {"id":"zzz-command-eight-digit","text":"/zzz 27280531","direct_match":true,"uid":"27280531","agent_intent":false},
     {"id":"zzz-query-zh","text":"查一下绝区零 UID 123456789","direct_match":true,"uid":"123456789","agent_intent":true},
+    {"id":"zzz-query-eight-digit","text":"查一下绝区零 UID 27280531","direct_match":true,"uid":"27280531","agent_intent":true},
     {"id":"zzz-query-en","text":"Show the Zenless profile for UID 123456789","direct_match":true,"uid":"123456789","agent_intent":true},
     {"id":"zzz-clarify-no-uid","text":"帮我查询 ZZZ profile","direct_match":false,"uid":"","agent_intent":true},
     {"id":"zzz-two-uids","text":"绝区零 UID 123456789 和 987654321","direct_match":false,"uid":"","agent_intent":true},

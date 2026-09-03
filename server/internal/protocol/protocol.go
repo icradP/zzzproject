@@ -396,6 +396,7 @@ type UploadFileParams struct {
 	File     string `json:"file"` // base64 or file path
 	FileName string `json:"file_name"`
 	FileType string `json:"file_type"` // "image", "voice", "video", "file"
+	MimeType string `json:"mime_type,omitempty"`
 }
 
 // GetForwardMsgParams are the params for the "get_forward_msg" action.

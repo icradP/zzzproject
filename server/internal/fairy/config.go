@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,8 @@ type Config struct {
 	TraceDB                string
 	TraceKeyFile           string
 	FactDB                 string
+	ZZZAccountDB           string
+	ZZZCredentialKeyFile   string
 	HealthAddr             string
 	AdminToken             string
 	GroupDefault           bool
@@ -114,8 +117,12 @@ func ConfigFromEnv() (Config, error) {
 		TraceDB:      envOrDefault("FAIRY_TRACE_DB", "/var/lib/zzz-fairy/fairy.db"),
 		TraceKeyFile: envOrDefault("FAIRY_TRACE_KEY_FILE", "/var/lib/zzz-fairy/trace.key"),
 		FactDB:       envOrDefault("FAIRY_FACT_DB", "/var/lib/zzz-fairy/facts.db"),
-		HealthAddr:   envOrDefault("FAIRY_HEALTH_ADDR", "127.0.0.1:18081"),
-		AdminToken:   strings.TrimSpace(os.Getenv("FAIRY_ADMIN_TOKEN")),
+		ZZZAccountDB: envOrDefault("FAIRY_ZZZ_ACCOUNT_DB", "/var/lib/zzz-fairy/zzz-accounts.db"),
+		ZZZCredentialKeyFile: envOrDefault(
+			"FAIRY_ZZZ_CREDENTIAL_KEY_FILE", "/var/lib/zzz-fairy/zzz-credentials.key",
+		),
+		HealthAddr: envOrDefault("FAIRY_HEALTH_ADDR", "127.0.0.1:18081"),
+		AdminToken: strings.TrimSpace(os.Getenv("FAIRY_ADMIN_TOKEN")),
 		GroupSoftDefault: GroupSoftMode(strings.ToLower(envOrDefault(
 			"FAIRY_GROUP_SOFT_TRIGGER", string(GroupSoftShadow),
 		))),
@@ -136,6 +143,7 @@ func ConfigFromEnv() (Config, error) {
 		ZZZAPIURL:      envOrDefault("FAIRY_ZZZ_API_URL", defaultZZZAPIURL),
 		PluginEnabled: map[string]bool{
 			ZZZProfilePluginID: true,
+			ZZZAccountPluginID: true,
 		},
 		ReconnectMin: 2 * time.Second,
 		ReconnectMax: 30 * time.Second,
@@ -189,6 +197,9 @@ func ConfigFromEnv() (Config, error) {
 	if cfg.PluginEnabled[ZZZProfilePluginID], err = envBool("FAIRY_ZZZ_PLUGIN_ENABLED", true); err != nil {
 		return Config{}, err
 	}
+	if cfg.PluginEnabled[ZZZAccountPluginID], err = envBool("FAIRY_ZZZ_ACCOUNT_PLUGIN_ENABLED", true); err != nil {
+		return Config{}, err
+	}
 	cfg, err = loadManagedConfig(cfg)
 	if err != nil {
 		return Config{}, err
@@ -239,6 +250,12 @@ func (c Config) Validate() error {
 	}
 	if c.StateFile == "" || c.ConfigFile == "" || c.TraceDB == "" || c.TraceKeyFile == "" || c.FactDB == "" {
 		return fmt.Errorf("Fairy state, config, trace, fact-memory, and trace key paths are required")
+	}
+	if c.PluginEnabled[ZZZAccountPluginID] && (c.ZZZAccountDB == "" || c.ZZZCredentialKeyFile == "") {
+		return fmt.Errorf("Fairy ZZZ account database and credential key paths are required")
+	}
+	if c.PluginEnabled[ZZZAccountPluginID] && sameConfiguredPath(c.ZZZCredentialKeyFile, c.TraceKeyFile) {
+		return fmt.Errorf("FAIRY_ZZZ_CREDENTIAL_KEY_FILE must not reuse FAIRY_TRACE_KEY_FILE")
 	}
 	if c.HealthAddr != "" {
 		if _, _, err := net.SplitHostPort(c.HealthAddr); err != nil {
@@ -299,6 +316,15 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func sameConfiguredPath(left, right string) bool {
+	leftAbsolute, leftErr := filepath.Abs(left)
+	rightAbsolute, rightErr := filepath.Abs(right)
+	if leftErr == nil && rightErr == nil {
+		return filepath.Clean(leftAbsolute) == filepath.Clean(rightAbsolute)
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 func (c Config) ModelEnabled() bool {

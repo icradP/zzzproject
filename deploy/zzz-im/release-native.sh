@@ -238,6 +238,8 @@ smoke_test_sqlite() {
       FAIRY_TRACE_DB=/tmp/fairy.db \
       FAIRY_FACT_DB=/tmp/facts.db \
       FAIRY_TRACE_KEY_FILE=/tmp/fairy.key \
+      FAIRY_ZZZ_ACCOUNT_DB=/tmp/zzz-accounts.db \
+      FAIRY_ZZZ_CREDENTIAL_KEY_FILE=/tmp/zzz-credentials.key \
       FAIRY_HEALTH_ADDR=127.0.0.1:18081 \
       FAIRY_ADMIN_TOKEN=fairy-smoke-admin-token \
       FAIRY_AI_ENABLED=true \
@@ -267,11 +269,15 @@ smoke_test_sqlite() {
       test "$(stat -c %a /tmp/fairy.db)" = 600
       test "$(stat -c %a /tmp/facts.db)" = 600
       test "$(stat -c %a /tmp/fairy.key)" = 600
+      test "$(wc -c </tmp/zzz-credentials.key | tr -d " ")" -eq 32
+      test "$(stat -c %a /tmp/zzz-accounts.db)" = 600
+      test "$(stat -c %a /tmp/zzz-credentials.key)" = 600
       wget -q -O /tmp/fairy-admin \
         --header="Authorization: Bearer fairy-smoke-admin-token" \
         http://127.0.0.1:18081/admin/config
       grep -Fq "\"connected\":true" /tmp/fairy-admin
       grep -Fq "\"external_tool_providers\":[]" /tmp/fairy-admin
+      grep -Fq "\"zzz_accounts\":{\"available\":true" /tmp/fairy-admin
       grep -Fq "\"ai_enabled\":true" /tmp/fairy-admin
       grep -Fq "\"ai_rollout_mode\":\"all\"" /tmp/fairy-admin
       grep -Fq "\"ai_allowed_users\":[]" /tmp/fairy-admin

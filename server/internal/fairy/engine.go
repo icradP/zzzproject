@@ -51,6 +51,18 @@ func (e *Engine) helpText() string {
 	} else {
 		disabled = append(disabled, "ZZZ 资料查询")
 	}
+	if e.pluginRunning(ZZZAccountPluginID) {
+		lines = append(lines,
+			"/zzz login - 私聊扫码绑定国服米游社账号",
+			"/zzz account - 私聊查看脱敏绑定信息",
+			"/zzz gacha sync - 同步并缓存抽卡记录",
+			"/zzz gacha - 查询本地抽卡统计",
+			"/zzz abyss [previous] - 查询本期或上期式舆防卫战",
+			"/zzz logout - 私聊删除绑定凭据和抽卡缓存",
+		)
+	} else {
+		disabled = append(disabled, "ZZZ 米游社账号")
+	}
 	lines = append(lines, "", "私聊可直接提问；群聊默认只有 @Fairy 或指令会触发，群管理员可单独设置软触发模式。")
 	if len(disabled) > 0 {
 		lines = append(lines, "服务器未启用："+strings.Join(disabled, "、")+"。")
@@ -170,6 +182,7 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 	request := PluginRequest{
 		Text:           normalizeTrigger(text),
 		ConversationID: event.ConversationID,
+		MessageID:      event.MessageID,
 		MessageType:    event.MessageType,
 		SenderID:       event.Sender.UserID,
 		SenderNickname: event.Sender.Nickname,
@@ -194,6 +207,25 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		}
 		if !plugin.Match(request) {
 			continue
+		}
+		if interactive, ok := plugin.(InteractivePlugin); ok {
+			interactiveOutput, supported := messenger.(interactiveMessenger)
+			if !supported {
+				e.reply(ctx, messenger, event, "当前消息通道不支持该交互操作。")
+				return
+			}
+			handled, err := interactive.HandleInteractive(ctx, interactiveOutput, request)
+			if err != nil {
+				if contextCancelled(ctx, err) {
+					return
+				}
+				log.Printf("[fairy] interactive plugin %s failed: %v", plugin.Name(), err)
+				e.reply(ctx, messenger, event, "操作暂时失败，请稍后再试。")
+				return
+			}
+			if handled {
+				return
+			}
 		}
 		if toolPlugin, ok := plugin.(ToolPlugin); ok {
 			call, matched := toolPlugin.BuildToolCall(request)

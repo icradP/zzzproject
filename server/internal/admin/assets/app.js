@@ -1460,6 +1460,7 @@ function renderFairyRuntime(runtime, configStatus) {
   const trace = runtime.trace_24h || {};
   const behavior = runtime.behavior || {};
   const factMemory = runtime.fact_memory || {};
+  const zzzAccounts = runtime.zzz_accounts || {};
   const behaviorExperiences = runtime.behavior_experiences || {};
   const outbound = runtime.outbound_delivery || {};
   const feedback = runtime.feedback_24h || {};
@@ -1482,6 +1483,7 @@ function renderFairyRuntime(runtime, configStatus) {
     ["Queue limits", `${scheduler.conversations || 0} conversations · ${scheduler.max_pending || 0} pending max`],
     ["Model quota", `${quota.used || 0} used / ${quota.remaining || 0} remaining`],
     ["Fact memory", factMemory.available ? `${factMemory.facts || 0} facts / ${factMemory.stored_scopes || 0} stored scopes / ${factMemory.enabled_scopes || 0} enabled` : "Unavailable"],
+    ["ZZZ accounts", zzzAccounts.available ? `${zzzAccounts.bound_accounts || 0} bound / ${zzzAccounts.valid_accounts || 0} valid / ${zzzAccounts.cached_gacha_records || 0} cached records` : "Unavailable"],
     ["Behavior experiences", `${behaviorExperiences.configured || 0} configured / ${behaviorExperiences.enabled || 0} enabled`],
     ["Behavior auto learning", behaviorExperiences.auto_learning ? "Enabled" : "Disabled"],
     ["Outbound replies", `${outbound.delivered || 0} delivered / ${outbound.failed || 0} failed`],

@@ -42,6 +42,13 @@ type RuntimeFactMemoryStatus struct {
 	EnabledScopes int  `json:"enabled_scopes"`
 }
 
+type RuntimeZZZAccountStatus struct {
+	Available     bool `json:"available"`
+	BoundAccounts int  `json:"bound_accounts"`
+	ValidAccounts int  `json:"valid_accounts"`
+	CachedRecords int  `json:"cached_gacha_records"`
+}
+
 type RuntimeBehaviorExperienceStatus struct {
 	Configured   int  `json:"configured"`
 	Enabled      int  `json:"enabled"`
@@ -73,6 +80,7 @@ type RuntimeStatus struct {
 	Trace                 TraceRuntimeStats               `json:"trace_24h"`
 	TraceAvailable        bool                            `json:"trace_available"`
 	FactMemory            RuntimeFactMemoryStatus         `json:"fact_memory"`
+	ZZZAccounts           RuntimeZZZAccountStatus         `json:"zzz_accounts"`
 	BehaviorExperiences   RuntimeBehaviorExperienceStatus `json:"behavior_experiences"`
 	OutboundDelivery      RuntimeOutboundDeliveryStatus   `json:"outbound_delivery"`
 	Feedback              RuntimeFeedbackStatus           `json:"feedback_24h"`
@@ -235,6 +243,22 @@ func (r *RuntimeInspector) Snapshot(ctx context.Context) RuntimeStatus {
 			if r.engine != nil && r.engine.state != nil {
 				status.FactMemory.EnabledScopes = r.engine.state.FactMemoryEnabledScopeCount()
 			}
+		}
+	}
+	if r.engine != nil && r.engine.pluginHost != nil {
+		for _, command := range r.engine.pluginHost.Commands() {
+			plugin, ok := command.(*ZZZAccountPlugin)
+			if !ok {
+				continue
+			}
+			stats, err := plugin.Stats(ctx)
+			if err == nil {
+				status.ZZZAccounts = RuntimeZZZAccountStatus{
+					Available: true, BoundAccounts: stats.BoundAccounts,
+					ValidAccounts: stats.ValidAccounts, CachedRecords: stats.CachedRecords,
+				}
+			}
+			break
 		}
 	}
 	status.ExternalToolProviders = r.externalTools.Status()

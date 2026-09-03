@@ -563,6 +563,44 @@ func TestZZZPluginFormatsAndCachesPublicProfile(t *testing.T) {
 	}
 }
 
+func TestZZZProfileAcceptsEightDigitUIDInToolRuntime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/27280531" {
+			t.Errorf("upstream path = %q, want /27280531", request.URL.Path)
+		}
+		_ = json.NewEncoder(response).Encode(map[string]interface{}{
+			"ttl": 60,
+			"PlayerInfo": map[string]interface{}{
+				"SocialDetail":   map[string]interface{}{},
+				"ShowcaseDetail": map[string]interface{}{},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := testConfig(t)
+	cfg.ZZZAPIURL = server.URL + "/{uid}"
+	plugin := NewZZZPlugin(cfg)
+	registry := NewToolRegistry()
+	if err := registry.Register(plugin); err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil)
+	result := runtime.NewSession(ToolScope{
+		ConversationID: "private_alice_fairy",
+		VisibleTools:   map[string]bool{plugin.Name(): true},
+	}).Execute(context.Background(), ToolCall{
+		Name:      plugin.Name(),
+		Arguments: json.RawMessage(`{"uid":"27280531"}`),
+	})
+	if result.Failure != nil {
+		t.Fatalf("eight-digit UID was rejected: %v", result.Failure)
+	}
+	if !strings.Contains(result.Projection.UserText, "UID 27280531") {
+		t.Fatalf("unexpected profile projection: %q", result.Projection.UserText)
+	}
+}
+
 func TestEngineHonorsDisabledPlugin(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

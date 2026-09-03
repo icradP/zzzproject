@@ -108,6 +108,15 @@ func (m *reliableMessenger) waitForClient(ctx context.Context) (*Client, error) 
 }
 
 func (m *reliableMessenger) SendText(ctx context.Context, conversationID, messageID, text string) error {
+	segments := make([]protocol.MessageSegment, 0, 2)
+	if messageID != "" {
+		segments = append(segments, protocol.ReplySegment(messageID))
+	}
+	segments = append(segments, protocol.TextSegment(text))
+	return m.SendSegments(ctx, conversationID, segments)
+}
+
+func (m *reliableMessenger) SendSegments(ctx context.Context, conversationID string, segments []protocol.MessageSegment) error {
 	clientMessageID, err := newRuntimeID("fairy-msg")
 	if err != nil {
 		m.failed.Add(1)
@@ -133,7 +142,7 @@ func (m *reliableMessenger) SendText(ctx context.Context, conversationID, messag
 		attempted = true
 		attemptCtx, cancel := requestTimeout(ctx, m.attemptTimeout)
 		var serverMessageID string
-		serverMessageID, err = client.sendTextWithID(attemptCtx, conversationID, messageID, text, clientMessageID)
+		serverMessageID, err = client.sendSegmentsWithID(attemptCtx, conversationID, segments, clientMessageID)
 		cancel()
 		if err == nil {
 			m.delivered.Add(1)
@@ -172,6 +181,14 @@ func (m *reliableMessenger) SendText(ctx context.Context, conversationID, messag
 		}
 	}
 	panic("unreachable")
+}
+
+func (m *reliableMessenger) UploadFile(ctx context.Context, fileName, fileType, mimeType string, data []byte) (UploadedFile, error) {
+	client, err := m.waitForClient(ctx)
+	if err != nil {
+		return UploadedFile{}, fmt.Errorf("wait for Fairy IM connection: %w", err)
+	}
+	return client.UploadFile(ctx, fileName, fileType, mimeType, data)
 }
 
 func (m *reliableMessenger) GetGroupMembers(ctx context.Context, groupID string) ([]protocol.GroupMember, error) {

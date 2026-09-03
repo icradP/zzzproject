@@ -992,6 +992,8 @@ func (m *legacyPluginModule) Manifest() PluginManifest {
 	components := []PluginComponent{PluginComponentCommand}
 	if _, ok := m.plugin.(ToolPlugin); ok {
 		components = append(components, PluginComponentTool)
+	} else if provider, ok := m.plugin.(PluginToolProvider); ok && len(provider.Tools()) > 0 {
+		components = append(components, PluginComponentTool)
 	}
 	return PluginManifest{
 		ID: m.plugin.Name(), Name: m.plugin.Name(), Version: "1.0.0", APIVersion: 1,
@@ -1005,6 +1007,30 @@ func (m *legacyPluginModule) Register(_ context.Context, scope *PluginContext) e
 	}
 	if tool, ok := m.plugin.(ToolPlugin); ok {
 		return scope.RegisterTool(m.plugin.Name(), tool)
+	}
+	if provider, ok := m.plugin.(PluginToolProvider); ok {
+		for _, tool := range provider.Tools() {
+			if tool == nil {
+				return fmt.Errorf("plugin %s provided a nil tool", m.plugin.Name())
+			}
+			if err := scope.RegisterTool(tool.Spec().Name, tool); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *legacyPluginModule) Start(ctx context.Context) error {
+	if lifecycle, ok := m.plugin.(PluginLifecycle); ok {
+		return lifecycle.Start(ctx)
+	}
+	return nil
+}
+
+func (m *legacyPluginModule) Stop(ctx context.Context) error {
+	if lifecycle, ok := m.plugin.(PluginLifecycle); ok {
+		return lifecycle.Stop(ctx)
 	}
 	return nil
 }

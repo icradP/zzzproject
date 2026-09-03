@@ -2,6 +2,7 @@ package fairy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,11 +138,20 @@ func (c *Client) Request(ctx context.Context, action string, params interface{},
 }
 
 func (c *Client) SendText(ctx context.Context, conversationID, messageID, text string) error {
+	segments := make([]protocol.MessageSegment, 0, 2)
+	if messageID != "" {
+		segments = append(segments, protocol.ReplySegment(messageID))
+	}
+	segments = append(segments, protocol.TextSegment(text))
+	return c.SendSegments(ctx, conversationID, segments)
+}
+
+func (c *Client) SendSegments(ctx context.Context, conversationID string, segments []protocol.MessageSegment) error {
 	clientMessageID, err := newRuntimeID("fairy-msg")
 	if err != nil {
 		return fmt.Errorf("generate Fairy client message ID: %w", err)
 	}
-	_, err = c.sendTextWithID(ctx, conversationID, messageID, text, clientMessageID)
+	_, err = c.sendSegmentsWithID(ctx, conversationID, segments, clientMessageID)
 	return err
 }
 
@@ -151,6 +161,13 @@ func (c *Client) sendTextWithID(ctx context.Context, conversationID, messageID, 
 		segments = append(segments, protocol.ReplySegment(messageID))
 	}
 	segments = append(segments, protocol.TextSegment(text))
+	return c.sendSegmentsWithID(ctx, conversationID, segments, clientMessageID)
+}
+
+func (c *Client) sendSegmentsWithID(ctx context.Context, conversationID string, segments []protocol.MessageSegment, clientMessageID string) (string, error) {
+	if len(segments) == 0 {
+		return "", errors.New("Fairy message requires at least one segment")
+	}
 	var result struct {
 		MessageID string `json:"message_id"`
 	}
@@ -166,6 +183,36 @@ func (c *Client) sendTextWithID(ctx context.Context, conversationID, messageID, 
 		return "", fmt.Errorf("send_message response did not contain a valid message ID")
 	}
 	return result.MessageID, nil
+}
+
+type UploadedFile struct {
+	FileID       string `json:"file_id"`
+	URL          string `json:"url"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	MIMEType     string `json:"mime_type"`
+	Size         int64  `json:"size"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+}
+
+func (c *Client) UploadFile(ctx context.Context, fileName, fileType, mimeType string, data []byte) (UploadedFile, error) {
+	if len(data) == 0 {
+		return UploadedFile{}, errors.New("cannot upload an empty Fairy file")
+	}
+	var result UploadedFile
+	err := c.Request(ctx, protocol.ActionUploadFile, protocol.UploadFileParams{
+		File:     base64.StdEncoding.EncodeToString(data),
+		FileName: fileName,
+		FileType: fileType,
+		MimeType: mimeType,
+	}, &result)
+	if err != nil {
+		return UploadedFile{}, err
+	}
+	if strings.TrimSpace(result.FileID) == "" || strings.TrimSpace(result.URL) == "" {
+		return UploadedFile{}, errors.New("upload_file response did not contain file metadata")
+	}
+	return result, nil
 }
 
 func (c *Client) GetGroupMembers(ctx context.Context, groupID string) ([]protocol.GroupMember, error) {
