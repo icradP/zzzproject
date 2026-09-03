@@ -149,6 +149,57 @@ func TestModelRouterProjectsNativeToolsAndParsesToolCalls(t *testing.T) {
 	}
 }
 
+func TestModelRouterValidatesAndTracesRepairMetadata(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"action\":\"stop\"}"}}]}`))
+	}))
+	defer server.Close()
+	cfg := modelRouterTestConfig(t, server.URL+"/v1", 0)
+	cfg.ModelTasks = append(cfg.ModelTasks, ModelTaskConfig{
+		ID: PlannerTaskID, Strategy: SequentialModelStrategy, CandidateModels: []string{"primary"},
+		MaxOutputTokens: 600, Timeout: 5 * time.Second,
+	})
+	trace := newMemoryTraceStore()
+	router, err := NewModelRouter(cfg, trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.clients["provider"] = server.Client()
+	request := ModelRequest{
+		TaskID: PlannerTaskID, Messages: []ChatMessage{{Role: "user", Content: "plan"}},
+		RequireJSON: true, Repair: true, Step: 1,
+	}
+	if _, err := router.CompleteRequest(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.events) != 1 || !trace.events[0].Repair || trace.events[0].TaskID != PlannerTaskID || trace.events[0].Step != 1 {
+		t.Fatalf("repair trace = %#v", trace.events)
+	}
+	replyerRequest := ModelRequest{
+		TaskID: ReplyerTaskID, Messages: []ChatMessage{{Role: "user", Content: "reply"}},
+		Repair: true, Step: 1,
+	}
+	if _, err := router.CompleteRequest(context.Background(), replyerRequest); err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.events) != 2 || !trace.events[1].Repair || trace.events[1].TaskID != ReplyerTaskID || trace.events[1].Step != 1 {
+		t.Fatalf("Replyer repair trace = %#v", trace.events)
+	}
+	for _, invalid := range []ModelRequest{
+		{TaskID: ReplyerTaskID, Messages: request.Messages, RequireJSON: true, Repair: true, Step: 1},
+		{TaskID: PlannerTaskID, Messages: request.Messages, Repair: true, Step: 1},
+		{TaskID: VisionTaskID, Messages: request.Messages, Repair: true, Step: 1},
+		{TaskID: PlannerTaskID, Messages: request.Messages, RequireJSON: true, Repair: true, Step: 0},
+		{TaskID: PlannerTaskID, Messages: request.Messages, RequireJSON: true, Repair: true, Step: maxPlannerSteps + 1},
+		{TaskID: ReplyerTaskID, Messages: request.Messages, Repair: true, Step: 0},
+		{TaskID: ReplyerTaskID, Messages: request.Messages, Repair: true, Step: maxPlannerSteps + 1},
+	} {
+		if err := validateModelRequest(invalid); err == nil {
+			t.Fatalf("invalid repair metadata accepted: %#v", invalid)
+		}
+	}
+}
+
 func TestModelRouterPlannerJSONValidationControlsFallback(t *testing.T) {
 	t.Run("invalid JSON falls back", func(t *testing.T) {
 		var calls atomic.Int32

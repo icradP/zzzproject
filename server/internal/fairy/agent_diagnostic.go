@@ -73,6 +73,7 @@ func (e *Engine) RunAgentDiagnostic(ctx context.Context, caseID string) (AgentDi
 		Text:            agentDiagnosticPlannerPrompt,
 		History:         []ChatMessage{{Role: "user", Content: agentDiagnosticPlannerPrompt, SourceID: "admin-agent-diagnostic-planner", SourceTimeMS: now.UnixMilli()}},
 		ReplyHistory:    []ChatMessage{{Role: "user", Content: agentDiagnosticReplyPrompt, SourceID: "admin-agent-diagnostic-replyer", SourceTimeMS: now.UnixMilli()}},
+		ExpectedReply:   agentDiagnosticExpectedReply,
 		VisibleTools:    map[string]bool{},
 		Now:             now,
 		ExpressionStyle: e.BehaviorConfig().ExpressionStyle,

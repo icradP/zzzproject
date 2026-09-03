@@ -164,6 +164,151 @@ func TestAgentRuntimeGoldenToolLoop(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeRepairsPlannerInvalidResponse(t *testing.T) {
+	tool := newFakeTool("lookup")
+	registry := registerFakeTool(t, tool)
+	trace, err := OpenSQLiteTraceStore(t.TempDir()+"/trace.db", t.TempDir()+"/trace.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trace.Close()
+	runtime := NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, trace)
+	model := &scriptedToolAwareModel{
+		errors: map[string][]error{
+			PlannerTaskID: {&ModelFailure{Code: ModelFailureInvalidResponse}},
+		},
+		responses: map[string][]ModelResponse{
+			PlannerTaskID: {{Text: `{"action":"respond","reply_intent":"Answer after repair."}`}},
+			ReplyerTaskID: {{Text: "repaired reply"}},
+		},
+	}
+	agent := NewAgentRuntime(testConfig(t), model, runtime)
+	var reservations atomic.Int32
+	outcome, err := agent.Run(context.Background(), AgentInput{
+		ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+		History: []ChatMessage{{Role: "user", Content: "answer me"}}, VisibleTools: map[string]bool{},
+		ReserveModel: func(string) error { reservations.Add(1); return nil },
+	})
+	if err != nil || outcome.Reply != "repaired reply" {
+		t.Fatalf("repair outcome=%#v err=%v", outcome, err)
+	}
+	requests := model.snapshotRequests()
+	if len(requests) != 3 || requests[0].Repair || !requests[1].Repair || requests[2].Repair ||
+		requests[0].TaskID != PlannerTaskID || requests[1].TaskID != PlannerTaskID || requests[2].TaskID != ReplyerTaskID ||
+		reservations.Load() != 3 {
+		t.Fatalf("repair requests=%#v reservations=%d", requests, reservations.Load())
+	}
+	if containsModelText(requests[0].Messages, plannerRepairPrompt) || !containsModelText(requests[1].Messages, plannerRepairPrompt) {
+		t.Fatalf("planner repair prompt placement = %#v", requests)
+	}
+	if requests[0].PromptVersion != "planner-v1" || requests[1].PromptVersion != plannerRepairPromptVersion ||
+		!validPromptDigest(requests[0].PromptDigest) || !validPromptDigest(requests[1].PromptDigest) ||
+		requests[0].PromptDigest == requests[1].PromptDigest || containsModelText(requests[2].Messages, plannerRepairPrompt) {
+		t.Fatalf("planner repair trace metadata or isolation = %#v", requests)
+	}
+}
+
+func TestAgentRuntimeRepairsPlannerDecisionWithoutReplayingTools(t *testing.T) {
+	tool := newFakeTool("lookup")
+	registry := registerFakeTool(t, tool)
+	runtime := NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil)
+	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+		PlannerTaskID: {
+			{ToolCalls: []ModelToolCall{nativeToolCall("call_before_repair", "lookup", `{"value":"okay"}`)}},
+			{Text: `{"action":"respond"}`},
+			{Text: `{"action":"respond","reply_intent":"Use the existing tool result."}`},
+		},
+		ReplyerTaskID: {{Text: "single final reply"}},
+	}}
+	agent := NewAgentRuntime(testConfig(t), model, runtime)
+	var reservations atomic.Int32
+	outcome, err := agent.Run(context.Background(), AgentInput{
+		ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+		History: []ChatMessage{{Role: "user", Content: "look it up"}}, VisibleTools: map[string]bool{"lookup": true},
+		ReserveModel: func(string) error { reservations.Add(1); return nil },
+	})
+	if err != nil || outcome.Reply != "single final reply" {
+		t.Fatalf("repair outcome=%#v err=%v", outcome, err)
+	}
+	requests := model.snapshotRequests()
+	if len(requests) != 4 || requests[0].Step != 1 || requests[1].Step != 2 || requests[1].Repair ||
+		requests[2].Step != 2 || !requests[2].Repair || requests[3].TaskID != ReplyerTaskID || requests[3].Step != 2 {
+		t.Fatalf("repair sequence = %#v", requests)
+	}
+	if tool.executions.Load() != 1 || reservations.Load() != 4 {
+		t.Fatalf("repair executions=%d reservations=%d", tool.executions.Load(), reservations.Load())
+	}
+	if containsModelText(requests[3].Messages, plannerRepairPrompt) {
+		t.Fatalf("planner repair prompt leaked to Replyer: %#v", requests[3].Messages)
+	}
+}
+
+func TestAgentRuntimePlannerRepairIsBoundedAndSelective(t *testing.T) {
+	t.Run("bounded invalid decisions", func(t *testing.T) {
+		tool := newFakeTool("lookup")
+		registry := registerFakeTool(t, tool)
+		model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+			PlannerTaskID: {{Text: `{"action":"respond"}`}, {Text: `{"action":"respond"}`}},
+		}}
+		agent := NewAgentRuntime(testConfig(t), model, NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil))
+		var reservations atomic.Int32
+		_, err := agent.Run(context.Background(), AgentInput{
+			ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+			History:      []ChatMessage{{Role: "user", Content: "answer"}},
+			ReserveModel: func(string) error { reservations.Add(1); return nil },
+		})
+		var failure *AgentFailure
+		requests := model.snapshotRequests()
+		if !errors.As(err, &failure) || failure.Code != AgentFailureInvalidDecision || len(requests) != 2 ||
+			requests[0].Repair || !requests[1].Repair || reservations.Load() != 2 || tool.executions.Load() != 0 {
+			t.Fatalf("bounded repair err=%#v requests=%#v reservations=%d executions=%d", err, requests, reservations.Load(), tool.executions.Load())
+		}
+	})
+
+	t.Run("permanent model failure", func(t *testing.T) {
+		tool := newFakeTool("lookup")
+		registry := registerFakeTool(t, tool)
+		model := &scriptedToolAwareModel{errors: map[string][]error{
+			PlannerTaskID: {&ModelFailure{Code: ModelFailureAuthentication}},
+		}}
+		agent := NewAgentRuntime(testConfig(t), model, NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil))
+		_, err := agent.Run(context.Background(), AgentInput{
+			ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+			History: []ChatMessage{{Role: "user", Content: "answer"}}, ReserveModel: func(string) error { return nil },
+		})
+		var failure *ModelFailure
+		requests := model.snapshotRequests()
+		if !errors.As(err, &failure) || failure.Code != ModelFailureAuthentication || len(requests) != 1 || requests[0].Repair {
+			t.Fatalf("permanent failure err=%#v requests=%#v", err, requests)
+		}
+	})
+
+	t.Run("repair quota", func(t *testing.T) {
+		tool := newFakeTool("lookup")
+		registry := registerFakeTool(t, tool)
+		model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+			PlannerTaskID: {{Text: `{"action":"respond"}`}, {Text: `{"action":"respond","reply_intent":"must not run"}`}},
+		}}
+		agent := NewAgentRuntime(testConfig(t), model, NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil))
+		quotaErr := errors.New("repair quota exhausted")
+		var reservations atomic.Int32
+		_, err := agent.Run(context.Background(), AgentInput{
+			ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+			History: []ChatMessage{{Role: "user", Content: "answer"}},
+			ReserveModel: func(string) error {
+				if reservations.Add(1) == 2 {
+					return quotaErr
+				}
+				return nil
+			},
+		})
+		requests := model.snapshotRequests()
+		if !errors.Is(err, quotaErr) || len(requests) != 1 || reservations.Load() != 2 || tool.executions.Load() != 0 {
+			t.Fatalf("quota repair err=%#v requests=%#v reservations=%d executions=%d", err, requests, reservations.Load(), tool.executions.Load())
+		}
+	})
+}
+
 func TestAgentRuntimeCannotBypassToolPipeline(t *testing.T) {
 	tool := newFakeTool("lookup")
 	registry := registerFakeTool(t, tool)

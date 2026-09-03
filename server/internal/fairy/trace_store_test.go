@@ -118,6 +118,7 @@ func TestSQLiteTraceStoreValidatesModelAttemptMetadata(t *testing.T) {
 		func() TraceEvent { event := valid; event.PromptDigest = "sha256:not-an-hmac"; return event }(),
 		func() TraceEvent { event := valid; event.PromptVersion = ""; return event }(),
 		func() TraceEvent { event := valid; event.Status = "completed"; return event }(),
+		func() TraceEvent { event := valid; event.TaskID = VisionTaskID; event.Repair = true; return event }(),
 		{
 			Type: TraceTurnCompleted, TraceID: "trace-extra", TurnID: "turn-extra",
 			Source: "zzz-message", Status: "completed", ModelID: "model-a",
@@ -219,26 +220,31 @@ func TestSQLiteTraceStoreAggregatesStableModelHealth(t *testing.T) {
 		input, output                          int
 		cost                                   int64
 		fallback                               bool
+		repair                                 bool
 		time                                   time.Time
 	}
 	events := []modelEvent{
-		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 100, 10, 4, 10, false, now},
-		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 200, 20, 5, 20, false, now},
-		{ReplyerTaskID, "provider-a", "model-a", "failed", string(ModelFailureRateLimited), 300, 5, 0, 30, false, now},
-		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 400, 30, 6, 40, true, now},
-		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 500, 40, 7, 50, false, now},
-		{PlannerTaskID, "provider-b", "model-b", "failed", string(ModelFailureNetwork), 1000, 7, 0, 9, true, now},
-		{ReplyerTaskID, "provider-old", "model-old", "completed", "", 50, 1, 1, 1, false, now.Add(-2 * time.Hour)},
+		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 100, 10, 4, 10, false, false, now},
+		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 200, 20, 5, 20, false, false, now},
+		{ReplyerTaskID, "provider-a", "model-a", "failed", string(ModelFailureRateLimited), 300, 5, 0, 30, false, false, now},
+		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 400, 30, 6, 40, true, false, now},
+		{ReplyerTaskID, "provider-a", "model-a", "completed", "", 500, 40, 7, 50, false, true, now},
+		{PlannerTaskID, "provider-b", "model-b", "failed", string(ModelFailureNetwork), 1000, 7, 0, 9, true, true, now},
+		{ReplyerTaskID, "provider-old", "model-old", "completed", "", 50, 1, 1, 1, false, false, now.Add(-2 * time.Hour)},
 	}
 	for index, value := range events {
-		if err := store.Append(context.Background(), TraceEvent{
+		event := TraceEvent{
 			Time: value.time, Type: TraceModelAttempt,
 			TraceID: "trace-health-" + string(rune('a'+index)), TurnID: "turn-health-" + string(rune('a'+index)),
 			ConversationID: "private-health-secret", Source: "model-router", Status: value.status,
 			TaskID: value.task, ProviderID: value.provider, ModelID: value.model, SnapshotID: "snapshot-health",
 			Attempt: index + 1, DurationMS: value.duration, InputTokens: value.input, OutputTokens: value.output,
-			CostMicroUSD: value.cost, FailureCode: value.failure, Fallback: value.fallback,
-		}); err != nil {
+			CostMicroUSD: value.cost, FailureCode: value.failure, Fallback: value.fallback, Repair: value.repair,
+		}
+		if value.repair {
+			event.Step = 1
+		}
+		if err := store.Append(context.Background(), event); err != nil {
 			t.Fatalf("append model health event %d: %v", index, err)
 		}
 	}
@@ -252,12 +258,14 @@ func TestSQLiteTraceStoreAggregatesStableModelHealth(t *testing.T) {
 	planner := stats.ModelHealth[0]
 	if planner.TaskID != PlannerTaskID || planner.ProviderID != "provider-b" || planner.ModelID != "model-b" ||
 		planner.Attempts != 1 || planner.Completed != 0 || planner.Failed != 1 || planner.FallbackAttempts != 1 ||
-		planner.P50Millis != 1000 || planner.P95Millis != 1000 || planner.FailureCodes[string(ModelFailureNetwork)] != 1 {
+		planner.RepairAttempts != 1 || planner.P50Millis != 1000 || planner.P95Millis != 1000 ||
+		planner.FailureCodes[string(ModelFailureNetwork)] != 1 {
 		t.Fatalf("planner model health = %#v", planner)
 	}
 	replyer := stats.ModelHealth[1]
 	if replyer.TaskID != ReplyerTaskID || replyer.ProviderID != "provider-a" || replyer.ModelID != "model-a" ||
 		replyer.Attempts != 5 || replyer.Completed != 4 || replyer.Failed != 1 || replyer.FallbackAttempts != 1 ||
+		replyer.RepairAttempts != 1 ||
 		replyer.P50Millis != 300 || replyer.P95Millis != 500 || replyer.InputTokens != 105 || replyer.OutputTokens != 22 ||
 		replyer.CostMicroUSD != 150 || replyer.FailureCodes[string(ModelFailureRateLimited)] != 1 {
 		t.Fatalf("replyer model health = %#v", replyer)
@@ -285,9 +293,9 @@ func TestSQLiteTraceStoreProjectsBoundedRecentFailuresWithoutIdentity(t *testing
 		{
 			Time: now.Add(-4 * time.Minute), Type: TraceModelAttempt,
 			TraceID: "trace-recent-model", TurnID: "turn-recent-model", ConversationID: "private-recent-secret",
-			Source: "model-router", Status: "failed", TaskID: ReplyerTaskID, ProviderID: "provider-a", ModelID: "model-a",
+			Source: "model-router", Status: "failed", TaskID: PlannerTaskID, ProviderID: "provider-a", ModelID: "model-a",
 			SnapshotID: "snapshot-recent-secret", Attempt: 2, Step: 1, DurationMS: 450,
-			FailureCode: string(ModelFailureNetwork), Fallback: true,
+			FailureCode: string(ModelFailureNetwork), Fallback: true, Repair: true,
 		},
 		{
 			Time: now.Add(-3 * time.Minute), Type: TraceToolCall,
@@ -339,8 +347,8 @@ func TestSQLiteTraceStoreProjectsBoundedRecentFailuresWithoutIdentity(t *testing
 		t.Fatalf("tool failure = %#v", toolFailure)
 	}
 	if modelFailure.Kind != "model" || modelFailure.Code != string(ModelFailureNetwork) ||
-		modelFailure.TaskID != ReplyerTaskID || modelFailure.ProviderID != "provider-a" || modelFailure.ModelID != "model-a" ||
-		modelFailure.DurationMS != 450 || modelFailure.Attempt != 2 || modelFailure.Step != 1 || !modelFailure.Fallback {
+		modelFailure.TaskID != PlannerTaskID || modelFailure.ProviderID != "provider-a" || modelFailure.ModelID != "model-a" ||
+		modelFailure.DurationMS != 450 || modelFailure.Attempt != 2 || modelFailure.Step != 1 || !modelFailure.Fallback || !modelFailure.Repair {
 		t.Fatalf("model failure = %#v", modelFailure)
 	}
 	encoded, err := json.Marshal(stats.RecentFailures)

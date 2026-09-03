@@ -252,10 +252,10 @@ button:focus-visible, a:focus-visible { outline: 2px solid #f4c542; outline-offs
 .runtime-task-quota-table { border-top: 1px solid #292b30; }
 .runtime-task-quota-table table { min-width: 520px; }
 .runtime-model-health-table { border-top: 1px solid #292b30; }
-.runtime-model-health-table table { min-width: 1180px; }
+.runtime-model-health-table table { min-width: 1260px; }
 .runtime-model-health-table th:nth-child(1), .runtime-model-health-table td:nth-child(1) { width: 150px; }
 .runtime-model-health-table th:nth-child(4), .runtime-model-health-table td:nth-child(4) { width: 120px; }
-.runtime-model-health-table th:nth-child(6), .runtime-model-health-table td:nth-child(6) { width: 180px; }
+.runtime-model-health-table th:nth-child(7), .runtime-model-health-table td:nth-child(7) { width: 180px; }
 .runtime-model-health-table th:last-child, .runtime-model-health-table td:last-child { width: 210px; text-align: left; }
 .runtime-recent-failures-table { border-top: 1px solid #292b30; }
 .runtime-recent-failures-table table { min-width: 1080px; }

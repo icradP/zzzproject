@@ -63,6 +63,7 @@ type TraceEvent struct {
 	CostMicroUSD    int64
 	FailureCode     string
 	Fallback        bool
+	Repair          bool
 	Step            int
 	PromptVersion   string
 	PromptDigest    string
@@ -110,6 +111,7 @@ type TraceModelHealthStats struct {
 	Completed        int            `json:"completed"`
 	Failed           int            `json:"failed"`
 	FallbackAttempts int            `json:"fallback_attempts"`
+	RepairAttempts   int            `json:"repair_attempts"`
 	P50Millis        int64          `json:"p50_ms"`
 	P95Millis        int64          `json:"p95_ms"`
 	InputTokens      int            `json:"input_tokens"`
@@ -131,6 +133,7 @@ type TraceRecentFailure struct {
 	Attempt      int       `json:"attempt,omitempty"`
 	Step         int       `json:"step,omitempty"`
 	Fallback     bool      `json:"fallback,omitempty"`
+	Repair       bool      `json:"repair,omitempty"`
 	QueueDepth   int       `json:"queue_depth,omitempty"`
 	PendingTurns int       `json:"pending_turns,omitempty"`
 }
@@ -312,6 +315,7 @@ func (s *SQLiteTraceStore) Append(ctx context.Context, event TraceEvent) error {
 		CostMicroUSD    int64  `json:"fairy.cost_microusd,omitempty"`
 		FailureCode     string `json:"error.type,omitempty"`
 		Fallback        bool   `json:"fairy.model.fallback,omitempty"`
+		Repair          bool   `json:"fairy.model.repair,omitempty"`
 		Step            int    `json:"fairy.step,omitempty"`
 		PromptVersion   string `json:"fairy.prompt.version,omitempty"`
 		PromptDigest    string `json:"fairy.prompt.digest,omitempty"`
@@ -341,6 +345,7 @@ func (s *SQLiteTraceStore) Append(ctx context.Context, event TraceEvent) error {
 		CostMicroUSD:    event.CostMicroUSD,
 		FailureCode:     event.FailureCode,
 		Fallback:        event.Fallback,
+		Repair:          event.Repair,
 		Step:            event.Step,
 		PromptVersion:   event.PromptVersion,
 		PromptDigest:    event.PromptDigest,
@@ -476,6 +481,7 @@ type traceRuntimeStatsPayload struct {
 	CostMicroUSD    int64  `json:"fairy.cost_microusd"`
 	FailureCode     string `json:"error.type"`
 	Fallback        bool   `json:"fairy.model.fallback"`
+	Repair          bool   `json:"fairy.model.repair"`
 	Step            int    `json:"fairy.step"`
 	ToolName        string `json:"gen_ai.tool.name"`
 	ToolRisk        string `json:"fairy.tool.risk"`
@@ -501,6 +507,9 @@ func validTraceModelHealthPayload(payload traceRuntimeStatsPayload) bool {
 	if !validTraceLabel(payload.TaskID) || !validTraceLabel(payload.ProviderID) || !validTraceLabel(payload.ModelID) ||
 		payload.Attempt < 1 || payload.Step < 0 || payload.Step > maxPlannerSteps || payload.DurationMS < 0 ||
 		payload.InputTokens < 0 || payload.OutputTokens < 0 || payload.CostMicroUSD < 0 {
+		return false
+	}
+	if payload.Repair && (payload.TaskID != PlannerTaskID && payload.TaskID != ReplyerTaskID || payload.Step < 1) {
 		return false
 	}
 	if payload.Status == "completed" {
@@ -547,6 +556,7 @@ func appendTraceRecentFailure(stats *TraceRuntimeStats, timeMS int64, eventType 
 		failure.Attempt = payload.Attempt
 		failure.Step = payload.Step
 		failure.Fallback = payload.Fallback
+		failure.Repair = payload.Repair
 	case TraceToolCall:
 		failure.Kind = "tool"
 		failure.Code = payload.FailureCode
@@ -585,6 +595,9 @@ func recordTraceModelHealth(groups map[traceModelHealthKey]*traceModelHealthAccu
 	group.durations = append(group.durations, payload.DurationMS)
 	if payload.Fallback {
 		group.stats.FallbackAttempts++
+	}
+	if payload.Repair {
+		group.stats.RepairAttempts++
 	}
 	if payload.Status == "completed" {
 		group.stats.Completed++
@@ -775,7 +788,7 @@ func validTraceEventDetails(event TraceEvent) bool {
 		}
 		return event.QueueDepth == 0 && event.Pending == 0 && event.Attempt == 0 && event.DurationMS == 0 &&
 			event.InputTokens == 0 && event.OutputTokens == 0 && event.CostMicroUSD == 0 && event.FailureCode == "" &&
-			!event.Fallback && event.Step == 0 && event.PromptVersion == "" && event.PromptDigest == "" &&
+			!event.Fallback && !event.Repair && event.Step == 0 && event.PromptVersion == "" && event.PromptDigest == "" &&
 			event.TaskID == "" && event.ProviderID == "" && event.ModelID == "" && event.SnapshotID == "" &&
 			event.ToolCallID == "" && event.ToolName == "" && event.ToolRisk == "" && event.ToolPolicy == "" &&
 			event.ToolStatus == "" && event.ToolResultBytes == 0
@@ -786,7 +799,7 @@ func validTraceEventDetails(event TraceEvent) bool {
 			!validToolTraceStatus(event.ToolStatus) || event.Attempt != 0 || event.InputTokens != 0 ||
 			event.OutputTokens != 0 || event.CostMicroUSD != 0 || event.TaskID != "" ||
 			event.ProviderID != "" || event.ModelID != "" || event.SnapshotID != "" || event.PromptVersion != "" ||
-			event.PromptDigest != "" || event.Fallback || event.GateAction != "" || event.GateReason != "" ||
+			event.PromptDigest != "" || event.Fallback || event.Repair || event.GateAction != "" || event.GateReason != "" ||
 			event.GateHard || event.GateShadow {
 			return false
 		}
@@ -798,7 +811,7 @@ func validTraceEventDetails(event TraceEvent) bool {
 	if event.Type != TraceModelAttempt {
 		return event.TaskID == "" && event.ProviderID == "" && event.ModelID == "" && event.SnapshotID == "" &&
 			event.Attempt == 0 && event.DurationMS == 0 && event.InputTokens == 0 && event.OutputTokens == 0 &&
-			event.CostMicroUSD == 0 && event.FailureCode == "" && !event.Fallback && event.Step == 0 &&
+			event.CostMicroUSD == 0 && event.FailureCode == "" && !event.Fallback && !event.Repair && event.Step == 0 &&
 			event.PromptVersion == "" && event.PromptDigest == "" &&
 			event.ToolCallID == "" && event.ToolName == "" && event.ToolRisk == "" && event.ToolPolicy == "" &&
 			event.ToolStatus == "" && event.ToolResultBytes == 0 && event.GateAction == "" &&
@@ -808,6 +821,9 @@ func validTraceEventDetails(event TraceEvent) bool {
 		!validRuntimeID(event.SnapshotID) || event.Attempt < 1 || event.ToolCallID != "" ||
 		event.ToolName != "" || event.ToolRisk != "" || event.ToolPolicy != "" || event.ToolStatus != "" ||
 		event.ToolResultBytes != 0 || event.GateAction != "" || event.GateReason != "" || event.GateHard || event.GateShadow {
+		return false
+	}
+	if event.Repair && (event.TaskID != PlannerTaskID && event.TaskID != ReplyerTaskID || event.Step < 1) {
 		return false
 	}
 	if (event.PromptVersion == "") != (event.PromptDigest == "") ||

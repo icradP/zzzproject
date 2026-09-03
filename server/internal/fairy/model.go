@@ -80,6 +80,7 @@ type ModelRequest struct {
 	Images        []ModelBinaryInput
 	Tools         []ModelToolDefinition
 	RequireJSON   bool
+	Repair        bool
 	Step          int
 	PromptVersion string
 	PromptDigest  string
@@ -676,7 +677,8 @@ func (r *ModelRouter) appendModelTrace(
 		TraceID: scope.TraceID, TurnID: scope.TurnID, ConversationID: scope.ConversationID,
 		Source: scope.Source, Status: status,
 		TaskID: task.ID, ProviderID: provider.ID, ModelID: model.ID, SnapshotID: r.snapshot.ID,
-		Step: request.Step, PromptVersion: request.PromptVersion, PromptDigest: request.PromptDigest,
+		Step: request.Step, Repair: request.Repair,
+		PromptVersion: request.PromptVersion, PromptDigest: request.PromptDigest,
 		Attempt: attempt, DurationMS: duration.Milliseconds(),
 		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 		CostMicroUSD: modelCostMicroUSD(model, usage), FailureCode: failureCode, Fallback: fallback,
@@ -722,6 +724,13 @@ func cloneModelToolCalls(calls []ModelToolCall) []ModelToolCall {
 func validateModelRequest(request ModelRequest) error {
 	if !validTraceLabel(request.TaskID) || request.Step < 0 || request.Step > 64 {
 		return fmt.Errorf("invalid Fairy model request metadata")
+	}
+	if request.Repair {
+		validRepairTask := request.TaskID == PlannerTaskID && request.RequireJSON ||
+			request.TaskID == ReplyerTaskID && !request.RequireJSON
+		if !validRepairTask || request.Step < 1 || request.Step > maxPlannerSteps {
+			return fmt.Errorf("invalid Fairy model repair metadata")
+		}
 	}
 	if len(request.Messages) == 0 || len(request.Messages) > maxModelMessages || len(request.Tools) > maxModelTools {
 		return fmt.Errorf("Fairy model request exceeds message or tool limits")

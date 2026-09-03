@@ -87,7 +87,7 @@ func TestMiMoAnthropicLiveAgentDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != AgentDiagnosticPassed || result.Reply == "" {
+	if result.Status != AgentDiagnosticPassed || result.Reply != agentDiagnosticExpectedReply {
 		t.Fatalf("MiMo agent diagnostic failed: %#v", result)
 	}
 	used, remaining := state.ModelQuotaStatus(engine.now(), cfg.ModelDailyLimit)

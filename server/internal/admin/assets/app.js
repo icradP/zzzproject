@@ -1580,6 +1580,7 @@ function renderFairyRuntime(runtime, configStatus) {
       health,
       calls,
       element("td", "", Number(model.fallback_attempts || 0).toLocaleString()),
+      element("td", "", Number(model.repair_attempts || 0).toLocaleString()),
       element("td", "", `P50 ${formatMilliseconds(model.p50_ms)} / P95 ${formatMilliseconds(model.p95_ms)}`),
       element("td", "", `${Number(model.input_tokens || 0).toLocaleString()} in / ${Number(model.output_tokens || 0).toLocaleString()} out`),
       element("td", "", formatMicroUSD(model.cost_microusd)),
@@ -1605,6 +1606,7 @@ function renderFairyRuntime(runtime, configStatus) {
       const parts = [failure.task_id || "-"];
       if (Number(failure.attempt || 0) > 0) parts.push(`attempt ${failure.attempt}`);
       if (failure.fallback) parts.push("fallback");
+      if (failure.repair) parts.push("repair");
       if (Number(failure.step || 0) > 0) parts.push(`step ${failure.step}`);
       details = parts.join(" · ");
     } else if (failure.kind === "tool") {

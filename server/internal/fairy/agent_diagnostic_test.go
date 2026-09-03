@@ -116,7 +116,10 @@ func TestEngineAgentDiagnosticRejectsReplyThatExposesProtocol(t *testing.T) {
 	}
 	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
 		PlannerTaskID: {{Text: `{"action":"respond","reply_intent":"Confirm the diagnostic chain."}`}},
-		ReplyerTaskID: {{Text: `I cannot return the JSON object requested.`}},
+		ReplyerTaskID: {
+			{Text: `I cannot return the JSON object requested.`},
+			{Text: `I still cannot return the JSON object requested.`},
+		},
 	}}
 	engine := NewEngine(cfg, state, model)
 	if _, err := engine.RunAgentDiagnostic(context.Background(), AgentDiagnosticCasePipeline); err == nil {
@@ -126,6 +129,59 @@ func TestEngineAgentDiagnosticRejectsReplyThatExposesProtocol(t *testing.T) {
 		if !errors.As(err, &failure) || failure.Code != AgentFailureInvalidReply {
 			t.Fatalf("diagnostic protocol failure = %v", err)
 		}
+	}
+	requests := model.snapshotRequests()
+	if len(requests) != 3 || requests[0].TaskID != PlannerTaskID || requests[0].Repair ||
+		requests[1].TaskID != ReplyerTaskID || requests[1].Repair ||
+		requests[2].TaskID != ReplyerTaskID || !requests[2].Repair {
+		t.Fatalf("bounded Replyer repair sequence = %#v", requests)
+	}
+}
+
+func TestEngineAgentDiagnosticRepairsReplyWithoutReplayingPlannerOrQuota(t *testing.T) {
+	cfg := testConfig(t)
+	state, err := OpenStateStoreWithDefaults(cfg.StateFile, cfg.GroupDefault, cfg.GroupSoftDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace, err := OpenSQLiteTraceStore(cfg.TraceDB, cfg.TraceKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trace.Close()
+	const rejectedReply = "The diagnostic probably passed."
+	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+		PlannerTaskID: {{Text: `{"action":"respond","reply_intent":"Confirm the diagnostic chain."}`}},
+		ReplyerTaskID: {{Text: rejectedReply}, {Text: agentDiagnosticExpectedReply}},
+	}}
+	engine := NewEngineWithTrace(cfg, state, model, trace)
+	result, err := engine.RunAgentDiagnostic(context.Background(), AgentDiagnosticCasePipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != AgentDiagnosticPassed || result.Reply != agentDiagnosticExpectedReply {
+		t.Fatalf("repaired diagnostic result = %#v", result)
+	}
+	requests := model.snapshotRequests()
+	if len(requests) != 3 || requests[0].TaskID != PlannerTaskID || requests[0].Repair ||
+		requests[1].TaskID != ReplyerTaskID || requests[1].Repair ||
+		requests[2].TaskID != ReplyerTaskID || !requests[2].Repair || requests[2].Step != 1 {
+		t.Fatalf("Replyer repair sequence = %#v", requests)
+	}
+	if containsModelText(requests[2].Messages, agentDiagnosticPlannerPrompt) ||
+		containsModelText(requests[2].Messages, rejectedReply) ||
+		!containsModelText(requests[2].Messages, agentDiagnosticReplyPrompt) ||
+		!containsModelText(requests[2].Messages, replyerRepairPrompt) {
+		t.Fatalf("Replyer repair prompt isolation = %#v", requests[2].Messages)
+	}
+	if requests[1].PromptVersion != "replyer-v1" || requests[2].PromptVersion != replyerRepairPromptVersion ||
+		!validPromptDigest(requests[1].PromptDigest) || !validPromptDigest(requests[2].PromptDigest) ||
+		requests[1].PromptDigest == requests[2].PromptDigest {
+		t.Fatalf("Replyer repair trace metadata = %#v", requests)
+	}
+	used, remaining := state.ModelQuotaStatus(engine.now(), cfg.ModelDailyLimit)
+	if used != 0 || remaining != cfg.ModelDailyLimit {
+		t.Fatalf("repaired diagnostic consumed model quota: used=%d remaining=%d", used, remaining)
 	}
 }
 
