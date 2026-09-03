@@ -612,7 +612,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 
 本批次已增加 Flutter 组件测试和 ZZZ Server 消息段测试；当前尚未提交、推送或部署，M8 继续暂停。
 
-### Fairy 与移动端体验热修（已本地验证、待发布）
+### Fairy 与移动端体验热修（已完成并上线）
 
 1. Tool Contract 增加插件级结果交付模式：`model` 允许 AI 基于插件结果组织回复，`direct` 直接返回插件投影；无论采用哪种模式，后续 Planner/Replyer 失败或达到步数上限时都回退已取得的安全用户投影，避免插件结果被通用 AI 错误覆盖。
 2. `zzz-account`、`zzz-gacha`、`zzz-abyss` 将未绑定、本地读取失败、米游社凭据失效、风控、限流和上游不可用映射为结构化插件结果及明确安全文案；当前配置为 `model`，正常时由 AI 确认，模型异常时由 Agent 原样兜底。
@@ -620,6 +620,13 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 4. 手机主页面底部导航由 78px 全宽条改为 58px 浮动圆角玻璃面板，保留安全区和足够触控区域；选中态改为圆角矩形，不再使用方形斜角色块。
 
 本批次已通过 Fairy 专项测试、全量 Go/Flutter/Chrome Web 测试、Flutter Analyze、Go race、Web 资源校验，以及本地 Linux x86-64 静态构建与 Alpine SQLite/Fairy lifecycle smoke；M8 继续暂停。
+
+完成记录（2026-09-03）：
+
+- 实现提交 `4248233` 已推送，GitHub Actions CI/CD 运行 `33735783974` 成功；原生 release `42482333ffe3` 由本地构建静态 Linux x86-64 制品并部署，生产服务器未参与编译。
+- PWA 使用同一次 CI 的 `web-release` artifact 原子部署为 `42482333ffe3-ci33735783974`；公网 `main.dart.js` 与 CI artifact SHA-256 一致，资源清单版本为 `6d214a1aac9f48ac`，构建总量 `60,333,965` bytes。
+- 生产 `zzz-im`、`zzz-fairy` 均为 active，Server `/health` 与 Fairy `/ready` 通过；Fairy 配置保持 schema v10 revision 4、AI rollout `all`、Agent enabled 与 production ready，`zzz-account` 保持启用，凭据库及 32 字节密钥权限均为 `0600`。
+- 生产 WSS smoke 确认自然语言抽卡查询在未绑定时返回含 `/zzz login` 的插件原因而非通用 AI 错误；`/zzz login` 随后收到独立说明消息与 image-only 二维码消息。
 
 ### 2. 语音房间
 
@@ -650,7 +657,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.23 已部署；F5.24 决策链、插件宿主和管理分类已本地实现、待发布；生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.24、插件宿主、MYS 账号/抽卡/式舆工具及本次结果交付热修已部署；生产 rollout 为 `all` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策
