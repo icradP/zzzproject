@@ -556,7 +556,7 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 实现提交 `2f612c2` 已推送，GitHub Actions CI/CD 运行 `33705851757` 成功；release `2f612c2de710` 已由本地构建静态 Linux x86-64 制品、通过 Alpine smoke 后按哈希校验和回滚保护部署，生产服务器未编译源码。`zzz-im`、`zzz-fairy` 均为 active，本地与远端制品哈希一致，`/health`、`/ready` 和生产固定严格诊断均通过。
 - 管理页已使用生产脱敏 Model Health 数据在 1440x1000 与 390x844 视口验收；Repair 列与模型行对齐，移动端表格独立横向滚动，页面无全局横向溢出或控制台错误。生产保持 schema v10 revision 3 active，`production_ready=true`、`agent_configured=true`；`ai_enabled=false`、`agent_enabled=false`、rollout 为 `off`。M8 继续暂停。
 
-当前进度（M7 Agent 化 F5.24，决策链、插件宿主与管理信息架构已本地实现、待发布）：
+当前进度（M7 Agent 化 F5.24，决策链、插件宿主与管理信息架构已部署）：
 
 - 以 DSH 的会话事件流为数据骨架、MaiBot 的推理浏览体验为展示参考，新增按 Turn 串联 Admission、Gate、Planner、Replyer、模型调用、工具调用/结果和最终状态的决策链。Provider 明确返回的 `thinking` 原样保存；`redacted_thinking` 不可恢复明文，只保存不可逆摘要式签名和“已隐藏”标记。
 - 新增 Fairy 本机管理 API `GET /admin/decision-chains` 和 IM 管理代理 `GET /admin/api/fairy/decision-chains`；管理页 Decisions 分类每 5 秒刷新，桌面端采用会话列表与详情双栏，移动端自动切为单栏。该页面属于敏感管理数据面，只通过既有管理鉴权开放。
@@ -566,15 +566,17 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 私聊 Fairy 的最终回复不再引用触发消息；群聊仍保留引用，后续平台 Adapter 可在插件业务配置中覆盖引用策略。
 - `zzz-profile` 的功能与交互基准固定为 [ZZZeroUID](https://github.com/ZZZure/ZZZeroUID)（审计基线 `063856f0cf812365890e74536f3ec82d5fd075d8`）。已按参考实现将 UID 输入、命令解析与 Tool Schema 统一为 8–10 位，并补充真实 8 位 UID `27280531` 穿过 Tool Runtime 的回归；当前仍是只读公开资料查询子集。
 - 后续按独立组件增量迁移 `uid-binding`、`profile-summary`、`character-detail`、`gacha`、`daily-note`、`abyss` 与 `admin/config`；其中 UID 绑定必须使用 Fairy 自有持久化和 IM 用户作用域，不能依赖参考项目的 `gsuid_core.GsBind`。
-- 当前代码与管理页面尚未提交、推送或部署；生产仍运行 F5.23，rollout 保持 `off`，M8 继续暂停。
+- 实现提交 `a3ba133` 已包含在 release `f3801659b43b` 中部署；决策链、插件宿主与分类管理页面已随本地静态 Linux x86-64 制品上线，生产服务器未编译源码。M8 继续暂停。
 
-当前进度（M7 Agent 化 F5.25，米游社账号、抽卡与式舆能力已本地实现、待发布）：
+当前进度（M7 Agent 化 F5.25，米游社账号、抽卡与式舆能力已部署）：
 
 - 新增独立 `zzz-account` 插件，第一版限定国服米游社，支持 `/zzz login`、`/zzz account`、`/zzz gacha sync`、`/zzz gacha`、`/zzz abyss [previous]` 与 `/zzz logout`。扫码二维码由 Fairy 本地生成并上传到现有 ZZZ 媒体服务，确认轮询和首次抽卡同步均脱离单 Turn 在插件生命周期内后台执行。
 - 账号库使用独立 SQLite 文件；Cookie 与 Stoken 分字段采用 AES-256-GCM 加密，随机 32-byte 密钥不复用 Trace Key，AAD 绑定 IM `owner_id` 和凭据类型，数据库与密钥权限均为 `0600`。聊天、模型、Planner、Trace、日志和管理 API 均不接收或返回明文凭据。
 - 个人账号、抽卡和式舆 Tool 使用运行时注入的 `ToolScope.SenderID`，Schema 不存在 `owner_id` 参数，群聊查询也只能读取发送者本人；登录、账号信息和退出绑定只允许私聊。管理运行态仅增加绑定数、有效数和缓存记录数聚合。
 - 已按 `gsuid_core` 扫码登录链路和 `ZZZeroUID` 的 AuthKey、调频记录、`hadal_info_v2` 协议实现固定上游客户端；上游响应正文不进入错误或日志，凭据失效、风控、限流和二维码过期只映射为固定错误文案。
-- 本地全量 `go test ./...`、`go vet ./...`、CI 同范围 `-race` 与 Linux x86-64 `release-native.sh validate` 均已通过；加密落盘、错误脱敏、本地 PNG 二维码、私聊边界、后台同步和跨用户 Tool 作用域均有专项回归。当前尚未提交、推送或部署，M8 继续暂停。
+- 本地全量 `go test ./...`、`go vet ./...`、CI 同范围 `-race` 与 Linux x86-64 `release-native.sh validate` 均已通过；加密落盘、错误脱敏、本地 PNG 二维码、私聊边界、后台同步和跨用户 Tool 作用域均有专项回归。
+- 移动底栏提交 `0c35e1a` 与 Fairy 米游社实现提交 `f380165` 已推送，GitHub Actions CI/CD 运行 `33732277256` 成功；release `f3801659b43b` 已由本地构建静态 Linux x86-64 制品、通过 Alpine smoke 后按哈希校验和回滚保护部署，生产服务器未编译源码。
+- 生产 `zzz-im`、`zzz-fairy` 均为 active，Fairy `/ready` 与 `zzz-account` 插件运行态通过；账号库及独立 32-byte 凭据密钥均为 `0600`。`icrad.ltd` PWA 已原子切换到同名 release，核心 JavaScript 哈希与 CI Pages 制品一致。部署保留既有 schema v10 revision 4 受管配置：`production_ready=true`、`agent_enabled=true`、rollout 为 `all`。M8 继续暂停。
 
 ### M1-M7 使用体验修复批次（已完成并上线）
 
