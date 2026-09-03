@@ -15,8 +15,8 @@ const (
 )
 
 var (
-	ErrAgentDiagnosticUnavailable = errors.New("Fairy agent diagnostic unavailable")
-	ErrAgentDiagnosticInvalidCase = errors.New("Fairy agent diagnostic case is invalid")
+	ErrAgentDiagnosticUnavailable  = errors.New("Fairy agent diagnostic unavailable")
+	ErrAgentDiagnosticInvalidCase  = errors.New("Fairy agent diagnostic case is invalid")
 	ErrAgentDiagnosticInvalidReply = errors.New("Fairy agent diagnostic reply is invalid")
 )
 

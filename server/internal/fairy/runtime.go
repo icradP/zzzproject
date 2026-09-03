@@ -77,6 +77,7 @@ type RuntimeStatus struct {
 	OutboundDelivery      RuntimeOutboundDeliveryStatus   `json:"outbound_delivery"`
 	Feedback              RuntimeFeedbackStatus           `json:"feedback_24h"`
 	ExternalToolProviders []ExternalToolProviderStatus    `json:"external_tool_providers"`
+	Plugins               []PluginRuntimeStatus           `json:"plugins"`
 }
 
 type AdminRuntime interface {
@@ -88,6 +89,10 @@ type AdminRuntime interface {
 // AdminRuntime without exposing a model test capability.
 type AgentDiagnosticRunner interface {
 	RunAgentDiagnostic(context.Context, string) (AgentDiagnosticResult, error)
+}
+
+type DecisionChainAdminRuntime interface {
+	DecisionChains(context.Context, int) ([]DecisionChain, error)
 }
 
 type RuntimeInspector struct {
@@ -124,6 +129,17 @@ func (r *RuntimeInspector) RunAgentDiagnostic(ctx context.Context, caseID string
 		return AgentDiagnosticResult{}, ErrAgentDiagnosticUnavailable
 	}
 	return r.engine.RunAgentDiagnostic(ctx, caseID)
+}
+
+func (r *RuntimeInspector) DecisionChains(ctx context.Context, limit int) ([]DecisionChain, error) {
+	if r == nil {
+		return nil, nil
+	}
+	reader, ok := r.trace.(DecisionChainReader)
+	if !ok {
+		return nil, nil
+	}
+	return reader.ListDecisionChains(ctx, limit)
 }
 
 func (r *RuntimeInspector) Snapshot(ctx context.Context) RuntimeStatus {
@@ -166,13 +182,15 @@ func (r *RuntimeInspector) Snapshot(ctx context.Context) RuntimeStatus {
 				status.BehaviorExperiences.Enabled++
 			}
 		}
+		if r.engine.pluginHost != nil {
+			status.Plugins = r.engine.pluginHost.Statuses()
+		}
 		if r.engine.tools != nil && r.engine.tools.registry != nil {
 			for _, spec := range r.engine.tools.registry.List() {
 				status.Tools = append(status.Tools, RuntimeToolStatus{
-					Name: spec.Name, Enabled: r.engine.cfg.IsPluginEnabled(spec.Name),
-					PolicyAllowed: r.engine.tools.policy.Allowlist[spec.Name] && r.engine.tools.policy.AllowedRisks[spec.Risk] &&
-						(spec.Idempotency != ToolNonIdempotent || r.engine.tools.policy.AllowSideEffects),
-					Risk: string(spec.Risk), Concurrency: string(spec.Concurrency), Idempotency: string(spec.Idempotency),
+					Name: spec.Name, Enabled: true,
+					PolicyAllowed: r.engine.tools.registry.PolicyAllows(spec.Name, r.engine.tools.policy),
+					Risk:          string(spec.Risk), Concurrency: string(spec.Concurrency), Idempotency: string(spec.Idempotency),
 					TimeoutMillis: int64(spec.Timeout / time.Millisecond),
 				})
 			}
@@ -199,8 +217,17 @@ func (r *RuntimeInspector) Snapshot(ctx context.Context) RuntimeStatus {
 			}
 		}
 	}
-	if r.facts != nil {
-		stats, err := r.facts.Stats(ctx, time.Now())
+	factStore := r.facts
+	if r.engine != nil {
+		pluginStore, pluginAvailable := r.engine.factMemory()
+		if pluginAvailable {
+			factStore = pluginStore
+		} else {
+			factStore = nil
+		}
+	}
+	if factStore != nil {
+		stats, err := factStore.Stats(ctx, time.Now())
 		if err == nil {
 			status.FactMemory.Available = true
 			status.FactMemory.Facts = stats.Facts

@@ -99,6 +99,10 @@ func TestAdminConsoleProxiesFairyConfiguration(t *testing.T) {
 		!strings.Contains(fairy.body, "pipeline-basic") {
 		t.Fatalf("Fairy agent diagnostic status=%d resource=%q method=%q body=%q", diagnostic.Code, fairy.resource, fairy.method, fairy.body)
 	}
+	decisionChains := performRequest(handler, http.MethodGet, "/admin/api/fairy/decision-chains", nil, cookie, false)
+	if decisionChains.Code != http.StatusOK || fairy.resource != "decision-chains" || fairy.method != http.MethodGet || fairy.body != "" {
+		t.Fatalf("Fairy decision chains status=%d resource=%q method=%q body=%q", decisionChains.Code, fairy.resource, fairy.method, fairy.body)
+	}
 	fairy.status = http.StatusTooManyRequests
 	fairy.result = `{"error":"a Fairy model diagnostic is already running"}`
 	busyEvaluation := performRequest(handler, http.MethodPost, "/admin/api/fairy/model-eval", map[string]interface{}{
@@ -119,6 +123,11 @@ func TestFairyHTTPControllerAllowsOnlyDeclaredModelEvaluationMethods(t *testing.
 	for _, method := range []string{http.MethodGet, http.MethodPatch, http.MethodDelete} {
 		if _, _, err := controller.Request(context.Background(), "agent-diagnostic", method, nil); err == nil {
 			t.Fatalf("agent diagnostic method %s was accepted", method)
+		}
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		if _, _, err := controller.Request(context.Background(), "decision-chains", method, nil); err == nil {
+			t.Fatalf("decision-chain method %s was accepted", method)
 		}
 	}
 }

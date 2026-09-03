@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"regexp"
@@ -106,9 +107,15 @@ type AgentRuntime struct {
 	model   ToolAwareModel
 	tools   *ToolRuntime
 	prompts PromptAssembler
+	trace   TraceStore
+	plugins *PluginHost
 }
 
 func NewAgentRuntime(cfg Config, model Model, tools *ToolRuntime) *AgentRuntime {
+	return NewAgentRuntimeWithPluginHost(cfg, model, tools, nil)
+}
+
+func NewAgentRuntimeWithPluginHost(cfg Config, model Model, tools *ToolRuntime, plugins *PluginHost) *AgentRuntime {
 	structured, ok := model.(ToolAwareModel)
 	if !ok {
 		return nil
@@ -120,7 +127,14 @@ func NewAgentRuntime(cfg Config, model Model, tools *ToolRuntime) *AgentRuntime 
 	if tools != nil {
 		digester, _ = tools.trace.(PromptDigester)
 	}
-	return &AgentRuntime{model: structured, tools: tools, prompts: NewPromptAssembler(cfg.SystemPrompt, digester)}
+	var trace TraceStore
+	if tools != nil {
+		trace = tools.trace
+	}
+	return &AgentRuntime{
+		model: structured, tools: tools,
+		prompts: NewPromptAssembler(cfg.SystemPrompt, digester).WithPluginHost(plugins), trace: trace, plugins: plugins,
+	}
 }
 
 func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome, error) {
@@ -157,7 +171,14 @@ func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome,
 		case PlannerCallTools:
 			working = append(working, ChatMessage{Role: "assistant", ToolCalls: transcriptCalls})
 			for index, call := range decision.ToolCalls {
-				result := session.Execute(ctx, ToolCall{Name: call.Name, Arguments: call.Arguments, Step: step})
+				toolCall := ToolCall{Name: call.Name, Arguments: call.Arguments, Step: step}
+				if err := r.emitPluginEvent(ctx, PluginHookBeforeToolExecution, input.ConversationID, &toolCall); err != nil {
+					return AgentOutcome{}, &AgentFailure{Code: AgentFailureUnavailable, cause: err}
+				}
+				result := session.Execute(ctx, toolCall)
+				if err := r.emitPluginEvent(ctx, PluginHookAfterToolExecution, input.ConversationID, &result); err != nil {
+					return AgentOutcome{}, &AgentFailure{Code: AgentFailureUnavailable, cause: err}
+				}
 				if result.Failure != nil && ctx.Err() != nil &&
 					(result.Failure.Code == ToolFailureCancelled || result.Failure.Code == ToolFailureTimeout) {
 					return AgentOutcome{}, ctx.Err()
@@ -183,6 +204,18 @@ func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome,
 	return AgentOutcome{}, &AgentFailure{Code: AgentFailureStepLimit}
 }
 
+func (r *AgentRuntime) emitPluginEvent(ctx context.Context, name PluginHookName, conversationID string, data any) error {
+	if r == nil || r.plugins == nil {
+		return nil
+	}
+	event := &PluginEvent{Name: name, ConversationID: conversationID, Data: data}
+	if scope, ok := turnTraceScopeFromContext(ctx); ok {
+		event.TraceID = scope.TraceID
+		event.TurnID = scope.TurnID
+	}
+	return r.plugins.Emit(ctx, event)
+}
+
 func (r *AgentRuntime) plan(
 	ctx context.Context,
 	reserve func(string) error,
@@ -202,8 +235,12 @@ func (r *AgentRuntime) plan(
 		}
 		decision, transcriptCalls, err := plannerDecisionFromResponse(response)
 		if err == nil {
+			r.appendDecisionTrace(ctx, TracePlannerDecision, "completed", current, response.Text, decision)
 			return decision, transcriptCalls, nil
 		}
+		r.appendDecisionTrace(ctx, TracePlannerDecision, "failed", current, response.Text, map[string]interface{}{
+			"error": err.Error(),
+		})
 		var formatError *plannerDecisionFormatError
 		if repairAttempt == maxPlannerRepairAttempts || !errors.As(err, &formatError) {
 			return PlannerDecision{}, nil, &AgentFailure{Code: AgentFailureInvalidDecision, cause: err}
@@ -256,8 +293,12 @@ func (r *AgentRuntime) reply(ctx context.Context, input AgentInput, intent strin
 		}
 		reply, err := validateAgentReply(response, input.ExpectedReply)
 		if err == nil {
+			r.appendDecisionTrace(ctx, TraceReplyerResult, "completed", current, reply, nil)
 			return AgentOutcome{Reply: reply}, nil
 		}
+		r.appendDecisionTrace(ctx, TraceReplyerResult, "failed", current, response.Text, map[string]interface{}{
+			"error": err.Error(),
+		})
 		if repairAttempt == maxRepairs {
 			return AgentOutcome{}, err
 		}
@@ -303,6 +344,54 @@ func (r *AgentRuntime) complete(ctx context.Context, reserve func(string) error,
 		}
 	}
 	return r.model.CompleteRequest(ctx, request)
+}
+
+func (r *AgentRuntime) appendDecisionTrace(
+	ctx context.Context,
+	eventType TraceEventType,
+	status string,
+	request ModelRequest,
+	content string,
+	detail interface{},
+) {
+	appendAgentDecisionTrace(ctx, r.trace, eventType, status, request, content, detail)
+}
+
+func appendAgentDecisionTrace(
+	ctx context.Context,
+	trace TraceStore,
+	eventType TraceEventType,
+	status string,
+	request ModelRequest,
+	content string,
+	detail interface{},
+) {
+	if trace == nil {
+		return
+	}
+	scope, ok := turnTraceScopeFromContext(ctx)
+	if !ok || scope.TraceID == "" || scope.TurnID == "" {
+		return
+	}
+	var encoded json.RawMessage
+	if detail != nil {
+		value, err := json.Marshal(detail)
+		if err != nil {
+			return
+		}
+		encoded = value
+	}
+	event := TraceEvent{
+		Time: time.Now(), Type: eventType,
+		TraceID: scope.TraceID, TurnID: scope.TurnID, ConversationID: scope.ConversationID,
+		Source: scope.Source, Status: status, TaskID: request.TaskID,
+		Step: request.Step, Repair: request.Repair, Content: content, Detail: encoded,
+	}
+	traceContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := trace.Append(traceContext, event); err != nil {
+		log.Printf("[fairy] append %s trace: %v", eventType, err)
+	}
 }
 
 func (r *AgentRuntime) visibleToolDefinitions(visible map[string]bool) ([]ModelToolDefinition, error) {
@@ -411,6 +500,12 @@ func toolResultForModel(result ToolResult) string {
 type PromptAssembler struct {
 	persona  string
 	digester PromptDigester
+	plugins  *PluginHost
+}
+
+func (p PromptAssembler) WithPluginHost(plugins *PluginHost) PromptAssembler {
+	p.plugins = plugins
+	return p
 }
 
 type PromptDigester interface {
@@ -438,6 +533,9 @@ func (p PromptAssembler) PlannerMessages(input AgentInput, tools []ModelToolDefi
 		{ID: "expression", Version: "v1", Content: expressionPrompt(input.ExpressionStyle)},
 		{ID: "runtime_context", Version: "v1", Content: runtimeContextPrompt(input.Now, input.MessageType)},
 	}
+	if p.plugins != nil {
+		sections = append(sections, p.plugins.PromptSections(context.Background())...)
+	}
 	return append([]ChatMessage{{Role: "system", Content: renderPromptSections(sections)}}, cloneChatMessages(input.History)...)
 }
 
@@ -451,6 +549,9 @@ func (p PromptAssembler) ReplyerMessages(input AgentInput, intent string, toolCo
 		{ID: "task", Version: "replyer-v1", Content: replyerTaskPrompt},
 		{ID: "expression", Version: "v1", Content: expressionPrompt(input.ExpressionStyle)},
 		{ID: "runtime_context", Version: "v1", Content: runtimeContextPrompt(input.Now, input.MessageType)},
+	}
+	if p.plugins != nil {
+		sections = append(sections, p.plugins.PromptSections(context.Background())...)
 	}
 	messages := []ChatMessage{{Role: "system", Content: renderPromptSections(sections)}}
 	if strings.TrimSpace(intent) != "" || len(toolContext) > 0 {

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
+import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
   test(
@@ -11,12 +12,20 @@ void main() {
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
+      final sentPayloads = <Map<String, dynamic>>[];
+      var sendCount = 0;
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
         sockets.add(socket);
         socket.listen((raw) {
           final request = jsonDecode(raw as String) as Map<String, dynamic>;
           final action = request['action'];
+          if (action == 'send_message') {
+            sendCount++;
+            sentPayloads.add(
+              Map<String, dynamic>.from(request['params'] as Map),
+            );
+          }
           final data = switch (action) {
             'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
             'get_friends' => [
@@ -46,7 +55,7 @@ void main() {
               'echo': request['echo'],
             }),
           );
-          if (action == 'send_message') {
+          if (action == 'send_message' && sendCount == 1) {
             Timer(const Duration(milliseconds: 10), () {
               socket.add(
                 jsonEncode({
@@ -99,6 +108,24 @@ void main() {
       expect((await ordered).map((message) => message.id), [
         'msg_100',
         'msg_101',
+      ]);
+
+      await source.sendComposedTextMessage(
+        conversationId: 'private_me_fairy',
+        message: const ImComposedText([
+          ImComposedTextPart.mention(userId: 'fairy', label: '@Fairy'),
+          ImComposedTextPart.text(' hello'),
+        ]),
+      );
+      expect(sentPayloads.last['message'], [
+        {
+          'type': 'at',
+          'data': {'qq': 'fairy'},
+        },
+        {
+          'type': 'text',
+          'data': {'text': ' hello'},
+        },
       ]);
     },
   );

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/routes/index.dart';
 import '../../assets/app_assets.dart';
@@ -18,6 +19,7 @@ import '../widgets/contacts_panel.dart';
 import '../widgets/im_chat_room_view.dart';
 import '../widgets/im_conversation_avatar.dart';
 import '../widgets/im_group_details_panel.dart';
+import '../widgets/im_profile_card_panel.dart';
 
 class ImHomePage extends StatefulWidget {
   const ImHomePage({this.initialConversationId, super.key});
@@ -37,7 +39,11 @@ class _ImHomePageState extends State<ImHomePage>
   ImConversation? _pendingConversation;
   bool _showContacts = false;
   double _dragOffset = 0.0;
+  bool _compactHeaderAtBottom = false;
   late final AnimationController _backgroundController;
+
+  static const _compactHeaderAtBottomKey =
+      'im_home_compact_header_at_bottom_v1';
 
   /// Cached snapshot data so switching conversations doesn't flash empty.
   final _conversationCache = <String, List<ImConversation>>{};
@@ -52,6 +58,7 @@ class _ImHomePageState extends State<ImHomePage>
       vsync: this,
       duration: const Duration(seconds: 30),
     )..repeat();
+    unawaited(_restoreCompactHeaderPosition());
   }
 
   @override
@@ -138,6 +145,22 @@ class _ImHomePageState extends State<ImHomePage>
     return user?.displayName ?? 'Unknown';
   }
 
+  Future<void> _restoreCompactHeaderPosition() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _compactHeaderAtBottom =
+          preferences.getBool(_compactHeaderAtBottomKey) ?? false;
+    });
+  }
+
+  Future<void> _toggleCompactHeaderPosition() async {
+    final next = !_compactHeaderAtBottom;
+    setState(() => _compactHeaderAtBottom = next);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_compactHeaderAtBottomKey, next);
+  }
+
   ImMessage? _findMessage(String id, List<ImMessage> messages) {
     // Exact match first.
     try {
@@ -168,6 +191,45 @@ class _ImHomePageState extends State<ImHomePage>
             repository: repository,
             onLeft: _clearSelection,
           ),
+    );
+  }
+
+  Future<void> _openMemberProfile(
+    ImRepository repository,
+    ImConversation conversation,
+    String userId,
+  ) => showZzzModalPanel<void>(
+    context: context,
+    builder:
+        (_) => ImProfileCardPanel(
+          userId: userId,
+          groupId: conversation.id,
+          repository: repository,
+        ),
+  );
+
+  Future<void> _sendComposedMessage(
+    ImRepository repository,
+    ImConversation conversation,
+    ImComposedText message, {
+    String? replyToMessageId,
+  }) async {
+    final text = message.plainText;
+    await ImScope.interactionsOf(
+      context,
+    ).onSendMessage(conversation: conversation, text: text);
+    final link = message.hasMentions ? null : ImLinkShare.tryParse(text);
+    if (link != null && replyToMessageId == null) {
+      await repository.sendLinkMessage(
+        conversationId: conversation.id,
+        link: link,
+      );
+      return;
+    }
+    await repository.sendComposedTextMessage(
+      conversationId: conversation.id,
+      message: message,
+      replyToMessageId: replyToMessageId,
     );
   }
 
@@ -278,6 +340,12 @@ class _ImHomePageState extends State<ImHomePage>
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final isWide = constraints.maxWidth >= 860;
+                if (!isWide && _selectedConversationId == null) {
+                  return Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _buildCompactInboxLayout(repository),
+                  );
+                }
                 return Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -364,6 +432,21 @@ class _ImHomePageState extends State<ImHomePage>
                 width: 24,
                 height: 24,
                 color: ZzzColors.yellow,
+              ),
+            ),
+          if (!isWide && _selectedConversationId == null)
+            IconButton(
+              key: const ValueKey('toggle-mobile-header-position'),
+              tooltip:
+                  _compactHeaderAtBottom
+                      ? 'Move navigation to top'
+                      : 'Move navigation to bottom',
+              onPressed: _toggleCompactHeaderPosition,
+              icon: Icon(
+                _compactHeaderAtBottom
+                    ? Icons.vertical_align_top_rounded
+                    : Icons.vertical_align_bottom_rounded,
+                color: Colors.white70,
               ),
             ),
           IconButton(
@@ -471,6 +554,18 @@ class _ImHomePageState extends State<ImHomePage>
     if (!mounted || manager.permission != ImPushPermission.enabled) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Notifications enabled on this device.')),
+    );
+  }
+
+  Widget _buildCompactInboxLayout(ImRepository repository) {
+    final header = _buildAppHeader(isWide: false);
+    final inbox = Expanded(child: _buildCompactLayout(repository));
+    final notificationBanner = _buildPushNotificationBanner();
+    return Column(
+      children:
+          _compactHeaderAtBottom
+              ? [notificationBanner, inbox, const SizedBox(height: 12), header]
+              : [header, const SizedBox(height: 12), notificationBanner, inbox],
     );
   }
 
@@ -674,33 +769,36 @@ class _ImHomePageState extends State<ImHomePage>
                       conv.isGroup
                           ? () => _openGroupManagement(repository, conv)
                           : null,
+                  onMemberTap:
+                      conv.isGroup
+                          ? (userId) =>
+                              _openMemberProfile(repository, conv, userId)
+                          : null,
                   onSend: (text) async {
-                    await ImScope.interactionsOf(
-                      context,
-                    ).onSendMessage(conversation: conv, text: text);
-                    final link = ImLinkShare.tryParse(text);
-                    if (link != null) {
-                      await repository.sendLinkMessage(
-                        conversationId: conv.id,
-                        link: link,
-                      );
-                    } else {
-                      await repository.sendTextMessage(
-                        conversationId: conv.id,
-                        text: text,
-                      );
-                    }
+                    await _sendComposedMessage(
+                      repository,
+                      conv,
+                      ImComposedText.plain(text),
+                    );
                   },
+                  onSendComposed:
+                      (message) =>
+                          _sendComposedMessage(repository, conv, message),
                   onReply: (text, replyTo) async {
-                    await ImScope.interactionsOf(
-                      context,
-                    ).onSendMessage(conversation: conv, text: text);
-                    await repository.sendTextMessage(
-                      conversationId: conv.id,
-                      text: text,
+                    await _sendComposedMessage(
+                      repository,
+                      conv,
+                      ImComposedText.plain(text),
                       replyToMessageId: replyTo.id,
                     );
                   },
+                  onReplyComposed:
+                      (message, replyTo) => _sendComposedMessage(
+                        repository,
+                        conv,
+                        message,
+                        replyToMessageId: replyTo.id,
+                      ),
                   onSticker: (sticker) async {
                     await repository.sendStickerMessage(
                       conversationId: conv.id,

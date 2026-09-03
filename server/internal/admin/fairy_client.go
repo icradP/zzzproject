@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const maxFairyAdminResponseBytes = 256 * 1024
+const maxFairyAdminResponseBytes = 32 * 1024 * 1024
 const maxFairyAdminRequestBytes = 256 * 1024
 
 type FairyController interface {
@@ -53,11 +53,12 @@ func NewFairyHTTPController(rawURL, token string) (*FairyHTTPController, error) 
 }
 
 func (c *FairyHTTPController) Request(ctx context.Context, resource, method string, body []byte) (int, []byte, error) {
-	if resource != "config" && resource != "model-probe" && resource != "model-eval" && resource != "agent-diagnostic" ||
+	if resource != "config" && resource != "model-probe" && resource != "model-eval" && resource != "agent-diagnostic" && resource != "decision-chains" ||
 		resource == "config" && method != http.MethodGet && method != http.MethodPatch ||
 		resource == "model-probe" && method != http.MethodPost ||
 		resource == "model-eval" && method != http.MethodGet && method != http.MethodPost ||
-		resource == "agent-diagnostic" && method != http.MethodPost {
+		resource == "agent-diagnostic" && method != http.MethodPost ||
+		resource == "decision-chains" && method != http.MethodGet {
 		return 0, nil, fmt.Errorf("unsupported Fairy admin method")
 	}
 	request, err := http.NewRequestWithContext(ctx, method, c.endpoint+"/"+resource, bytes.NewReader(body))

@@ -105,7 +105,7 @@ func (s *ConversationScheduler) Submit(ctx context.Context, turn scheduledTurn) 
 	if s.pending >= s.maxPending && !priorityBypass {
 		pending := s.pending
 		s.mu.Unlock()
-		s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionRejected, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "global_pending_limit", Pending: pending})
+		s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionRejected, TraceID: traceID, TurnID: turnID, ConversationID: turn.conversationID, Source: turn.source, Status: "global_pending_limit", Pending: pending})
 		return false, ErrPendingLimit
 	}
 	queueDepth := 0
@@ -115,7 +115,7 @@ func (s *ConversationScheduler) Submit(ctx context.Context, turn scheduledTurn) 
 	if queueDepth >= s.maxConversationPending && !priorityBypass {
 		pending := s.pending
 		s.mu.Unlock()
-		s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionRejected, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "conversation_pending_limit", QueueDepth: queueDepth, Pending: pending})
+		s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionRejected, TraceID: traceID, TurnID: turnID, ConversationID: turn.conversationID, Source: turn.source, Status: "conversation_pending_limit", QueueDepth: queueDepth, Pending: pending})
 		return false, ErrConversationPending
 	}
 	if !turn.retryable {
@@ -126,7 +126,7 @@ func (s *ConversationScheduler) Submit(ctx context.Context, turn scheduledTurn) 
 		}
 		if !claimed {
 			s.mu.Unlock()
-			s.appendTrace(TraceEvent{Time: now, Type: TraceIngressDuplicate, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "ignored"})
+			s.appendTrace(TraceEvent{Time: now, Type: TraceIngressDuplicate, TraceID: traceID, TurnID: turnID, ConversationID: turn.conversationID, Source: turn.source, Status: "ignored"})
 			return false, nil
 		}
 	}
@@ -153,7 +153,7 @@ func (s *ConversationScheduler) Submit(ctx context.Context, turn scheduledTurn) 
 		startActor = true
 	}
 	s.mu.Unlock()
-	s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionAccepted, TraceID: traceID, ConversationID: turn.conversationID, Source: turn.source, Status: "admitted", QueueDepth: queueDepth, Pending: pending})
+	s.appendTrace(TraceEvent{Time: now, Type: TraceAdmissionAccepted, TraceID: traceID, TurnID: turnID, ConversationID: turn.conversationID, Source: turn.source, Status: "admitted", QueueDepth: queueDepth, Pending: pending})
 	if startActor {
 		go s.runConversation(turn.conversationID, queue)
 	}

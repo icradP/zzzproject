@@ -3,7 +3,9 @@ package fairy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -37,6 +39,9 @@ type anthropicContentBlock struct {
 	Input     json.RawMessage       `json:"input,omitempty"`
 	ToolUseID string                `json:"tool_use_id,omitempty"`
 	Content   string                `json:"content,omitempty"`
+	Thinking  string                `json:"thinking,omitempty"`
+	Signature string                `json:"signature,omitempty"`
+	Data      string                `json:"data,omitempty"`
 	Source    *anthropicImageSource `json:"source,omitempty"`
 }
 
@@ -143,7 +148,10 @@ func (r *ModelRouter) completeAnthropicCompatibleAttempt(
 		return modelCompletion{}, &ModelFailure{Code: ModelFailureInvalidResponse, FallbackAllowed: true, cause: err}
 	}
 	return modelCompletion{
-		Response: ModelResponse{Text: limitRunes(result.Text, 4000), ToolCalls: result.ToolCalls},
+		Response: ModelResponse{
+			Text: limitRunes(result.Text, 4000), ToolCalls: result.ToolCalls,
+			Reasoning: result.Reasoning,
+		},
 		Usage: ModelUsage{
 			InputTokens: validUsageTokens(decoded.Usage.InputTokens), OutputTokens: validUsageTokens(decoded.Usage.OutputTokens),
 		},
@@ -241,6 +249,7 @@ func appendAnthropicMessage(messages []anthropicMessage, role string, blocks []a
 func modelResponseFromAnthropic(blocks []anthropicContentBlock) (ModelResponse, error) {
 	texts := make([]string, 0, 1)
 	calls := make([]ModelToolCall, 0, 1)
+	reasoning := make([]ModelReasoningBlock, 0, 1)
 	for _, block := range blocks {
 		switch block.Type {
 		case "text":
@@ -257,11 +266,24 @@ func modelResponseFromAnthropic(blocks []anthropicContentBlock) (ModelResponse, 
 			})
 		case "refusal":
 			return ModelResponse{}, errors.New("Anthropic response was refused")
-		case "thinking", "redacted_thinking":
-			// Reasoning blocks are provider metadata and never become user-visible content.
+		case "thinking":
+			if block.Thinking != "" {
+				reasoning = append(reasoning, ModelReasoningBlock{
+					Text: block.Thinking, Signature: block.Signature,
+				})
+			}
+		case "redacted_thinking":
+			signature := block.Signature
+			if signature == "" && block.Data != "" {
+				digest := sha256.Sum256([]byte(block.Data))
+				signature = "sha256:" + hex.EncodeToString(digest[:])
+			}
+			reasoning = append(reasoning, ModelReasoningBlock{
+				Signature: signature, Redacted: true,
+			})
 		default:
 			return ModelResponse{}, errors.New("unsupported Anthropic response block")
 		}
 	}
-	return ModelResponse{Text: strings.Join(texts, "\n"), ToolCalls: calls}, nil
+	return ModelResponse{Text: strings.Join(texts, "\n"), ToolCalls: calls, Reasoning: reasoning}, nil
 }

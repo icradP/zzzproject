@@ -68,6 +68,17 @@ class SourceBackedRepository implements ImRepository {
   );
 
   @override
+  Future<ImMessage> sendComposedTextMessage({
+    required String conversationId,
+    required ImComposedText message,
+    String? replyToMessageId,
+  }) => _source.sendComposedTextMessage(
+    conversationId: conversationId,
+    message: message,
+    replyToMessageId: replyToMessageId,
+  );
+
+  @override
   Future<ImMessage> sendStickerMessage({
     required String conversationId,
     required ImStickerReference sticker,

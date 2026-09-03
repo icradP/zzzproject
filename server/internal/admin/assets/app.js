@@ -13,6 +13,10 @@ const state = {
   fairyDirty: false,
   fairyEvaluation: null,
   fairyEvaluationPollTimer: null,
+  fairySection: "runtime",
+  fairyDecisionChains: [],
+  fairyDecisionPollTimer: null,
+  selectedFairyTurn: null,
   selectedGroup: null,
   selectedMessage: null,
   selectedMedia: null,
@@ -1415,6 +1419,7 @@ function renderFairy(payload) {
   document.querySelector("#fairy-zzz-timeout").value = config.zzz_request_timeout_seconds ?? 15;
   setFairyDirty(false);
 
+  const runtimePlugins = new Map((payload.runtime?.plugins || []).map((plugin) => [plugin.id, plugin]));
   const pluginRows = plugins.map((plugin) => {
     const row = document.createElement("label");
     row.className = "plugin-row";
@@ -1423,6 +1428,11 @@ function renderFairy(payload) {
       element("strong", "", plugin.name || plugin.id),
       element("small", "", `${plugin.description || ""} ${plugin.command || ""}`.trim()),
     );
+	const runtimePlugin = runtimePlugins.get(plugin.id);
+	if (runtimePlugin) {
+		const stateLabel = runtimePlugin.state === "running" ? "Running" : runtimePlugin.state === "disabled" ? "Disabled" : "Unavailable";
+		identity.append(element("small", "plugin-runtime-label", `${stateLabel} · ${runtimePlugin.isolation || "in_process"} · v${runtimePlugin.version || "-"}`));
+	}
     const toggle = document.createElement("input");
     toggle.type = "checkbox";
     toggle.role = "switch";
@@ -1679,6 +1689,174 @@ function renderFairyRuntime(runtime, configStatus) {
   document.querySelector(".runtime-tool-table").hidden = tools.length === 0;
 }
 
+const fairyDecisionLabels = {
+  admission_accepted: "Admitted",
+  admission_rejected: "Admission rejected",
+  ingress_duplicate: "Duplicate ignored",
+  turn_started: "Turn started",
+  gate_decision: "Gate decision",
+  model_attempt: "Model attempt",
+  model_reasoning: "Provider thinking",
+  planner_decision: "Planner decision",
+  tool_call: "Tool call and result",
+  replyer_result: "Replyer result",
+  turn_completed: "Turn completed",
+  turn_cancelled: "Turn cancelled",
+  turn_timed_out: "Turn timed out",
+};
+
+function fairyDecisionStatusClass(status) {
+  if (["completed", "admitted", "trigger"].includes(status)) return "enabled";
+  if (["running", "wait", "ignored"].includes(status)) return "warning";
+  if (["failed", "deadline_exceeded", "runtime_cancelled", "user_cancelled"].includes(status)) return "error";
+  return "offline";
+}
+
+function fairyDecisionMetadata(event) {
+  const parts = [];
+  if (event.gate_action) parts.push(`gate ${event.gate_action}${event.gate_reason ? ` / ${event.gate_reason}` : ""}`);
+  if (Number(event.queue_depth || 0) > 0 || Number(event.pending || 0) > 0) parts.push(`${event.queue_depth || 0} queued / ${event.pending || 0} pending`);
+  if (event.task_id) parts.push(event.task_id);
+  if (event.provider_id || event.model_id) parts.push([event.provider_id, event.model_id].filter(Boolean).join(" / "));
+  if (Number(event.step || 0) > 0) parts.push(`step ${event.step}`);
+  if (Number(event.attempt || 0) > 0) parts.push(`attempt ${event.attempt}`);
+  if (event.tool_name) parts.push(event.tool_name);
+  if (event.tool_policy || event.tool_risk) parts.push([event.tool_policy, event.tool_risk].filter(Boolean).join(" / "));
+  if (event.repair) parts.push("repair");
+  if (event.fallback) parts.push("fallback");
+  if (Number(event.duration_ms || 0) > 0) parts.push(formatMilliseconds(event.duration_ms));
+  if (Number(event.input_tokens || 0) > 0 || Number(event.output_tokens || 0) > 0) parts.push(`${event.input_tokens || 0} in / ${event.output_tokens || 0} out`);
+  if (Number(event.cost_microusd || 0) > 0) parts.push(formatMicroUSD(event.cost_microusd));
+  if (event.prompt_version) parts.push(`prompt ${event.prompt_version}`);
+  if (event.failure_code) parts.push(event.failure_code);
+  return parts.join(" · ");
+}
+
+function renderFairyDecisionDetail(chain) {
+  const target = document.querySelector("#fairy-decision-detail");
+  if (!chain) {
+    target.replaceChildren();
+    return;
+  }
+  const heading = element("div", "decision-detail-heading");
+  const identity = element("div", "");
+  identity.append(
+    element("strong", "", `Turn ${String(chain.turn_id || "-").slice(-12)}`),
+    element("span", "mono", `${chain.conversation_ref || "-"} · ${formatDate(chain.started_at)}`),
+  );
+  heading.append(identity, element("span", `status-badge ${fairyDecisionStatusClass(chain.status)}`, chain.status || "unknown"));
+
+  const timeline = element("div", "decision-timeline");
+  (chain.events || []).forEach((event) => {
+    const item = element("article", `decision-event decision-event-${event.type || "unknown"}`);
+    const eventHeading = element("div", "decision-event-heading");
+    const title = element("div", "");
+    title.append(
+      element("strong", "", fairyDecisionLabels[event.type] || event.type || "Event"),
+      element("time", "", formatDate(event.occurred_at)),
+    );
+    eventHeading.append(title, element("span", `status-badge ${fairyDecisionStatusClass(event.status)}`, event.status || "event"));
+    item.append(eventHeading);
+    const metadata = fairyDecisionMetadata(event);
+    if (metadata) item.append(element("p", "decision-event-meta", metadata));
+    if (event.redacted) {
+      item.append(element("div", "decision-redacted", "Provider hidden / 已隐藏"));
+    } else if (event.content) {
+      item.append(element("pre", "decision-content", event.content));
+    }
+    if (event.signature) {
+      item.append(element("p", "decision-signature mono", `Signature: ${event.signature}`));
+    }
+    if (event.detail !== undefined && event.detail !== null) {
+      let detail = "";
+      try {
+        detail = JSON.stringify(event.detail, null, 2);
+      } catch (_) {
+        detail = String(event.detail);
+      }
+      if (detail && detail !== event.content) item.append(element("pre", "decision-content decision-detail-json", detail));
+    }
+    timeline.append(item);
+  });
+  target.replaceChildren(heading, timeline);
+}
+
+function selectFairyDecisionChain(turnID) {
+  state.selectedFairyTurn = turnID;
+  document.querySelectorAll(".decision-chain-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.turnId === turnID);
+  });
+  renderFairyDecisionDetail(state.fairyDecisionChains.find((chain) => chain.turn_id === turnID));
+}
+
+function renderFairyDecisionChains(payload) {
+  const chains = Array.isArray(payload?.chains) ? payload.chains : [];
+  state.fairyDecisionChains = chains;
+  if (!chains.some((chain) => chain.turn_id === state.selectedFairyTurn)) {
+    state.selectedFairyTurn = chains[0]?.turn_id || null;
+  }
+  const rows = chains.map((chain) => {
+    const button = element("button", "decision-chain-button");
+    button.type = "button";
+    button.dataset.turnId = chain.turn_id || "";
+    button.setAttribute("role", "listitem");
+    const top = element("span", "decision-chain-topline");
+    top.append(
+      element("strong", "", `Turn ${String(chain.turn_id || "-").slice(-10)}`),
+      element("span", `status-badge ${fairyDecisionStatusClass(chain.status)}`, chain.status || "unknown"),
+    );
+    button.append(
+      top,
+      element("span", "mono", String(chain.conversation_ref || "-").slice(0, 28)),
+      element("time", "", formatDate(chain.updated_at)),
+      element("span", "decision-event-count", `${(chain.events || []).length} events`),
+    );
+    button.addEventListener("click", () => selectFairyDecisionChain(chain.turn_id));
+    return button;
+  });
+  document.querySelector("#fairy-decision-list").replaceChildren(...rows);
+  document.querySelector("#fairy-decisions-empty").hidden = chains.length > 0;
+  document.querySelector(".decision-browser").hidden = chains.length === 0;
+  const badge = document.querySelector("#fairy-decision-state");
+  badge.textContent = payload?.unavailable ? "Unavailable" : `${chains.length} recent turns`;
+  badge.className = `status-badge ${payload?.unavailable ? "error" : chains.length ? "enabled" : "offline"}`;
+  selectFairyDecisionChain(state.selectedFairyTurn);
+}
+
+async function loadFairyDecisionChains({ silent = false } = {}) {
+  try {
+    const payload = await api("fairy/decision-chains");
+    renderFairyDecisionChains(payload);
+  } catch (error) {
+    renderFairyDecisionChains({ chains: [], unavailable: true });
+    if (!silent) showToast(error.message, true);
+  }
+}
+
+function scheduleFairyDecisionPoll() {
+  window.clearTimeout(state.fairyDecisionPollTimer);
+  state.fairyDecisionPollTimer = null;
+  if (state.activeView !== "fairy" || state.fairySection !== "decisions") return;
+  state.fairyDecisionPollTimer = window.setTimeout(async () => {
+    await loadFairyDecisionChains({ silent: true });
+    scheduleFairyDecisionPoll();
+  }, 5000);
+}
+
+function setFairySection(section) {
+  state.fairySection = section;
+  document.querySelectorAll(".fairy-section-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.fairySection === section);
+  });
+  document.querySelectorAll("[data-fairy-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.fairyPanel !== section;
+  });
+  const saveActions = document.querySelector("[data-fairy-save-actions]");
+  saveActions.hidden = section === "runtime" || section === "decisions";
+  if (section === "decisions") loadFairyDecisionChains({ silent: true });
+  scheduleFairyDecisionPoll();
+}
+
 async function runFairyAgentDiagnostic() {
   const button = document.querySelector("#fairy-agent-diagnostic");
   const result = document.querySelector("#fairy-agent-diagnostic-result");
@@ -1704,9 +1882,15 @@ async function runFairyAgentDiagnostic() {
 
 async function loadFairy() {
   try {
-    const [payload, evaluation] = await Promise.all([api("fairy/config"), api("fairy/model-eval")]);
+    const [payload, evaluation, decisions] = await Promise.all([
+      api("fairy/config"),
+      api("fairy/model-eval"),
+      api("fairy/decision-chains").catch(() => ({ chains: [], unavailable: true })),
+    ]);
     renderFairy(payload);
     renderFairyModelEvaluation(evaluation);
+    renderFairyDecisionChains(decisions);
+    setFairySection(state.fairySection);
     const configState = payload.config_status?.state;
     const saveNote = document.querySelector("#fairy-save-note");
     if (configState === "restart_pending") {
@@ -1734,6 +1918,8 @@ async function setActiveView(view) {
   if (view !== "fairy") {
     window.clearTimeout(state.fairyEvaluationPollTimer);
     state.fairyEvaluationPollTimer = null;
+	window.clearTimeout(state.fairyDecisionPollTimer);
+	state.fairyDecisionPollTimer = null;
   }
   state.activeView = view;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
@@ -1800,6 +1986,8 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
 
 document.querySelector("#refresh-button").addEventListener("click", refreshActiveView);
 document.querySelectorAll(".nav-button").forEach((button) => button.addEventListener("click", () => setActiveView(button.dataset.view)));
+document.querySelectorAll(".fairy-section-button").forEach((button) => button.addEventListener("click", () => setFairySection(button.dataset.fairySection)));
+document.querySelector("#fairy-refresh-decisions").addEventListener("click", () => loadFairyDecisionChains());
 document.querySelector("#user-search").addEventListener("input", renderUsers);
 document.querySelector("#report-search").addEventListener("input", renderReports);
 document.querySelector("#group-search").addEventListener("input", renderGroups);

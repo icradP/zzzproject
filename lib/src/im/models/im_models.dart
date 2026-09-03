@@ -126,6 +126,51 @@ class ImLocationShare {
   bool get hasCoordinates => latitude != null && longitude != null;
 }
 
+/// A user-authored text message split into visible text and semantic mentions.
+///
+/// Sources that support message segments can send mentions as native `at`
+/// segments. Other sources fall back to [plainText] without losing what the
+/// author saw in the composer.
+class ImComposedText {
+  const ImComposedText(this.parts);
+
+  factory ImComposedText.plain(String text) =>
+      ImComposedText([ImComposedTextPart.text(text)]);
+
+  final List<ImComposedTextPart> parts;
+
+  String get plainText => parts.map((part) => part.text).join();
+
+  bool get hasMentions => parts.any((part) => part.isMention);
+
+  ImComposedText mapMentionUserIds(String Function(String userId) transform) {
+    return ImComposedText([
+      for (final part in parts)
+        part.isMention
+            ? ImComposedTextPart.mention(
+              userId: transform(part.mentionedUserId!),
+              label: part.text,
+            )
+            : part,
+    ]);
+  }
+}
+
+class ImComposedTextPart {
+  const ImComposedTextPart.text(this.text) : mentionedUserId = null;
+
+  const ImComposedTextPart.mention({
+    required String userId,
+    required String label,
+  }) : text = label,
+       mentionedUserId = userId;
+
+  final String text;
+  final String? mentionedUserId;
+
+  bool get isMention => mentionedUserId != null;
+}
+
 /// Stable reference to an application-bundled sticker asset.
 ///
 /// The version is part of the identity so catalog updates can keep rendering

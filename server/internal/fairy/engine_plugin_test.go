@@ -3,6 +3,7 @@ package fairy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -85,12 +86,38 @@ func TestEngineMarksOnlySuccessfulModelRepliesForFeedback(t *testing.T) {
 	engine := NewEngine(cfg, state, &fakeModel{response: "model reply"})
 	messenger := &fakeMessenger{}
 	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "hello"))
-	if reply := messenger.lastReply(); reply.text != "model reply" || !reply.feedbackEligible {
+	if reply := messenger.lastReply(); reply.text != "model reply" || !reply.feedbackEligible || reply.messageID != "" {
 		t.Fatalf("model reply feedback eligibility = %#v", reply)
 	}
 	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/fairy help"))
 	if reply := messenger.lastReply(); !strings.Contains(reply.text, "Fairy 可用指令") || reply.feedbackEligible {
 		t.Fatalf("command reply feedback eligibility = %#v", reply)
+	}
+}
+
+func TestEngineQuotesGroupRepliesButNotPrivateReplies(t *testing.T) {
+	cfg := testConfig(t)
+	state, err := OpenStateStore(cfg.StateFile, cfg.GroupDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(cfg, state, &fakeModel{response: "reply"})
+	messenger := &fakeMessenger{}
+
+	privateEvent := testMessage("private_alice_fairy", "private", "alice", "hello")
+	engine.HandleMessage(context.Background(), messenger, privateEvent)
+	if reply := messenger.lastReply(); reply.messageID != "" {
+		t.Fatalf("private reply unexpectedly quoted %q", reply.messageID)
+	}
+
+	groupEvent := testMessage("group_one", "group", "alice", "@Fairy hello")
+	groupEvent.Message = []protocol.MessageSegment{protocol.AtSegment("fairy"), protocol.TextSegment(" hello")}
+	if err := state.SetGroupEnabled(groupEvent.ConversationID, true); err != nil {
+		t.Fatal(err)
+	}
+	engine.HandleMessage(context.Background(), messenger, groupEvent)
+	if reply := messenger.lastReply(); reply.messageID != groupEvent.MessageID {
+		t.Fatalf("group reply quote = %q, want %q", reply.messageID, groupEvent.MessageID)
 	}
 }
 
@@ -555,6 +582,61 @@ func TestEngineHonorsDisabledPlugin(t *testing.T) {
 	engine.HandleMessage(context.Background(), messenger, testMessage("private_alice_fairy", "private", "alice", "/zzz 123456789"))
 	if requests != 0 || !strings.Contains(messenger.lastReply().text, "已由服务器管理员停用") {
 		t.Fatalf("disabled plugin requests=%d reply=%q", requests, messenger.lastReply().text)
+	}
+}
+
+func TestEngineHonorsDisabledMemoryPlugins(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.PluginEnabled[ContextMemoryPluginID] = false
+	cfg.PluginEnabled[FactMemoryPluginID] = false
+	cfg.PluginEnabled[SelfCognitionPluginID] = false
+	state, err := OpenStateStore(cfg.StateFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := OpenSQLiteFactMemoryStore(cfg.FactDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer facts.Close()
+	engine := NewEngineWithFactMemory(cfg, state, &fakeModel{response: "reply"}, nil, facts)
+	messenger := &fakeMessenger{}
+	conversationID := "private_alice_fairy"
+	disabledScope := factScopeForEvent(testMessage(conversationID, "private", "alice", "scope"))
+	contextBefore := state.ContextEnabled(conversationID)
+	factsBefore := state.FactMemoryEnabled(disabledScope)
+
+	for index, command := range []string{
+		"/fairy memory on",
+		"/fairy facts on",
+		"/fairy remember 不应保存",
+		"/fairy forget all",
+	} {
+		event := testMessage(conversationID, "private", "alice", command)
+		event.MessageID = fmt.Sprintf("disabled_memory_%d", index)
+		engine.HandleMessage(context.Background(), messenger, event)
+		if !strings.Contains(messenger.lastReply().text, "插件已由服务器管理员停用") {
+			t.Fatalf("command %q reply = %q", command, messenger.lastReply().text)
+		}
+	}
+	if state.ContextEnabled(conversationID) != contextBefore || state.FactMemoryEnabled(disabledScope) != factsBefore {
+		t.Fatal("disabled memory command changed persisted state")
+	}
+
+	engine.HandleMessage(context.Background(), messenger, testMessage(conversationID, "private", "alice", "/fairy help"))
+	help := messenger.lastReply().text
+	if strings.Contains(help, "/fairy memory on|off") || strings.Contains(help, "/fairy remember") || !strings.Contains(help, "服务器未启用") {
+		t.Fatalf("disabled plugin help = %q", help)
+	}
+	engine.HandleMessage(context.Background(), messenger, testMessage(conversationID, "private", "alice", "/fairy status"))
+	status := messenger.lastReply().text
+	if !strings.Contains(status, "临时记忆插件未启用") || !strings.Contains(status, "事实记忆插件未启用") || !strings.Contains(status, "自我认知插件未启用") {
+		t.Fatalf("disabled plugin status = %q", status)
+	}
+	engine.HandleMessage(context.Background(), messenger, testMessage(conversationID, "private", "alice", "/fairy privacy"))
+	privacy := messenger.lastReply().text
+	if !strings.Contains(privacy, "临时记忆插件当前未启用") || !strings.Contains(privacy, "事实记忆插件当前未启用") {
+		t.Fatalf("disabled plugin privacy = %q", privacy)
 	}
 }
 

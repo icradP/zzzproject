@@ -36,6 +36,9 @@ class ImChatRoomView extends StatefulWidget {
     this.onForward,
     this.onPoke,
     this.onLocation,
+    this.onSendComposed,
+    this.onReplyComposed,
+    this.onMemberTap,
     this.onLoadOlder,
     this.onManageGroup,
     this.onBack,
@@ -51,6 +54,10 @@ class ImChatRoomView extends StatefulWidget {
   /// Look up a quoted message by id across all loaded messages.
   final ImMessage? Function(String messageId)? resolveMessage;
   final Future<void> Function(String text, ImMessage replyTo)? onReply;
+  final Future<void> Function(ImComposedText message)? onSendComposed;
+  final Future<void> Function(ImComposedText message, ImMessage replyTo)?
+  onReplyComposed;
+  final ValueChanged<String>? onMemberTap;
   final Future<void> Function(ImMessage message)? onRecall;
   final Future<void> Function(ImMessage message, String emojiId, bool remove)?
   onReact;
@@ -85,6 +92,11 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   String? _draftOwnerId;
   Timer? _draftSaveTimer;
   late bool _showMessageStatus;
+  List<_MentionCandidate> _mentionCandidates = const [];
+  final List<_MentionInsertion> _mentionInsertions = [];
+  int? _mentionStart;
+  String _mentionQuery = '';
+  int _mentionLoadGeneration = 0;
 
   @override
   void initState() {
@@ -96,9 +108,11 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     );
     _canLoadOlder = widget.onLoadOlder != null;
     _scrollController.addListener(_handleScroll);
-    _composerController.addListener(_scheduleDraftSave);
+    _composerController.addListener(_handleComposerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _scrollToBottom();
+      if (!mounted) return;
+      _scrollToBottom();
+      unawaited(_loadMentionCandidates());
     });
   }
 
@@ -128,7 +142,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       );
     }
     _scrollController.removeListener(_handleScroll);
-    _composerController.removeListener(_scheduleDraftSave);
+    _composerController.removeListener(_handleComposerChanged);
     _composerController.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
@@ -152,7 +166,12 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       _showAttach = false;
       _showStickers = false;
       _replyingTo = null;
+      _mentionCandidates = const [];
+      _mentionInsertions.clear();
+      _mentionStart = null;
+      _mentionQuery = '';
       _canLoadOlder = widget.onLoadOlder != null;
+      unawaited(_loadMentionCandidates());
     }
     final prepended =
         !convChanged &&
@@ -201,6 +220,139 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         ),
       );
     });
+  }
+
+  void _handleComposerChanged() {
+    _scheduleDraftSave();
+    _updateMentionQuery();
+  }
+
+  Future<void> _loadMentionCandidates() async {
+    final generation = ++_mentionLoadGeneration;
+    if (!widget.conversation.isGroup) return;
+    final candidates = await Future.wait(
+      widget.conversation.participantIds.map((userId) async {
+        try {
+          final name = await widget.resolveUserName(userId);
+          return _MentionCandidate(userId: userId, name: name);
+        } catch (_) {
+          return _MentionCandidate(userId: userId, name: userId);
+        }
+      }),
+    );
+    if (!mounted || generation != _mentionLoadGeneration) return;
+    setState(() => _mentionCandidates = candidates);
+  }
+
+  void _updateMentionQuery() {
+    int? start;
+    var query = '';
+    if (widget.conversation.isGroup) {
+      final value = _composerController.value;
+      final selection = value.selection;
+      if (selection.isValid && selection.isCollapsed) {
+        final beforeCaret = value.text.substring(0, selection.extentOffset);
+        final match = RegExp(r'(^|\s)@([^@\s]*)$').firstMatch(beforeCaret);
+        if (match != null) {
+          start = match.start + (match.group(1)?.length ?? 0);
+          query = match.group(2) ?? '';
+        }
+      }
+    }
+    if (start == _mentionStart && query == _mentionQuery) return;
+    setState(() {
+      _mentionStart = start;
+      _mentionQuery = query;
+    });
+  }
+
+  List<_MentionCandidate> get _filteredMentionCandidates {
+    if (_mentionStart == null) return const [];
+    final query = _mentionQuery.toLowerCase();
+    return _mentionCandidates
+        .where(
+          (candidate) =>
+              query.isEmpty ||
+              candidate.name.toLowerCase().contains(query) ||
+              candidate.userId.toLowerCase().contains(query),
+        )
+        .take(8)
+        .toList(growable: false);
+  }
+
+  void _selectMention(_MentionCandidate candidate) {
+    final start = _mentionStart;
+    final selection = _composerController.selection;
+    if (start == null || !selection.isValid || !selection.isCollapsed) return;
+    final label = '@${candidate.name}';
+    final text = _composerController.text;
+    final updated = text.replaceRange(start, selection.extentOffset, '$label ');
+    _mentionInsertions.add(
+      _MentionInsertion(userId: candidate.userId, label: label),
+    );
+    _composerController.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: start + label.length + 1),
+    );
+    _composerFocus.requestFocus();
+  }
+
+  ImComposedText _composeText(String text) {
+    final normalized = text.trim();
+    if (_mentionInsertions.isEmpty) return ImComposedText.plain(normalized);
+
+    final occurrences = <_MentionOccurrence>[];
+    for (final insertion in _mentionInsertions) {
+      var searchFrom = 0;
+      while (searchFrom < normalized.length) {
+        final start = normalized.indexOf(insertion.label, searchFrom);
+        if (start < 0) break;
+        final end = start + insertion.label.length;
+        final overlaps = occurrences.any(
+          (occurrence) => start < occurrence.end && end > occurrence.start,
+        );
+        final endsAtBoundary =
+            end == normalized.length ||
+            RegExp(r'\s').hasMatch(normalized.substring(end, end + 1));
+        if (!overlaps && endsAtBoundary) {
+          occurrences.add(
+            _MentionOccurrence(
+              start: start,
+              end: end,
+              userId: insertion.userId,
+              label: insertion.label,
+            ),
+          );
+          break;
+        }
+        searchFrom = end;
+      }
+    }
+    if (occurrences.isEmpty) return ImComposedText.plain(normalized);
+    occurrences.sort((left, right) => left.start.compareTo(right.start));
+
+    final parts = <ImComposedTextPart>[];
+    var cursor = 0;
+    for (final occurrence in occurrences) {
+      if (occurrence.start > cursor) {
+        parts.add(
+          ImComposedTextPart.text(
+            normalized.substring(cursor, occurrence.start),
+          ),
+        );
+      }
+      parts.add(
+        ImComposedTextPart.mention(
+          userId: occurrence.userId,
+          label: occurrence.label,
+        ),
+      );
+      cursor = occurrence.end;
+    }
+    if (cursor < normalized.length) {
+      parts.add(ImComposedTextPart.text(normalized.substring(cursor)));
+    }
+    return ImComposedText(parts);
   }
 
   void _handleScroll() {
@@ -399,13 +551,19 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         });
       }
       if (text.isNotEmpty) {
+        final composed = _composeText(text);
         final reply = _replyingTo;
-        if (reply != null && widget.onReply != null) {
+        if (reply != null && widget.onReplyComposed != null) {
+          await widget.onReplyComposed!(composed, reply);
+        } else if (reply != null && widget.onReply != null) {
           await widget.onReply!(text, reply);
+        } else if (widget.onSendComposed != null) {
+          await widget.onSendComposed!(composed);
         } else {
           await widget.onSend(text);
         }
         _composerController.clear();
+        _mentionInsertions.clear();
         if (reply != null && mounted) {
           setState(() => _replyingTo = null);
         }
@@ -873,6 +1031,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                     participantIds: widget.conversation.participantIds,
                     resolveUserName: widget.resolveUserName,
                     resolveUserAvatar: widget.resolveUserAvatar,
+                    onMemberTap: widget.onMemberTap,
                   ),
                 ),
               ),
@@ -1269,6 +1428,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (_filteredMentionCandidates.isNotEmpty)
+          _buildMentionSuggestions(_filteredMentionCandidates),
         if (_replyingTo != null) _buildReplyComposerBar(_replyingTo!),
         IgnorePointer(
           ignoring: _sending,
@@ -1335,6 +1496,54 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     );
   }
 
+  Widget _buildMentionSuggestions(List<_MentionCandidate> candidates) {
+    return Material(
+      key: const ValueKey('mention-suggestions'),
+      color: const Color(0xFF171717),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Colors.white12),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        constraints: const BoxConstraints(maxHeight: 216),
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListView.builder(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: candidates.length,
+          itemBuilder: (context, index) {
+            final candidate = candidates[index];
+            return ListTile(
+              key: ValueKey('mention-candidate-${candidate.userId}'),
+              dense: true,
+              leading: FutureBuilder<ImageProvider>(
+                future: widget.resolveUserAvatar(candidate.userId),
+                builder:
+                    (context, snapshot) => ZzzAvatar(
+                      image:
+                          snapshot.data ??
+                          AssetImage(
+                            AppAssets.fallbackAvatarForId(candidate.userId),
+                          ),
+                      size: 32,
+                    ),
+              ),
+              title: Text(candidate.name, maxLines: 1),
+              subtitle: Text(
+                candidate.userId,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+              onTap: () => _selectMention(candidate),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildReplyComposerBar(ImMessage message) {
     return Container(
       key: const ValueKey('reply-composer-bar'),
@@ -1373,6 +1582,34 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
 }
 
 enum _MessageAction { react, copy, reply, forward, poke, recall }
+
+class _MentionCandidate {
+  const _MentionCandidate({required this.userId, required this.name});
+
+  final String userId;
+  final String name;
+}
+
+class _MentionInsertion {
+  const _MentionInsertion({required this.userId, required this.label});
+
+  final String userId;
+  final String label;
+}
+
+class _MentionOccurrence {
+  const _MentionOccurrence({
+    required this.start,
+    required this.end,
+    required this.userId,
+    required this.label,
+  });
+
+  final int start;
+  final int end;
+  final String userId;
+  final String label;
+}
 
 class _MessageActionItem extends StatelessWidget {
   const _MessageActionItem({

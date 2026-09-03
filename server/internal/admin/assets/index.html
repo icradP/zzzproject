@@ -220,7 +220,15 @@
 
       <section id="view-fairy" class="view" data-section="fairy" hidden>
         <form id="fairy-config-form" class="fairy-layout">
-          <section class="surface">
+          <nav class="fairy-section-nav" aria-label="Fairy configuration sections">
+            <button class="fairy-section-button active" type="button" data-fairy-section="runtime">Runtime</button>
+            <button class="fairy-section-button" type="button" data-fairy-section="models">Models</button>
+            <button class="fairy-section-button" type="button" data-fairy-section="behavior">Behavior</button>
+            <button class="fairy-section-button" type="button" data-fairy-section="plugins">Plugins &amp; Tools</button>
+            <button class="fairy-section-button" type="button" data-fairy-section="decisions">Decisions</button>
+          </nav>
+
+          <section class="surface fairy-panel" data-fairy-panel="models" hidden>
             <div class="section-heading">
               <div>
                 <p class="eyebrow">BOT RUNTIME</p>
@@ -290,7 +298,7 @@
             </div>
           </section>
 
-          <section class="surface">
+          <section class="surface fairy-panel" data-fairy-panel="behavior" hidden>
             <div class="section-heading">
               <div>
                 <p class="eyebrow">REVIEWED GUIDANCE</p>
@@ -304,10 +312,73 @@
             </div>
             <div class="settings-form">
               <div id="fairy-behavior-experience-list" class="route-list"></div>
+              <section class="route-section">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">BEHAVIOR</p>
+                    <h3>Context and limits</h3>
+                  </div>
+                </div>
+                <label class="switch-row">
+                  <span>
+                    <strong>Enable new groups by default</strong>
+                    <small>Existing group overrides remain unchanged</small>
+                  </span>
+                  <input id="fairy-group-default" type="checkbox" role="switch">
+                </label>
+                <div class="field-grid two-columns">
+                  <label class="field" for="fairy-group-soft-trigger">
+                    <span>Group soft trigger</span>
+                    <select id="fairy-group-soft-trigger" required>
+                      <option value="off">Off</option>
+                      <option value="shadow">Shadow</option>
+                      <option value="on">On</option>
+                    </select>
+                  </label>
+                  <label class="field" for="fairy-expression-style">
+                    <span>Expression style</span>
+                    <select id="fairy-expression-style" required>
+                      <option value="brief">Brief</option>
+                      <option value="normal">Normal</option>
+                      <option value="detailed">Detailed</option>
+                    </select>
+                  </label>
+                  <label class="field" for="fairy-focus-ttl">
+                    <span>Focus lifetime (seconds)</span>
+                    <input id="fairy-focus-ttl" type="number" min="10" max="1800" required>
+                  </label>
+                  <label class="field" for="fairy-soft-cooldown">
+                    <span>Soft trigger cooldown (seconds)</span>
+                    <input id="fairy-soft-cooldown" type="number" min="0" max="600" required>
+                  </label>
+                </div>
+                <div class="field-grid three-columns">
+                  <label class="field" for="fairy-daily-limit">
+                    <span>Daily model calls</span>
+                    <input id="fairy-daily-limit" type="number" min="0" max="1000000" required>
+                  </label>
+                  <label class="field" for="fairy-max-concurrent">
+                    <span>Concurrent requests</span>
+                    <input id="fairy-max-concurrent" type="number" min="1" max="32" required>
+                  </label>
+                  <label class="field" for="fairy-rate-limit">
+                    <span>Rate limit (seconds)</span>
+                    <input id="fairy-rate-limit" type="number" min="0" max="86400" required>
+                  </label>
+                  <label class="field" for="fairy-context-ttl">
+                    <span>Context lifetime (seconds)</span>
+                    <input id="fairy-context-ttl" type="number" min="60" max="604800" required>
+                  </label>
+                  <label class="field" for="fairy-context-messages">
+                    <span>Context messages</span>
+                    <input id="fairy-context-messages" type="number" min="2" max="50" required>
+                  </label>
+                </div>
+              </section>
             </div>
           </section>
 
-          <section class="surface">
+          <section class="surface fairy-panel" data-fairy-panel="plugins" hidden>
             <div class="section-heading">
               <div>
                 <p class="eyebrow">MCP STDIO</p>
@@ -320,10 +391,30 @@
             </div>
             <div class="settings-form">
               <div id="fairy-external-provider-list" class="route-list"></div>
+              <section class="route-section">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">PLUGINS</p>
+                    <h3>Registered plugins</h3>
+                  </div>
+                  <span id="fairy-plugin-count" class="status-badge offline">0 enabled</span>
+                </div>
+                <div id="fairy-plugin-list" class="plugin-list"></div>
+                <div class="field-grid two-columns">
+                  <label class="field" for="fairy-zzz-api-url">
+                    <span>ZZZ profile endpoint</span>
+                    <input id="fairy-zzz-api-url" type="url" maxlength="2048" required>
+                  </label>
+                  <label class="field" for="fairy-zzz-timeout">
+                    <span>ZZZ request timeout (seconds)</span>
+                    <input id="fairy-zzz-timeout" type="number" min="1" max="120" required>
+                  </label>
+                </div>
+              </section>
             </div>
           </section>
 
-          <section class="surface">
+          <section class="surface fairy-panel" data-fairy-panel="runtime">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">OBSERVABILITY</p>
@@ -384,96 +475,25 @@
             <p id="fairy-runtime-tools-empty" class="empty-state" hidden>No tools registered.</p>
           </section>
 
-          <section class="surface">
+          <section class="surface fairy-panel" data-fairy-panel="decisions" hidden>
             <div class="section-heading">
               <div>
-                <p class="eyebrow">BEHAVIOR</p>
-                <h3>Context and limits</h3>
+                <p class="eyebrow">SESSION EVENT LOG</p>
+                <h3>Decision chains</h3>
+              </div>
+              <div class="badge-row">
+                <span id="fairy-decision-state" class="status-badge offline">Waiting</span>
+                <button id="fairy-refresh-decisions" class="secondary-button compact" type="button">Refresh</button>
               </div>
             </div>
-            <div class="settings-form">
-              <label class="switch-row">
-                <span>
-                  <strong>Enable new groups by default</strong>
-                  <small>Existing group overrides remain unchanged</small>
-                </span>
-                <input id="fairy-group-default" type="checkbox" role="switch">
-              </label>
-              <div class="field-grid two-columns">
-                <label class="field" for="fairy-group-soft-trigger">
-                  <span>Group soft trigger</span>
-                  <select id="fairy-group-soft-trigger" required>
-                    <option value="off">Off</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="on">On</option>
-                  </select>
-                </label>
-                <label class="field" for="fairy-expression-style">
-                  <span>Expression style</span>
-                  <select id="fairy-expression-style" required>
-                    <option value="brief">Brief</option>
-                    <option value="normal">Normal</option>
-                    <option value="detailed">Detailed</option>
-                  </select>
-                </label>
-                <label class="field" for="fairy-focus-ttl">
-                  <span>Focus lifetime (seconds)</span>
-                  <input id="fairy-focus-ttl" type="number" min="10" max="1800" required>
-                </label>
-                <label class="field" for="fairy-soft-cooldown">
-                  <span>Soft trigger cooldown (seconds)</span>
-                  <input id="fairy-soft-cooldown" type="number" min="0" max="600" required>
-                </label>
-              </div>
-              <div class="field-grid three-columns">
-                <label class="field" for="fairy-daily-limit">
-                  <span>Daily model calls</span>
-                  <input id="fairy-daily-limit" type="number" min="0" max="1000000" required>
-                </label>
-                <label class="field" for="fairy-max-concurrent">
-                  <span>Concurrent requests</span>
-                  <input id="fairy-max-concurrent" type="number" min="1" max="32" required>
-                </label>
-                <label class="field" for="fairy-rate-limit">
-                  <span>Rate limit (seconds)</span>
-                  <input id="fairy-rate-limit" type="number" min="0" max="86400" required>
-                </label>
-                <label class="field" for="fairy-context-ttl">
-                  <span>Context lifetime (seconds)</span>
-                  <input id="fairy-context-ttl" type="number" min="60" max="604800" required>
-                </label>
-                <label class="field" for="fairy-context-messages">
-                  <span>Context messages</span>
-                  <input id="fairy-context-messages" type="number" min="2" max="50" required>
-                </label>
-              </div>
+            <div class="decision-browser">
+              <div id="fairy-decision-list" class="decision-chain-list" role="list" aria-label="Recent Fairy turns"></div>
+              <div id="fairy-decision-detail" class="decision-chain-detail"></div>
             </div>
+            <p id="fairy-decisions-empty" class="empty-state">No decision chains recorded yet.</p>
           </section>
 
-          <section class="surface">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">PLUGINS</p>
-                <h3>Registered plugins</h3>
-              </div>
-              <span id="fairy-plugin-count" class="status-badge offline">0 enabled</span>
-            </div>
-            <div class="settings-form">
-              <div id="fairy-plugin-list" class="plugin-list"></div>
-              <div class="field-grid two-columns">
-                <label class="field" for="fairy-zzz-api-url">
-                  <span>ZZZ profile endpoint</span>
-                  <input id="fairy-zzz-api-url" type="url" maxlength="2048" required>
-                </label>
-                <label class="field" for="fairy-zzz-timeout">
-                  <span>ZZZ request timeout (seconds)</span>
-                  <input id="fairy-zzz-timeout" type="number" min="1" max="120" required>
-                </label>
-              </div>
-            </div>
-          </section>
-
-          <div class="settings-actions">
+          <div class="settings-actions" data-fairy-save-actions hidden>
             <span id="fairy-save-note">Ready</span>
             <button id="fairy-save-button" class="primary-button" type="submit">Save Fairy settings</button>
           </div>

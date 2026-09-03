@@ -81,9 +81,27 @@ func TestAnthropicCompatibleProjectsMessagesToolsAndUsage(t *testing.T) {
 		result.ToolCalls[0].Function.Name != "lookup" || result.ToolCalls[0].Function.Arguments != `{"value":"next"}` {
 		t.Fatalf("Anthropic result = %#v", result)
 	}
-	if len(trace.events) != 1 || trace.events[0].InputTokens != 31 || trace.events[0].OutputTokens != 7 ||
+	if len(trace.events) != 2 || trace.events[0].InputTokens != 31 || trace.events[0].OutputTokens != 7 ||
 		trace.events[0].ProviderID != "provider" || trace.events[0].TaskID != PlannerTaskID {
 		t.Fatalf("Anthropic trace = %#v", trace.events)
+	}
+	if trace.events[1].Type != TraceModelReasoning || trace.events[1].Content != "private reasoning" ||
+		trace.events[1].Signature != "opaque" || trace.events[1].Redacted {
+		t.Fatalf("Anthropic reasoning trace = %#v", trace.events[1])
+	}
+}
+
+func TestAnthropicRedactedThinkingStoresOnlyDigestSignature(t *testing.T) {
+	response, err := modelResponseFromAnthropic([]anthropicContentBlock{{
+		Type: "redacted_thinking", Data: "provider-encrypted-reasoning",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Reasoning) != 1 || !response.Reasoning[0].Redacted ||
+		!strings.HasPrefix(response.Reasoning[0].Signature, "sha256:") || response.Reasoning[0].Text != "" ||
+		strings.Contains(response.Reasoning[0].Signature, "provider-encrypted-reasoning") {
+		t.Fatalf("redacted reasoning = %#v", response.Reasoning)
 	}
 }
 

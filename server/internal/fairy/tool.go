@@ -174,11 +174,13 @@ type registeredTool struct {
 	spec         ToolSpec
 	inputSchema  *toolSchema
 	outputSchema *toolSchema
+	dynamic      bool
 }
 
 type ToolRegistry struct {
-	mu    sync.RWMutex
-	tools map[string]registeredTool
+	mu              sync.RWMutex
+	tools           map[string]registeredTool
+	dynamicProvider func() []Tool
 }
 
 func NewToolRegistry() *ToolRegistry {
@@ -186,43 +188,76 @@ func NewToolRegistry() *ToolRegistry {
 }
 
 func (r *ToolRegistry) Register(tool Tool) error {
-	if tool == nil {
-		return fmt.Errorf("register nil Fairy tool")
-	}
-	spec := cloneToolSpec(tool.Spec())
-	if err := validateToolSpec(spec); err != nil {
+	registered, err := prepareRegisteredTool(tool, false)
+	if err != nil {
 		return err
-	}
-	inputSchema, err := compileToolSchema(spec.InputSchema)
-	if err != nil {
-		return fmt.Errorf("compile input schema for Fairy tool %s: %w", spec.Name, err)
-	}
-	outputSchema, err := compileToolSchema(spec.OutputSchema)
-	if err != nil {
-		return fmt.Errorf("compile output schema for Fairy tool %s: %w", spec.Name, err)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.tools[spec.Name]; exists {
-		return fmt.Errorf("Fairy tool %s is already registered", spec.Name)
+	if _, exists := r.tools[registered.spec.Name]; exists {
+		return fmt.Errorf("Fairy tool %s is already registered", registered.spec.Name)
 	}
-	r.tools[spec.Name] = registeredTool{tool: tool, spec: spec, inputSchema: inputSchema, outputSchema: outputSchema}
+	r.tools[registered.spec.Name] = registered
+	return nil
+}
+
+// SetDynamicProvider attaches tools owned by the plugin host. The provider is
+// evaluated for every lookup, so unload and reload never leave stale plugin
+// instances inside ToolRuntime.
+func (r *ToolRegistry) SetDynamicProvider(provider func() []Tool) error {
+	if provider == nil {
+		return errors.New("dynamic Fairy tool provider is required")
+	}
+	tools := provider()
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		registered, err := prepareRegisteredTool(tool, true)
+		if err != nil {
+			return err
+		}
+		if _, exists := seen[registered.spec.Name]; exists {
+			return fmt.Errorf("Fairy tool %s is provided more than once", registered.spec.Name)
+		}
+		seen[registered.spec.Name] = struct{}{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name := range seen {
+		if _, exists := r.tools[name]; exists {
+			return fmt.Errorf("Fairy tool %s conflicts with a static tool", name)
+		}
+	}
+	r.dynamicProvider = provider
 	return nil
 }
 
 func (r *ToolRegistry) Resolve(name string) (ToolSpec, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	registered, ok := r.tools[name]
+	registered, ok := r.registered(name)
 	return cloneToolSpec(registered.spec), ok
 }
 
 func (r *ToolRegistry) Names() []string {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	provider := r.dynamicProvider
 	names := make([]string, 0, len(r.tools))
+	seen := make(map[string]struct{}, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
+		seen[name] = struct{}{}
+	}
+	r.mu.RUnlock()
+	if provider != nil {
+		for _, tool := range provider() {
+			registered, err := prepareRegisteredTool(tool, true)
+			if err != nil {
+				continue
+			}
+			if _, exists := seen[registered.spec.Name]; exists {
+				continue
+			}
+			seen[registered.spec.Name] = struct{}{}
+			names = append(names, registered.spec.Name)
+		}
 	}
 	sort.Strings(names)
 	return names
@@ -239,11 +274,45 @@ func (r *ToolRegistry) List() []ToolSpec {
 	return tools
 }
 
+func (r *ToolRegistry) PolicyAllows(name string, policy ToolPolicy) bool {
+	registered, ok := r.registered(name)
+	return ok && toolPolicyAllows(registered, policy)
+}
+
 func (r *ToolRegistry) registered(name string) (registeredTool, bool) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	tool, ok := r.tools[name]
-	return tool, ok
+	provider := r.dynamicProvider
+	r.mu.RUnlock()
+	if ok || provider == nil {
+		return tool, ok
+	}
+	for _, candidate := range provider() {
+		registered, err := prepareRegisteredTool(candidate, true)
+		if err == nil && registered.spec.Name == name {
+			return registered, true
+		}
+	}
+	return registeredTool{}, false
+}
+
+func prepareRegisteredTool(tool Tool, dynamic bool) (registeredTool, error) {
+	if tool == nil {
+		return registeredTool{}, fmt.Errorf("register nil Fairy tool")
+	}
+	spec := cloneToolSpec(tool.Spec())
+	if err := validateToolSpec(spec); err != nil {
+		return registeredTool{}, err
+	}
+	inputSchema, err := compileToolSchema(spec.InputSchema)
+	if err != nil {
+		return registeredTool{}, fmt.Errorf("compile input schema for Fairy tool %s: %w", spec.Name, err)
+	}
+	outputSchema, err := compileToolSchema(spec.OutputSchema)
+	if err != nil {
+		return registeredTool{}, fmt.Errorf("compile output schema for Fairy tool %s: %w", spec.Name, err)
+	}
+	return registeredTool{tool: tool, spec: spec, inputSchema: inputSchema, outputSchema: outputSchema, dynamic: dynamic}, nil
 }
 
 type ToolRuntime struct {
@@ -321,10 +390,7 @@ func (s *ToolSession) Execute(ctx context.Context, call ToolCall) ToolResult {
 			return finish(&ToolFailure{Code: ToolFailureUnauthorized})
 		}
 	}
-	if !policy.Allowlist[call.Name] || !policy.AllowedRisks[registered.spec.Risk] {
-		return finish(&ToolFailure{Code: ToolFailurePolicyDenied})
-	}
-	if registered.spec.Idempotency != ToolReadOnly && !policy.AllowSideEffects {
+	if !toolPolicyAllows(registered, policy) {
 		return finish(&ToolFailure{Code: ToolFailurePolicyDenied})
 	}
 	if s.calls >= policy.MaxCalls {
@@ -396,6 +462,12 @@ func (s *ToolSession) Execute(ctx context.Context, call ToolCall) ToolResult {
 	return finish(nil)
 }
 
+func toolPolicyAllows(registered registeredTool, policy ToolPolicy) bool {
+	return (registered.dynamic || policy.Allowlist[registered.spec.Name]) &&
+		policy.AllowedRisks[registered.spec.Risk] &&
+		(registered.spec.Idempotency == ToolReadOnly || policy.AllowSideEffects)
+}
+
 func (r *ToolRuntime) appendTrace(ctx context.Context, scope ToolScope, call ToolCall, result ToolResult, policyResult string) {
 	if r == nil || r.trace == nil || result.CallID == "" {
 		return
@@ -439,12 +511,35 @@ func (r *ToolRuntime) appendTrace(ctx context.Context, scope ToolScope, call Too
 		ToolCallID: result.CallID, ToolName: call.Name, ToolRisk: toolRisk,
 		ToolPolicy: policyResult, ToolStatus: toolStatus, DurationMS: result.Duration.Milliseconds(),
 		ToolResultBytes: result.ResultBytes, FailureCode: failureCode,
+		Detail: toolTraceDetail(call, result),
 	}
 	traceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := r.trace.Append(traceCtx, event); err != nil {
 		log.Printf("[fairy] append tool trace: %v", err)
 	}
+}
+
+func toolTraceDetail(call ToolCall, result ToolResult) json.RawMessage {
+	detail := struct {
+		Arguments         json.RawMessage `json:"arguments,omitempty"`
+		ArgumentsRedacted bool            `json:"arguments_redacted,omitempty"`
+		ModelResult       string          `json:"model_result,omitempty"`
+		UserResult        string          `json:"user_result,omitempty"`
+	}{
+		ModelResult: result.Projection.ModelText,
+		UserResult:  result.Projection.UserText,
+	}
+	if containsSensitiveCredential(string(call.Arguments)) {
+		detail.ArgumentsRedacted = true
+	} else {
+		detail.Arguments = append(json.RawMessage(nil), call.Arguments...)
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 func normalizeToolPolicy(policy ToolPolicy) ToolPolicy {

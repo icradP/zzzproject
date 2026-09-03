@@ -339,6 +339,39 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
+  Future<ImMessage> sendComposedTextMessage({
+    required String conversationId,
+    required ImComposedText message,
+    String? replyToMessageId,
+  }) async {
+    if (message.plainText.trim().isEmpty) {
+      throw ArgumentError.value(
+        message.plainText,
+        'message',
+        'Message cannot be empty.',
+      );
+    }
+    return _sendMessage(conversationId, [
+      if (replyToMessageId != null)
+        {
+          'type': 'reply',
+          'data': {'id': replyToMessageId},
+        },
+      for (final part in message.parts)
+        if (part.isMention)
+          {
+            'type': 'at',
+            'data': {'qq': part.mentionedUserId},
+          }
+        else if (part.text.isNotEmpty)
+          {
+            'type': 'text',
+            'data': {'text': part.text},
+          },
+    ]);
+  }
+
+  @override
   Future<ImMessage> sendStickerMessage({
     required String conversationId,
     required ImStickerReference sticker,

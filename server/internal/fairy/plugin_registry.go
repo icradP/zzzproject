@@ -23,6 +23,27 @@ var builtinPluginDescriptors = []PluginDescriptor{
 		Command:        "/zzz <UID>",
 		DefaultEnabled: true,
 	},
+	{
+		ID:             ContextMemoryPluginID,
+		Name:           "Conversation context memory",
+		Description:    "Keeps explicitly triggered conversation context in the Fairy process scope.",
+		Command:        "/fairy memory on|off",
+		DefaultEnabled: true,
+	},
+	{
+		ID:             FactMemoryPluginID,
+		Name:           "Fact memory",
+		Description:    "Optional source-linked fact memory, disabled per conversation by default.",
+		Command:        "/fairy facts on|off",
+		DefaultEnabled: true,
+	},
+	{
+		ID:             SelfCognitionPluginID,
+		Name:           "Self cognition",
+		Description:    "Provides Fairy identity and capability-boundary prompt context.",
+		Command:        "Prompt capability",
+		DefaultEnabled: true,
+	},
 }
 
 func BuiltinPluginStatuses(cfg Config) []PluginStatus {
@@ -39,6 +60,12 @@ func BuiltinPluginStatuses(cfg Config) []PluginStatus {
 func NewBuiltinPlugins(cfg Config) []Plugin {
 	return []Plugin{NewZZZPlugin(cfg)}
 }
+
+const (
+	ContextMemoryPluginID = "context-memory"
+	FactMemoryPluginID    = "fact-memory"
+	SelfCognitionPluginID = "self-cognition"
+)
 
 func knownPlugin(id string) bool {
 	_, ok := pluginDescriptorByID(id)

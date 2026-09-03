@@ -87,6 +87,42 @@ func TestToolRegistryCompilesSchemasAndKeepsImmutableSpecs(t *testing.T) {
 	}
 }
 
+func TestToolRegistryResolvesCurrentDynamicPluginTool(t *testing.T) {
+	first := newFakeTool("plugin-lookup")
+	second := newFakeTool("plugin-lookup")
+	current := Tool(first)
+	registry := NewToolRegistry()
+	if err := registry.SetDynamicProvider(func() []Tool {
+		if current == nil {
+			return nil
+		}
+		return []Tool{current}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewToolRuntime(registry, DefaultToolPolicy(nil), nil, nil)
+	execute := func() ToolResult {
+		return runtime.NewSession(ToolScope{VisibleTools: map[string]bool{"plugin-lookup": true}}).Execute(
+			context.Background(),
+			ToolCall{Name: "plugin-lookup", Arguments: json.RawMessage(`{"value":"okay"}`)},
+		)
+	}
+	if result := execute(); !result.OK() || first.executions.Load() != 1 {
+		t.Fatalf("first dynamic tool result=%#v executions=%d", result, first.executions.Load())
+	}
+	current = second
+	if result := execute(); !result.OK() || first.executions.Load() != 1 || second.executions.Load() != 1 {
+		t.Fatalf("reloaded dynamic tool result=%#v first=%d second=%d", result, first.executions.Load(), second.executions.Load())
+	}
+	if !registry.PolicyAllows("plugin-lookup", runtime.policy) {
+		t.Fatal("dynamic plugin tool was reported as denied despite executable policy")
+	}
+	current = nil
+	if result := execute(); result.Failure == nil || result.Failure.Code != ToolFailureNotFound {
+		t.Fatalf("unloaded dynamic tool result=%#v", result)
+	}
+}
+
 func TestToolRuntimeValidatesArgumentsVisibilityPolicyAndLimits(t *testing.T) {
 	tool := newFakeTool("lookup")
 	registry := registerFakeTool(t, tool)
@@ -254,7 +290,7 @@ func TestExclusiveToolWaitObservesTimeout(t *testing.T) {
 	<-done
 }
 
-func TestToolTraceContainsOnlyBoundedMetadata(t *testing.T) {
+func TestToolTraceContainsDecisionChainProjectionWithoutConversationID(t *testing.T) {
 	store, err := OpenSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.db"), filepath.Join(t.TempDir(), "trace.key"))
 	if err != nil {
 		t.Fatal(err)
@@ -279,12 +315,12 @@ func TestToolTraceContainsOnlyBoundedMetadata(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT payload_json FROM fairy_trace_events WHERE type = 'tool_call'`).Scan(&payload); err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"secret", "private-result-body", "private-alice-fairy"} {
+	for _, forbidden := range []string{"private-alice-fairy"} {
 		if strings.Contains(payload, forbidden) {
 			t.Fatalf("tool trace leaked %q: %s", forbidden, payload)
 		}
 	}
-	for _, required := range []string{"lookup", "completed", "allowed"} {
+	for _, required := range []string{"lookup", "completed", "allowed", "secret", "private-result-body"} {
 		if !strings.Contains(payload, required) {
 			t.Fatalf("tool trace lacks %q: %s", required, payload)
 		}

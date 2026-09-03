@@ -25,6 +25,9 @@ const (
 	traceKeyBytes           = 32
 	defaultIngressRetention = 30 * 24 * time.Hour
 	maxRecentTraceFailures  = 20
+	maxTraceContentBytes    = maxModelResponseBytes
+	maxTraceSignatureBytes  = 64 * 1024
+	maxTraceDetailBytes     = 256 * 1024
 )
 
 type TraceEventType string
@@ -38,6 +41,9 @@ const (
 	TraceTurnCancelled     TraceEventType = "turn_cancelled"
 	TraceTurnTimedOut      TraceEventType = "turn_timed_out"
 	TraceModelAttempt      TraceEventType = "model_attempt"
+	TraceModelReasoning    TraceEventType = "model_reasoning"
+	TracePlannerDecision   TraceEventType = "planner_decision"
+	TraceReplyerResult     TraceEventType = "replyer_result"
 	TraceToolCall          TraceEventType = "tool_call"
 	TraceGateDecision      TraceEventType = "gate_decision"
 )
@@ -77,6 +83,10 @@ type TraceEvent struct {
 	GateReason      string
 	GateHard        bool
 	GateShadow      bool
+	Content         string
+	Signature       string
+	Redacted        bool
+	Detail          json.RawMessage
 }
 
 type TraceStore interface {
@@ -300,35 +310,39 @@ func (s *SQLiteTraceStore) Append(ctx context.Context, event TraceEvent) error {
 		event.Time = time.Now()
 	}
 	payload, err := json.Marshal(struct {
-		Source          string `json:"source,omitempty"`
-		Status          string `json:"status,omitempty"`
-		QueueDepth      int    `json:"queue_depth,omitempty"`
-		Pending         int    `json:"pending,omitempty"`
-		TaskID          string `json:"gen_ai.operation.name,omitempty"`
-		ProviderID      string `json:"gen_ai.provider.name,omitempty"`
-		ModelID         string `json:"gen_ai.request.model,omitempty"`
-		SnapshotID      string `json:"fairy.config.snapshot_id,omitempty"`
-		Attempt         int    `json:"fairy.model.attempt,omitempty"`
-		DurationMS      int64  `json:"fairy.duration_ms,omitempty"`
-		InputTokens     int    `json:"gen_ai.usage.input_tokens,omitempty"`
-		OutputTokens    int    `json:"gen_ai.usage.output_tokens,omitempty"`
-		CostMicroUSD    int64  `json:"fairy.cost_microusd,omitempty"`
-		FailureCode     string `json:"error.type,omitempty"`
-		Fallback        bool   `json:"fairy.model.fallback,omitempty"`
-		Repair          bool   `json:"fairy.model.repair,omitempty"`
-		Step            int    `json:"fairy.step,omitempty"`
-		PromptVersion   string `json:"fairy.prompt.version,omitempty"`
-		PromptDigest    string `json:"fairy.prompt.digest,omitempty"`
-		ToolCallID      string `json:"gen_ai.tool.call.id,omitempty"`
-		ToolName        string `json:"gen_ai.tool.name,omitempty"`
-		ToolRisk        string `json:"fairy.tool.risk,omitempty"`
-		ToolPolicy      string `json:"fairy.tool.policy,omitempty"`
-		ToolStatus      string `json:"fairy.tool.status,omitempty"`
-		ToolResultBytes int    `json:"fairy.tool.result_bytes,omitempty"`
-		GateAction      string `json:"fairy.gate.action,omitempty"`
-		GateReason      string `json:"fairy.gate.reason,omitempty"`
-		GateHard        bool   `json:"fairy.gate.hard,omitempty"`
-		GateShadow      bool   `json:"fairy.gate.shadow,omitempty"`
+		Source          string          `json:"source,omitempty"`
+		Status          string          `json:"status,omitempty"`
+		QueueDepth      int             `json:"queue_depth,omitempty"`
+		Pending         int             `json:"pending,omitempty"`
+		TaskID          string          `json:"gen_ai.operation.name,omitempty"`
+		ProviderID      string          `json:"gen_ai.provider.name,omitempty"`
+		ModelID         string          `json:"gen_ai.request.model,omitempty"`
+		SnapshotID      string          `json:"fairy.config.snapshot_id,omitempty"`
+		Attempt         int             `json:"fairy.model.attempt,omitempty"`
+		DurationMS      int64           `json:"fairy.duration_ms,omitempty"`
+		InputTokens     int             `json:"gen_ai.usage.input_tokens,omitempty"`
+		OutputTokens    int             `json:"gen_ai.usage.output_tokens,omitempty"`
+		CostMicroUSD    int64           `json:"fairy.cost_microusd,omitempty"`
+		FailureCode     string          `json:"error.type,omitempty"`
+		Fallback        bool            `json:"fairy.model.fallback,omitempty"`
+		Repair          bool            `json:"fairy.model.repair,omitempty"`
+		Step            int             `json:"fairy.step,omitempty"`
+		PromptVersion   string          `json:"fairy.prompt.version,omitempty"`
+		PromptDigest    string          `json:"fairy.prompt.digest,omitempty"`
+		ToolCallID      string          `json:"gen_ai.tool.call.id,omitempty"`
+		ToolName        string          `json:"gen_ai.tool.name,omitempty"`
+		ToolRisk        string          `json:"fairy.tool.risk,omitempty"`
+		ToolPolicy      string          `json:"fairy.tool.policy,omitempty"`
+		ToolStatus      string          `json:"fairy.tool.status,omitempty"`
+		ToolResultBytes int             `json:"fairy.tool.result_bytes,omitempty"`
+		GateAction      string          `json:"fairy.gate.action,omitempty"`
+		GateReason      string          `json:"fairy.gate.reason,omitempty"`
+		GateHard        bool            `json:"fairy.gate.hard,omitempty"`
+		GateShadow      bool            `json:"fairy.gate.shadow,omitempty"`
+		Content         string          `json:"fairy.content,omitempty"`
+		Signature       string          `json:"fairy.signature,omitempty"`
+		Redacted        bool            `json:"fairy.redacted,omitempty"`
+		Detail          json.RawMessage `json:"fairy.detail,omitempty"`
 	}{
 		Source:          event.Source,
 		Status:          event.Status,
@@ -359,6 +373,10 @@ func (s *SQLiteTraceStore) Append(ctx context.Context, event TraceEvent) error {
 		GateReason:      event.GateReason,
 		GateHard:        event.GateHard,
 		GateShadow:      event.GateShadow,
+		Content:         event.Content,
+		Signature:       event.Signature,
+		Redacted:        event.Redacted,
+		Detail:          event.Detail,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Fairy trace payload: %w", err)
@@ -742,7 +760,8 @@ func validTraceEventType(value TraceEventType) bool {
 	switch value {
 	case TraceAdmissionAccepted, TraceAdmissionRejected, TraceIngressDuplicate,
 		TraceTurnStarted, TraceTurnCompleted, TraceTurnCancelled, TraceTurnTimedOut,
-		TraceModelAttempt, TraceToolCall, TraceGateDecision:
+		TraceModelAttempt, TraceModelReasoning, TracePlannerDecision, TraceReplyerResult,
+		TraceToolCall, TraceGateDecision:
 		return true
 	default:
 		return false
@@ -780,6 +799,16 @@ func validTraceEventDetails(event TraceEvent) bool {
 		event.ToolResultBytes < 0 {
 		return false
 	}
+	if len(event.Content) > maxTraceContentBytes || len(event.Signature) > maxTraceSignatureBytes ||
+		len(event.Detail) > maxTraceDetailBytes || len(event.Detail) > 0 && !json.Valid(event.Detail) {
+		return false
+	}
+	if event.Type == TraceModelReasoning {
+		return validModelReasoningTrace(event)
+	}
+	if event.Type == TracePlannerDecision || event.Type == TraceReplyerResult {
+		return validAgentDecisionTrace(event)
+	}
 	if event.Type == TraceGateDecision {
 		if !validGateDecision(GateDecision{
 			Action: event.GateAction, Reason: event.GateReason, Hard: event.GateHard, Shadow: event.GateShadow,
@@ -791,7 +820,7 @@ func validTraceEventDetails(event TraceEvent) bool {
 			!event.Fallback && !event.Repair && event.Step == 0 && event.PromptVersion == "" && event.PromptDigest == "" &&
 			event.TaskID == "" && event.ProviderID == "" && event.ModelID == "" && event.SnapshotID == "" &&
 			event.ToolCallID == "" && event.ToolName == "" && event.ToolRisk == "" && event.ToolPolicy == "" &&
-			event.ToolStatus == "" && event.ToolResultBytes == 0
+			event.ToolStatus == "" && event.ToolResultBytes == 0 && !hasTraceDecisionPayload(event)
 	}
 	if event.Type == TraceToolCall {
 		if !validRuntimeID(event.ToolCallID) || !validTraceLabel(event.ToolName) ||
@@ -800,7 +829,7 @@ func validTraceEventDetails(event TraceEvent) bool {
 			event.OutputTokens != 0 || event.CostMicroUSD != 0 || event.TaskID != "" ||
 			event.ProviderID != "" || event.ModelID != "" || event.SnapshotID != "" || event.PromptVersion != "" ||
 			event.PromptDigest != "" || event.Fallback || event.Repair || event.GateAction != "" || event.GateReason != "" ||
-			event.GateHard || event.GateShadow {
+			event.GateHard || event.GateShadow || event.Content != "" || event.Signature != "" || event.Redacted {
 			return false
 		}
 		if event.Status == "completed" {
@@ -815,12 +844,13 @@ func validTraceEventDetails(event TraceEvent) bool {
 			event.PromptVersion == "" && event.PromptDigest == "" &&
 			event.ToolCallID == "" && event.ToolName == "" && event.ToolRisk == "" && event.ToolPolicy == "" &&
 			event.ToolStatus == "" && event.ToolResultBytes == 0 && event.GateAction == "" &&
-			event.GateReason == "" && !event.GateHard && !event.GateShadow
+			event.GateReason == "" && !event.GateHard && !event.GateShadow && !hasTraceDecisionPayload(event)
 	}
 	if !validTraceLabel(event.TaskID) || !validTraceLabel(event.ProviderID) || !validTraceLabel(event.ModelID) ||
 		!validRuntimeID(event.SnapshotID) || event.Attempt < 1 || event.ToolCallID != "" ||
 		event.ToolName != "" || event.ToolRisk != "" || event.ToolPolicy != "" || event.ToolStatus != "" ||
-		event.ToolResultBytes != 0 || event.GateAction != "" || event.GateReason != "" || event.GateHard || event.GateShadow {
+		event.ToolResultBytes != 0 || event.GateAction != "" || event.GateReason != "" || event.GateHard || event.GateShadow ||
+		hasTraceDecisionPayload(event) {
 		return false
 	}
 	if event.Repair && (event.TaskID != PlannerTaskID && event.TaskID != ReplyerTaskID || event.Step < 1) {
@@ -834,6 +864,40 @@ func validTraceEventDetails(event TraceEvent) bool {
 		return event.FailureCode == ""
 	}
 	return event.Status == "failed" && validModelFailureCode(ModelFailureCode(event.FailureCode))
+}
+
+func hasTraceDecisionPayload(event TraceEvent) bool {
+	return event.Content != "" || event.Signature != "" || event.Redacted || len(event.Detail) != 0
+}
+
+func validModelReasoningTrace(event TraceEvent) bool {
+	if event.Status != "completed" || !validTraceLabel(event.TaskID) || !validTraceLabel(event.ProviderID) ||
+		!validTraceLabel(event.ModelID) || !validRuntimeID(event.SnapshotID) || event.Attempt < 1 ||
+		event.DurationMS != 0 || event.InputTokens != 0 || event.OutputTokens != 0 || event.CostMicroUSD != 0 ||
+		event.FailureCode != "" || event.ToolCallID != "" || event.ToolName != "" || event.ToolRisk != "" ||
+		event.ToolPolicy != "" || event.ToolStatus != "" || event.ToolResultBytes != 0 || event.GateAction != "" ||
+		event.GateReason != "" || event.GateHard || event.GateShadow || len(event.Detail) != 0 {
+		return false
+	}
+	if event.Redacted {
+		return event.Content == "" && event.Signature != ""
+	}
+	return event.Content != ""
+}
+
+func validAgentDecisionTrace(event TraceEvent) bool {
+	wantTask := PlannerTaskID
+	if event.Type == TraceReplyerResult {
+		wantTask = ReplyerTaskID
+	}
+	return (event.Status == "completed" || event.Status == "failed") && event.TaskID == wantTask &&
+		event.Step >= 0 && event.Step <= maxPlannerSteps && event.ProviderID == "" && event.ModelID == "" &&
+		event.SnapshotID == "" && event.Attempt == 0 && event.DurationMS == 0 && event.InputTokens == 0 &&
+		event.OutputTokens == 0 && event.CostMicroUSD == 0 && event.FailureCode == "" && !event.Fallback &&
+		event.PromptVersion == "" && event.PromptDigest == "" && event.ToolCallID == "" && event.ToolName == "" &&
+		event.ToolRisk == "" && event.ToolPolicy == "" && event.ToolStatus == "" && event.ToolResultBytes == 0 &&
+		event.GateAction == "" && event.GateReason == "" && !event.GateHard && !event.GateShadow &&
+		event.Signature == "" && !event.Redacted
 }
 
 func validPromptDigest(value string) bool {

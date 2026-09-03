@@ -48,7 +48,7 @@
 | Trace 与指标 | 强 | 部分 | OpenTelemetry | 已覆盖 |
 | 行为评测、回归与红队 | 测试很多 | 部分 | Fairy eval corpus | 必须自行建设 |
 | 多实例、高可用和灾难恢复 | 非重点 | 非重点 | Fairy 运维 | 后续自行设计 |
-| 外部插件协议和隔离 | Cordis 进程内 | 多来源插件 | MCP / 独立进程 | 内置 Tool + F5.2 MCP stdio 已实现 |
+| 外部插件协议和隔离 | Cordis 核心服务与作用域 | 插件包、Runner 与管理体验 | MCP / 独立进程 | 插件宿主核心 + F5.2 MCP stdio 已实现；任意第三方代码安装仍不开放 |
 | 语音、图片、定位等 IM 多模态 | 图片较强 | 多模态任务 | ZZZ 消息段 | 图片 / 语音已实现，其他按需推进 |
 
 参考覆盖已经足够开始实现，但不能把“参考项目有该模块”当作 Fairy 的验收标准。Fairy 的验收以本文不变式、安全规则和 eval 结果为准。
@@ -62,7 +62,7 @@ Fairy 是 ZZZ IM 中的 AI 好友与受控 Agent Bot：
 - 能进行日常对话，也能通过受限工具完成查询和后续明确授权的操作。
 - 确定性命令不依赖模型，模型不可用时仍可工作。
 - 所有副作用都经过 Tool Pipeline 或 Output Policy。
-- 默认不持久化私聊和群聊正文，不允许跨会话泄漏上下文。
+- 默认不持久化用户原始私聊和群聊正文，不允许跨会话泄漏上下文；受保护的决策链可保存模型和工具阶段输出。
 
 Fairy 不是：
 
@@ -302,14 +302,16 @@ Context Surface 是本次模型可见的结构化历史，不等同于持久化�
 
 ### 3. 隐私与回放取舍
 
-Fairy 保留当前默认：聊天正文只在内存 Context Surface 中按 TTL 存在，不写入状态文件或管理 Trace。
+Fairy 的模型上下文仍只在内存 Context Surface 中按 TTL 存在，不写入状态文件，也不能用于跨进程恢复。F5.24 另行增加受管理鉴权保护的决策链：不保存完整 Prompt 或用户原始消息正文，但会保存 Provider 明确返回的 reasoning、Planner/Replyer 输出和工具投影，以支持会话级故障诊断。
 
 因此：
 
-- 可以持久化 Turn、模型、工具、耗时、错误、Token 和消息 ID 等元数据。
+- 可以持久化 Turn、模型、工具、耗时、错误、Token、Provider 明文 reasoning、Planner/Replyer 输出和工具决策数据。
 - 默认不能跨进程重启精确回放模型上下文。
 - 进程崩溃后的未完成 Turn 标记为 aborted，不自动恢复副作用。
 - 将来若提供持久记忆，必须由用户或群管理员明确开启，支持查看来源、清除和退出。
+
+Provider 没有返回的内部思维不可恢复。Anthropic-compatible `thinking` 块返回多少明文就保存多少；`redacted_thinking` 只保存不可逆摘要式签名和隐藏标记，不能把密文、签名或推测内容描述为完整思维链。
 
 这是一项有意的隐私选择，不追求照搬 DSH 的全量 durable replay。
 
@@ -335,6 +337,8 @@ Replyer 接收 Planner 的回复意图、必要上下文和已投影工具结果
 - 引用目标和消息段构造。
 - 最多一次最终发送。
 - 发送结果与服务器 message ID Trace。
+
+当前默认策略是私聊不引用触发消息、群聊引用触发消息；后续不同接入平台可以通过 Adapter 或插件业务配置覆盖该策略。
 
 ### 3. Gate 与 Focus
 
@@ -400,13 +404,15 @@ resolve tool
 
 ### 4. 插件形态
 
-分阶段支持：
+F5.24 的插件宿主采用 DSH 的核心服务/作用域边界和 MaiBot 的插件包、Runner、管理体验：
 
-1. 编译期 Go Tool Provider：首版，现有 `zzz-profile` 迁移到统一 Registry，同时保留 `/zzz` 直接命令。
-2. 可信独立进程 / MCP Provider：F5.2 已本地实现，包含显式配置、双层能力 allowlist、超时、熔断和进程生命周期。
-3. WASM 沙箱：只有出现不可信第三方插件需求时再评估。
+1. `PluginManifest` 声明 ID、版本、API 版本、组件、能力、依赖、最低版本、隔离级别、可重载性和默认启用值；显式管理配置优先于 Manifest 默认值。
+2. `PluginContext` 只暴露 Manifest 已声明的能力，并注册 Command、Tool、Memory、Prompt 与 Hook；所有副作用必须挂入 disposer，停止、卸载和热重载按逆序清理。
+3. Hook/Event Bus 覆盖 Gate、Prompt、Tool 前后和 Reply 后事件；生命周期操作串行化，注册冲突、依赖环、缺失依赖和版本不足在加载时拒绝。
+4. Tool Runtime 每次从宿主当前快照解析动态工具，重载使用新实例，卸载后立即不可见；Schema、Scope、授权、风险、副作用、超时和结果校验继续由 Tool Runtime 统一执行。
+5. `context-memory`、`fact-memory`、`self-cognition` 是内置插件。可信编译期 Go 包使用进程内 Runner；宿主提供隔离 Runner 接口，F5.2 的外部工具仍由 MCP stdio 子进程承载。
 
-不使用 Go `plugin` 从管理网页加载任意动态库。Agent Scope 是可见性边界，不是恶意代码沙箱。
+当前不使用 Go `plugin`，也不允许从管理网页上传、安装或执行任意动态库/脚本。进程内 Runner 只适用于签入并编译的可信代码，Agent Scope 不是恶意代码沙箱；WASM 只在出现不可信第三方插件需求时评估。
 
 ## 十二、安全设计
 
@@ -441,7 +447,7 @@ resolve tool
 - Tool Call ID、工具名、风险、策略结果、耗时和结果状态。
 - Output send 的 client message ID、服务器 message ID 或 unknown outcome。
 
-默认不记录 API Key、Authorization、Cookie、完整工具敏感参数和聊天正文。字段命名尽量映射 OpenTelemetry GenAI 语义，存储实现保持可替换。
+F5.24 在同一事件流上投影按 Turn 的 Decision Chain，并补充 Provider 明文 reasoning、Planner Decision、Replyer Result、工具参数和投影结果。高置信 API Key、Authorization、Cookie 等凭据继续拒绝或标记隐藏；Prompt 和用户原始消息正文不进入决策链。`redacted_thinking` 只保存摘要/签名与隐藏标记。字段命名尽量映射 OpenTelemetry GenAI 语义，存储实现保持可替换。
 
 ### 2. 管理指标
 
@@ -453,8 +459,9 @@ resolve tool
 - Tool 调用量、成功率、拒绝和 timeout。
 - Gate 原因、群聊 shadow 结果和 admission rejection。
 - 最近 24 小时最多 20 条脱敏失败摘要和配置版本；仅展示固定失败码、配置 ID、耗时、attempt / step / fallback 与有限队列数字。
+- 最近最多 50 个 Turn 的完整决策时间线；页面明确区分明文 reasoning 和 Provider 隐藏的 reasoning。
 
-管理面板默认不提供查看完整私聊内容的入口。
+决策链是敏感运维入口，只允许现有管理鉴权访问，不向普通 IM 用户开放；它不提供用户原始消息或完整 Prompt，但可能包含模型输出与工具业务数据。
 
 ### 3. Eval Corpus
 
@@ -489,7 +496,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 
 - `config.json`：运行配置与只写密钥，保持 `0600` 原子替换。
 - `state.json`：现有群开关、记忆开关、全局额度和按 Task 额度；继续兼容 state v1 旧文件。
-- `fairy.db`：Fairy 本地 SQLite，仅保存去重和脱敏 Turn / Model / Tool / Gate Trace，默认 30 天清理，不接入 IM Server Store。
+- `fairy.db`：Fairy 本地 SQLite，保存去重、Turn / Model / Tool / Gate 事件、显式反馈和 F5.24 决策链，默认 30 天清理，不接入 IM Server Store。决策链不保存用户原始消息或完整 Prompt，但包含模型 reasoning/输出与部分工具业务数据，应按敏感管理数据备份和授权。
 - 内存 Context Surface：默认聊天正文和在途 Tool 结果，按 TTL 清理。
 
 使用同仓库已有 SQLite 驱动，生产机只接收本地 / CI 构建的 Linux x86-64 制品，不在生产机编译。
@@ -593,6 +600,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - Agent 全路由资格门禁（F5.21 已部署）：首次开启生产 AI 或修改已启用路由时，已配置的 `replyer` 与 `planner` 全部候选都必须持有当前质量语料资格；关闭 rollout 时仍允许配置、评测和诊断。
 - 严格 Agent 诊断契约（F5.22 已部署）：Planner 与 Replyer 分别接收隔离的固定请求，Replyer 仍继承 Planner 的 `reply_intent`，但不接触 Planner JSON 指令；只有 Planner 形成合法决策且 Replyer 精确返回固定确认句时才通过，错误正文和协议泄露一律拒绝。
 - Agent 结构化响应单次修复（F5.23 已部署）：每个 Planner Step 只对无效供应商响应或决策格式错误修复一次；固定严格诊断的 Replyer 只对无效响应或固定回复不匹配修复一次。修复请求不携带拒绝正文、不重放工具或上游阶段，使用独立 Prompt 版本、额度和脱敏 Repair Trace。
+- 会话决策链、插件宿主与管理信息架构（F5.24 已本地实现、待发布）：保存 Provider 可见 reasoning 并串联 Planner、Replyer 和 Tool；补齐 Manifest、能力作用域、Hook/Event、生命周期、卸载、热重载和依赖管理；管理页拆分为五个横向分类。
 
 ### 发布状态（2026-09-03）
 
@@ -623,6 +631,10 @@ F5.22 收紧固定 Agent 诊断契约：Planner 独立接收要求严格 JSON `r
 F5.23 为模型结构化输出增加有界恢复。每个 Planner Step 只在所有候选均返回 `invalid_response`，或成功响应无法形成合法 Planner Decision 时创建一次修复请求；修复在任何新工具动作前完成，不携带被拒绝的模型正文，既有 Tool Result 继续保留但已执行工具不会重放。认证、内容拒绝、取消、超时和额度错误直接失败。固定严格诊断设置唯一预期回复，Replyer 可独立修复一次，但不会重跑 Planner 或工具；普通用户回复不按文案差异重试。Planner 与 Replyer 修复分别使用 `planner-repair-v1`、`replyer-repair-v1`；生产会话内每次修复独立占用模型额度，固定诊断仍不占聊天额度但会产生供应商请求费用。
 
 Model Attempt Trace 使用布尔 `repair` 标记且只允许 Planner/Replyer 的有效 Step；Model Health 聚合 Repair 次数，Recent Failures 只投影该脱敏标记。管理页 Model Health 增加 Repair 列。实现提交 `2f612c2` 已通过 GitHub Actions CI/CD 运行 `33705851757`，本地静态 Linux x86-64 构建、Alpine smoke 和远端哈希校验后以 release `2f612c2de710` 部署到 `icrad.ltd`，生产机未编译源码。生产服务、`/health`、`/ready` 与固定严格诊断均通过；管理页在 1440x1000 和 390x844 生产脱敏数据态验收，无全局横向溢出或控制台错误。生产仍为 schema v10 revision 3 active，rollout 保持 `off`。
+
+F5.24 已在本地实现 DSH 风格的会话事件链与 MaiBot 风格的浏览入口。SQLite 决策链按 Turn 串联 Admission、Gate、模型 reasoning、Planner Decision、Tool Call/Result、Replyer Result 和结束状态；Provider 明文 `thinking` 原样保存，`redacted_thinking` 只保存不可逆摘要式签名和隐藏标记。Fairy 与 IM 管理代理分别新增只读 API，管理页 Decisions 每 5 秒刷新，并在桌面/手机使用双栏/单栏响应式布局。
+
+同阶段补齐可信插件宿主核心：Manifest、组件注册、Capability Context、Hook/Event Bus、依赖与最低版本校验、生命周期 disposer、卸载、热重载、注册冲突和 Runner 边界；内置上下文记忆、事实记忆与自我认知已插件化，动态工具始终解析当前实例。管理页拆为 Runtime、Models、Behavior、Plugins & Tools、Decisions 五类。当前改动尚未提交、推送或部署，生产仍运行 F5.23，rollout 保持 `off`，M8 继续暂停。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
@@ -666,9 +678,9 @@ F5.13 将受管配置升级到 v7，并兼容读取 v1-v6。每次成功保存�
 4. 所有副作用只经过 Tool Pipeline 或 Output Policy。
 5. 在途 Turn 始终使用同一配置和 Provider snapshot。
 6. 已经开始的副作用工具不会因 Retry 或重启自动重放。
-7. 默认不持久化聊天正文，也不允许跨会话共享 Context。
+7. 默认不持久化用户原始聊天正文，也不允许跨会话共享 Context；决策链模型/工具输出不得用于上下文恢复。
 8. 群聊未明确触发的普通消息默认不进入模型上下文。
-9. 管理 API 和 Trace 永不回显密钥、Cookie 或完整敏感参数。
+9. 管理配置中的 API Key、Authorization 和 Cookie 永不进入管理响应或 Trace；用户输入和工具投影继续执行凭据检测。Provider 明文 reasoning 仍属于敏感数据，只能通过管理员决策链查看。
 10. Scope 只控制能力可见性；不可信插件必须进程或沙箱隔离。
 11. 生产机不编译源码，只运行本地 / CI 产物。
 12. 未通过安全、顺序、重复发送和跨会话隔离 eval，不启用生产 AI。
@@ -683,6 +695,7 @@ F5.13 将受管配置升级到 v7，并兼容读取 v1-v6。每次成功保存�
 21. `allowlist` 必须在任何媒体下载或模型调用前校验发送者；未获准账号不能进入 Planner、Replyer、Vision 或 Transcriber，且名单身份不能写入日志或审计。
 22. 生产 AI 首次启用或已启用路由变更时，所有 `replyer` 和已配置 `planner` 候选都必须持有与当前模型配置和质量语料版本匹配的资格。
 23. Agent 诊断的 Planner 与 Replyer 请求必须隔离；只有合法 Planner 决策和精确固定 Replyer 回复同时成立才能通过，任意文本不能视为成功。
+24. 决策链只能保存 Provider 实际返回的明文 reasoning；`redacted_thinking` 只能保存不可逆摘要式签名和隐藏标记，不能推测或伪造隐藏思维。
 
 ## 十七、当前尚需产品确认
 

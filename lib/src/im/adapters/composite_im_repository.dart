@@ -204,6 +204,35 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<ImMessage> sendComposedTextMessage({
+    required String conversationId,
+    required ImComposedText message,
+    String? replyToMessageId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    if (replyToMessageId != null) {
+      _requireMatchingSource(registration, replyToMessageId, 'Reply message');
+    }
+    for (final part in message.parts.where((part) => part.isMention)) {
+      _requireMatchingSource(
+        registration,
+        part.mentionedUserId!,
+        'Mentioned user',
+      );
+    }
+    final localMessage = message.mapMentionUserIds(ImSourceAddress.localIdOf);
+    final sent = await registration.repository.sendComposedTextMessage(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      message: localMessage,
+      replyToMessageId:
+          replyToMessageId == null
+              ? null
+              : ImSourceAddress.localIdOf(replyToMessageId),
+    );
+    return _scopeMessage(registration, sent);
+  }
+
+  @override
   Future<ImMessage> sendStickerMessage({
     required String conversationId,
     required ImStickerReference sticker,

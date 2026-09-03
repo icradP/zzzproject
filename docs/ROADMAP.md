@@ -261,6 +261,7 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 参考项目：
 
 - [MaiBot](https://github.com/Mai-with-u/MaiBot)：参考 Bot 服务、人格和群聊交互设计。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：参考会话事件、作用域、核心服务和 Tool Runtime 设计。
 - [ZZZeroUID](https://github.com/ZZZure/ZZZeroUID)：作为 Fairy 插件参考，通过 UID 查询绝区零相关信息。
 
 需要提前明确：AI 模型来源、费用预算、上下文保存周期、隐私策略、群管理权限和内容安全策略。
@@ -555,6 +556,16 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 实现提交 `2f612c2` 已推送，GitHub Actions CI/CD 运行 `33705851757` 成功；release `2f612c2de710` 已由本地构建静态 Linux x86-64 制品、通过 Alpine smoke 后按哈希校验和回滚保护部署，生产服务器未编译源码。`zzz-im`、`zzz-fairy` 均为 active，本地与远端制品哈希一致，`/health`、`/ready` 和生产固定严格诊断均通过。
 - 管理页已使用生产脱敏 Model Health 数据在 1440x1000 与 390x844 视口验收；Repair 列与模型行对齐，移动端表格独立横向滚动，页面无全局横向溢出或控制台错误。生产保持 schema v10 revision 3 active，`production_ready=true`、`agent_configured=true`；`ai_enabled=false`、`agent_enabled=false`、rollout 为 `off`。M8 继续暂停。
 
+当前进度（M7 Agent 化 F5.24，决策链、插件宿主与管理信息架构已本地实现、待发布）：
+
+- 以 DSH 的会话事件流为数据骨架、MaiBot 的推理浏览体验为展示参考，新增按 Turn 串联 Admission、Gate、Planner、Replyer、模型调用、工具调用/结果和最终状态的决策链。Provider 明确返回的 `thinking` 原样保存；`redacted_thinking` 不可恢复明文，只保存不可逆摘要式签名和“已隐藏”标记。
+- 新增 Fairy 本机管理 API `GET /admin/decision-chains` 和 IM 管理代理 `GET /admin/api/fairy/decision-chains`；管理页 Decisions 分类每 5 秒刷新，桌面端采用会话列表与详情双栏，移动端自动切为单栏。该页面属于敏感管理数据面，只通过既有管理鉴权开放。
+- Fairy 管理页由单一长页面拆为 Runtime、Models、Behavior、Plugins & Tools、Decisions 横向分类；窄屏分类栏独立横向滚动，不制造页面级横向溢出。
+- 新增插件 Manifest、组件注册、Capability Context、Hook/Event Bus、依赖与最低版本排序、生命周期 disposer、卸载和热重载。可信编译期插件使用进程内 Runner；宿主保留隔离 Runner 注入边界，外部工具继续使用既有 MCP 子进程和 Tool Runtime 安全层，不开放网页上传或执行任意插件代码。
+- `context-memory`、`fact-memory`、`self-cognition` 已迁为内置插件；命令、Prompt 和 Tool 从宿主当前运行快照动态解析，插件卸载后立即不可见，重载不会继续调用旧实例。Manifest 默认启用值仅在没有显式配置时生效。
+- 私聊 Fairy 的最终回复不再引用触发消息；群聊仍保留引用，后续平台 Adapter 可在插件业务配置中覆盖引用策略。
+- 当前代码与管理页面尚未提交、推送或部署；生产仍运行 F5.23，rollout 保持 `off`，M8 继续暂停。
+
 ### M1-M7 使用体验修复批次（已完成并上线）
 
 M8 暂停期间，优先处理生产使用中确认的以下问题：
@@ -580,6 +591,14 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 - `icrad.ltd` 已完成服务端背景上传、纯色背景、账号 ID 隐藏、好友请求通知、无头像建群、WebM 语音、手动定位以及 Block/Unblock 关系语义的生产 WSS smoke。
 - PWA 已部署为 `fd8e376-root`；公网资源清单版本为 `9009ed8366356fda`，构建总量 `60,260,007` bytes，首页、IM、Fairy 和 Nginx 健康检查正常。
 - M8 继续暂停，下一批工作以实际使用反馈为准，不在本批次中恢复实时音视频开发。
+
+### M1-M7 使用体验修复第二批（已本地实现、待发布）
+
+1. 群聊输入框输入 `@` 后按当前群成员实时补全，可按昵称或账号过滤；ZZZ Server 发送原生 `at + text` 消息段，缺少结构化提及能力的平台 Adapter 降级为普通文本。
+2. 手机比例下 Messages 标题/联系人入口与会话列表支持上下互换，选择保存在本地；宽屏布局保持不变。
+3. 群成员列表头像可点击并打开对应成员名片。
+
+本批次已增加 Flutter 组件测试和 ZZZ Server 消息段测试；当前尚未提交、推送或部署，M8 继续暂停。
 
 ### 2. 语音房间
 
@@ -610,7 +629,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.23 已部署；MiMo 的 Planner/Replyer 路由均已配置且取得资格，结构化响应单次修复与严格诊断通过，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.23 已部署；F5.24 决策链、插件宿主和管理分类已本地实现、待发布；生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

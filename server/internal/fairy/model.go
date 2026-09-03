@@ -89,6 +89,13 @@ type ModelRequest struct {
 type ModelResponse struct {
 	Text      string
 	ToolCalls []ModelToolCall
+	Reasoning []ModelReasoningBlock
+}
+
+type ModelReasoningBlock struct {
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Redacted  bool   `json:"redacted,omitempty"`
 }
 
 type ModelFailureCode string
@@ -319,6 +326,7 @@ func (r *ModelRouter) CompleteRequest(ctx context.Context, request ModelRequest)
 			duration := time.Since(startedAt)
 			if failure == nil {
 				r.appendModelTrace(traceScope, task, provider, model, request, attempt, modelIndex > 0, duration, completion.Usage, nil)
+				r.appendReasoningTrace(traceScope, task, provider, model, request, attempt, modelIndex > 0, completion.Response.Reasoning)
 				return completion.Response, nil
 			}
 			failure.ProviderID = provider.ID
@@ -500,8 +508,13 @@ func (r *ModelRouter) completeOpenAICompatibleAttempt(
 	}
 	var decoded struct {
 		Choices []struct {
-			Message      ChatMessage `json:"message"`
-			FinishReason string      `json:"finish_reason"`
+			Message struct {
+				Content          string          `json:"content"`
+				ToolCalls        []ModelToolCall `json:"tool_calls"`
+				ReasoningContent string          `json:"reasoning_content"`
+				Reasoning        string          `json:"reasoning"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -526,8 +539,15 @@ func (r *ModelRouter) completeOpenAICompatibleAttempt(
 	if err := validateModelResponse(message.Content, message.ToolCalls, modelRequest.RequireJSON); err != nil {
 		return modelCompletion{}, &ModelFailure{Code: ModelFailureInvalidResponse, FallbackAllowed: true, cause: err}
 	}
+	reasoning := message.ReasoningContent
+	if reasoning == "" {
+		reasoning = message.Reasoning
+	}
 	return modelCompletion{
-		Response: ModelResponse{Text: limitRunes(message.Content, 4000), ToolCalls: message.ToolCalls},
+		Response: ModelResponse{
+			Text: limitRunes(message.Content, 4000), ToolCalls: message.ToolCalls,
+			Reasoning: reasoningBlocks(reasoning),
+		},
 		Usage: ModelUsage{
 			InputTokens:  validUsageTokens(decoded.Usage.PromptTokens),
 			OutputTokens: validUsageTokens(decoded.Usage.CompletionTokens),
@@ -688,6 +708,44 @@ func (r *ModelRouter) appendModelTrace(
 	if err := r.trace.Append(traceContext, event); err != nil {
 		log.Printf("[fairy] append model trace: %v", err)
 	}
+}
+
+func (r *ModelRouter) appendReasoningTrace(
+	scope TurnTraceScope,
+	task TaskSnapshot,
+	provider ProviderSnapshot,
+	model ModelSnapshot,
+	request ModelRequest,
+	attempt int,
+	fallback bool,
+	blocks []ModelReasoningBlock,
+) {
+	if r.trace == nil || len(blocks) == 0 {
+		return
+	}
+	for _, block := range blocks {
+		event := TraceEvent{
+			Time: time.Now(), Type: TraceModelReasoning,
+			TraceID: scope.TraceID, TurnID: scope.TurnID, ConversationID: scope.ConversationID,
+			Source: scope.Source, Status: "completed",
+			TaskID: task.ID, ProviderID: provider.ID, ModelID: model.ID, SnapshotID: r.snapshot.ID,
+			Step: request.Step, Repair: request.Repair, Attempt: attempt, Fallback: fallback,
+			Content: block.Text, Signature: block.Signature, Redacted: block.Redacted,
+		}
+		traceContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := r.trace.Append(traceContext, event)
+		cancel()
+		if err != nil {
+			log.Printf("[fairy] append model reasoning trace: %v", err)
+		}
+	}
+}
+
+func reasoningBlocks(content string) []ModelReasoningBlock {
+	if content == "" {
+		return nil
+	}
+	return []ModelReasoningBlock{{Text: content}}
 }
 
 func cloneModelRequest(request ModelRequest) ModelRequest {

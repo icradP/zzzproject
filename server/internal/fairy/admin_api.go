@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +25,7 @@ type AdminAPI struct {
 	modelTestSlot   chan struct{}
 	probe           func(context.Context, Config, string) (ModelProbeResult, error)
 	agentDiagnostic func(context.Context, string) (AgentDiagnosticResult, error)
+	decisionChains  func(context.Context, int) ([]DecisionChain, error)
 	qualityEval     *qualityEvalJobManager
 }
 
@@ -75,6 +77,9 @@ func NewAdminAPIWithRuntimeContext(
 	if runner, ok := runtime.(AgentDiagnosticRunner); ok {
 		api.agentDiagnostic = runner.RunAgentDiagnostic
 	}
+	if reader, ok := runtime.(DecisionChainAdminRuntime); ok {
+		api.decisionChains = reader.DecisionChains
+	}
 	return api
 }
 
@@ -95,10 +100,44 @@ func (a *AdminAPI) ServeHTTP(response http.ResponseWriter, request *http.Request
 		a.serveModelEvaluation(response, request)
 	case "/admin/agent-diagnostic":
 		a.serveAgentDiagnostic(response, request)
+	case "/admin/decision-chains":
+		a.serveDecisionChains(response, request)
 	default:
 		a.writeError(response, http.StatusNotFound, "Fairy admin endpoint not found")
 	}
 	return
+}
+
+func (a *AdminAPI) serveDecisionChains(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET")
+		a.writeError(response, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if a.decisionChains == nil {
+		a.writeError(response, http.StatusServiceUnavailable, "Fairy decision chain unavailable")
+		return
+	}
+	limit := defaultDecisionChainLimit
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > maxDecisionChainLimit {
+			a.writeError(response, http.StatusBadRequest, "invalid Fairy decision-chain limit")
+			return
+		}
+		limit = parsed
+	}
+	limits, hasLimit := request.URL.Query()["limit"]
+	if len(request.URL.Query()) > 1 || hasLimit && len(limits) != 1 || !hasLimit && request.URL.RawQuery != "" {
+		a.writeError(response, http.StatusBadRequest, "invalid Fairy decision-chain query")
+		return
+	}
+	chains, err := a.decisionChains(request.Context(), limit)
+	if err != nil {
+		a.writeError(response, http.StatusServiceUnavailable, "Fairy decision chain unavailable")
+		return
+	}
+	a.writeJSON(response, http.StatusOK, map[string]interface{}{"chains": chains})
 }
 
 func (a *AdminAPI) serveAgentDiagnostic(response http.ResponseWriter, request *http.Request) {

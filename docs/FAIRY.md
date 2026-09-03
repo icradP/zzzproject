@@ -17,24 +17,25 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 - 事实召回按“私聊用户 + 会话”或群聊范围隔离，以 `user` 角色的不可信 JSON 注入，不会成为 system 指令；单范围最多 30 条、6000 字，单条最多 300 字，疑似凭据拒绝保存。关闭只停止召回，不暗中删除已有事实。
 - 在调用外部模型前拦截高置信的私钥、Bearer、密码、API Key、Token 和 Cookie；被拦截内容不进入上下文、不消耗额度，也不会发送给模型供应商。
 - AI 支持 OpenAI-compatible Chat Completions 与 Anthropic-compatible Messages，可按供应商动态配置；模型未配置时，帮助、群管理和 ZZZ 插件仍可使用。
-- 管理后台通过回环地址代理 Fairy 自己的管理 API，可配置模型、人格、行为、上下文、额度和已注册插件，并查看不含正文的 Scheduler、Gate、Tool、Token、成本与事实数量聚合；管理响应不返回事实内容、用户 ID 或 scope ID，IM 核心不执行模型或插件代码。Fairy 页面还提供固定合成 Agent 诊断，可验证 Planner -> Replyer 链路而不发送 IM 消息、不执行工具、不读取用户会话，结果只显示状态、耗时和经过输出策略的短回复。
+- 管理后台通过回环地址代理 Fairy 自己的管理 API，可配置模型、人格、行为、上下文、额度和已注册插件。Fairy 页面按 Runtime、Models、Behavior、Plugins & Tools、Decisions 分类：运行态继续展示脱敏聚合，Decisions 则作为受管理鉴权保护的敏感数据面，按 Turn 展示 Provider 明文 thinking、Planner、Replyer、工具调用与结果。IM 核心不执行模型或插件代码。页面还提供固定合成 Agent 诊断，可验证 Planner -> Replyer 链路而不发送 IM 消息、不执行工具、不读取用户会话。
 - AI 调用默认每天最多 200 次；全局总额度与各 Task 独立额度原子持久化并按 UTC 日期重置。
 - `/zzz <UID>` 通过 Enka.Network 查询游戏内公开展示资料，按上游 TTL 缓存；不需要也不接收米游社 Cookie。
 - `zzz-profile` 已迁移到统一 Tool Pipeline：注册时校验输入/输出 Schema，执行时依次经过可见性、授权、风险、副作用、调用次数、超时、输出大小和脱敏检查。工具只返回结构化结果，模型投影会标记为不可信外部数据。
 - 私聊或明确 `@Fairy` 的群消息可用包含唯一 9/10 位 UID 且同时包含“绝区零”“UID”“代理人”或“公开资料”的自然语言查询；没有关键词、包含多个 UID 或长度不合法时不会调用工具。
 - 消息按会话 FIFO 执行，同一会话最多一个活跃 Turn；重复入站 message ID 会被 SQLite 幂等记录拦截，达到并发上限时进入有界队列而不是静默丢弃。
-- Fairy 回复在确认超时或连接断开时会在当前进程内最多尝试 3 次；所有尝试复用同一个 `client_message_id`，服务端返回原消息而不会重复广播。回复正文不写入磁盘，进程重启后不自动重放。
+- Fairy 回复在确认超时或连接断开时会在当前进程内最多尝试 3 次；所有尝试复用同一个 `client_message_id`，服务端返回原消息而不会重复广播。私聊直接发送最终回复，不引用触发消息；群聊仍引用触发消息。回复正文可作为受限决策链事件保存在 `fairy.db`，但进程重启后不自动重放。
 - 只有确认发送成功的模型最终回复可以接收显式质量反馈。用户用 `👍`（Reaction ID `76`）或 `👎`（Reaction ID `fairy-negative`）评价；改评按同一用户覆盖，取消 Reaction 删除当前匹配评价，回复被撤回后同步删除关联记录。命令、插件直出、错误和限流回复不参与统计。
 - `/fairy stop` 可抢占当前会话正在执行的 Turn。关闭或管理配置重启时先停止接纳，再按超时 drain/cancel。
-- `fairy.db` 只保存入站去重、脱敏 Turn / Model / Tool / Gate 元数据和显式质量反馈并默认保留 30 天；反馈仅保存消息与评价者的 HMAC 引用、随机 Turn ID、正负标签和时间，不保存原始消息、用户、会话 ID 或正文。Tool Trace 不记录 UID、完整参数或工具结果正文，Gate 只记录固定 action/reason，会话标识以部署随机密钥做 HMAC。
+- `fairy.db` 保存入站去重、Turn / Model / Tool / Gate 事件、决策链和显式质量反馈并默认保留 30 天。会话标识仍使用部署随机密钥做 HMAC，Prompt 与用户原始消息正文不保存；决策链会保存 Provider 实际返回的明文 `thinking`、Planner/Replyer 输出以及不含高置信凭据的工具参数和投影结果，因此必须按敏感管理数据保护。Provider 的 `redacted_thinking` 只保存不可逆摘要式签名和“已隐藏”标记，不能恢复或伪造明文。反馈仍只保存消息与评价者的 HMAC 引用、随机 Turn ID、正负标签和时间。
 - 通用 `send_message` 协议支持可选 `client_message_id`。服务端按“发送者 + 客户端消息 ID”持久化去重；相同内容重试返回原消息且不再次广播/推送，不同内容复用同一 ID 会被拒绝。Fairy 的出站消息默认携带该键。
 - 普通闲聊继续只调用一次 `replyer`；配置 `planner` Task 后，明确的工具意图或 `/fairy agent <请求>` 会进入最多 4 Step 的 `planner -> tools -> replyer` Loop。Planner 只能提交原生 Tool Call 或严格 JSON Decision，不能直接发送消息或绕过 Tool Pipeline。
+- Fairy 插件宿主提供 Manifest、组件注册、Capability Context、Hook/Event、依赖和最低版本检查、生命周期 disposer、卸载与热重载。`context-memory`、`fact-memory`、`self-cognition` 和旧命令插件都通过同一宿主管理；Tool Runtime 每次从当前插件快照解析工具，卸载或重载不会留下旧实例。可信编译期插件使用进程内 Runner；外部工具继续使用 MCP 子进程，管理页不允许上传或执行任意插件代码。
 - Fairy 可启动显式配置的可信 MCP stdio Provider，并把获准的只读工具以 `provider-id.tool-name` 注册到同一 Tool Pipeline。存在外部工具时，自然语言请求统一先进入 Planner，避免用关键词猜测第三方工具意图；这会增加一次 Planner 调用，应计入模型额度和成本预算。
 - 配置 `vision` 后，Fairy 可理解最多 4 张已校验图片；配置 `transcriber` 后，可转写 1 条不超过 10 MB / 2 分钟的服务端语音。未配置对应 Task 时不下载附件、不调用模型，也不会把图片说明文字脱离图片交给 Replyer 猜测。
 - 服务端媒体只读取同源 `/files/`；外部仅接受经过 DNS、拨号、重定向、私网地址、响应大小、MIME、签名和图片尺寸检查的 HTTPS 图片，外部语音拒绝。图片 URL、字节、转写和描述正文不写入 Trace。
 - 媒体分析结果作为明确的不可信 `user` 数据交给 `replyer`，不会进入 Planner 或触发 MCP Tool；疑似凭据的转写/描述会在 Replyer 前拒绝，失败 Turn 不写入上下文。
 - Planner、Replyer、媒体 Task 和工具共用一个可取消 Turn；每个 Turn 最多执行 6 次工具并最多发送一次最终回复。模型额度按每次 Planner / Replyer / Vision / Transcriber 逻辑调用分别计数，Provider 内部 Retry 不重复占用该额度。
-- Prompt 按 `identity`、`persona`、`platform`、`safety`、`task`、`tools`、`expression` 和 `runtime_context` 分段组装；表达档位支持 `brief / normal / detailed`。Trace 只记录 section 版本和使用部署 `trace.key` 生成的 HMAC，不记录正文。工具投影始终按不可信外部数据处理，最终回复还会经过空值、长度、疑似凭据和危险链接检查。
+- Prompt 按 `identity`、`persona`、`platform`、`safety`、`task`、`tools`、`expression` 和 `runtime_context` 分段组装；表达档位支持 `brief / normal / detailed`。Prompt Trace 只记录 section 版本和使用部署 `trace.key` 生成的 HMAC，不记录 Prompt 正文。工具投影始终按不可信外部数据处理，最终回复还会经过空值、长度、疑似凭据和危险链接检查。
 - 管理员可维护最多 64 条只读行为经验，每条包含作用域、最多 12 个关键词、场景、建议动作和观察结果。Fairy 只用用户原始文本确定性选择最多 3 条作为 advisory JSON 注入 Planner / Replyer；媒体识别文本不参与召回，聊天与模型均不能写回，自动学习固定关闭。
 
 ## 指令

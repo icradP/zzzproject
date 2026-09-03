@@ -39,6 +39,17 @@ abstract class ImRepository {
     String? replyToMessageId,
   });
 
+  /// Sends semantic mentions when the source supports message segments.
+  Future<ImMessage> sendComposedTextMessage({
+    required String conversationId,
+    required ImComposedText message,
+    String? replyToMessageId,
+  }) => sendTextMessage(
+    conversationId: conversationId,
+    text: message.plainText,
+    replyToMessageId: replyToMessageId,
+  );
+
   /// Send a bundled sticker by stable catalog reference. Sources that do not
   /// understand ZZZ sticker segments may degrade it to a text placeholder.
   Future<ImMessage> sendStickerMessage({

@@ -15,24 +15,48 @@ import (
 	"github.com/icradp/zzz-im-server/internal/protocol"
 )
 
-const helpText = `Fairy 可用指令
-/fairy help - 查看帮助
-/fairy stop - 停止当前会话正在执行的 Fairy 任务
-/fairy clear - 清除当前会话的临时上下文
-/fairy status - 查看群开关、记忆和 AI 状态
-/fairy privacy - 查看隐私说明
-/fairy memory on|off - 开启或关闭当前会话的临时记忆
-/fairy facts on|off - 开启或关闭来源化事实记忆（默认关闭）
-/fairy facts list [页码] - 查看当前范围的事实及来源
-/fairy remember <事实> - 显式保存一条事实
-/fairy forget <事实ID|all> - 删除一条或全部事实
-/fairy quota - 查看今日 AI 调用额度
-/fairy on|off - 群主或管理员开启/关闭群回复
-/fairy proactive off|shadow|on - 设置群聊软触发模式
-/fairy agent <请求> - 使用 Planner 处理需要工具或多步骤的请求
-/zzz <UID> - 查询绝区零公开展示资料
-
-私聊可直接提问；群聊默认只有 @Fairy 或 /fairy、/zzz 指令会触发。群管理员可单独设置软触发模式。临时上下文仅保存在进程内存中；事实记忆默认关闭，只有明确保存的内容才会写入 Fairy 自己的数据库。`
+func (e *Engine) helpText() string {
+	lines := []string{
+		"Fairy 可用指令",
+		"/fairy help - 查看帮助",
+		"/fairy stop - 停止当前会话正在执行的 Fairy 任务",
+		"/fairy status - 查看群开关、插件和 AI 状态",
+		"/fairy privacy - 查看隐私说明",
+		"/fairy quota - 查看今日 AI 调用额度",
+		"/fairy on|off - 群主或管理员开启/关闭群回复",
+		"/fairy proactive off|shadow|on - 设置群聊软触发模式",
+		"/fairy agent <请求> - 使用 Planner 处理需要工具或多步骤的请求",
+	}
+	disabled := make([]string, 0, 3)
+	if e.pluginRunning(ContextMemoryPluginID) {
+		lines = append(lines,
+			"/fairy clear - 清除当前会话的临时上下文",
+			"/fairy memory on|off - 开启或关闭当前会话的临时记忆",
+		)
+	} else {
+		disabled = append(disabled, "临时记忆")
+	}
+	if e.pluginRunning(FactMemoryPluginID) {
+		lines = append(lines,
+			"/fairy facts on|off - 开启或关闭来源化事实记忆（默认关闭）",
+			"/fairy facts list [页码] - 查看当前范围的事实及来源",
+			"/fairy remember <事实> - 显式保存一条事实",
+			"/fairy forget <事实ID|all> - 删除一条或全部事实",
+		)
+	} else {
+		disabled = append(disabled, "事实记忆")
+	}
+	if e.pluginRunning(ZZZProfilePluginID) {
+		lines = append(lines, "/zzz <UID> - 查询绝区零公开展示资料")
+	} else {
+		disabled = append(disabled, "ZZZ 资料查询")
+	}
+	lines = append(lines, "", "私聊可直接提问；群聊默认只有 @Fairy 或指令会触发，群管理员可单独设置软触发模式。")
+	if len(disabled) > 0 {
+		lines = append(lines, "服务器未启用："+strings.Join(disabled, "、")+"。")
+	}
+	return strings.Join(lines, "\n")
+}
 
 type botMessenger interface {
 	SendText(ctx context.Context, conversationID, messageID, text string) error
@@ -45,6 +69,7 @@ type Engine struct {
 	contexts         *ContextStore
 	model            Model
 	plugins          []Plugin
+	pluginHost       *PluginHost
 	tools            *ToolRuntime
 	agent            *AgentRuntime
 	prompts          PromptAssembler
@@ -54,7 +79,6 @@ type Engine struct {
 	behavior         atomic.Value
 	gate             *MessageGate
 	trace            TraceStore
-	facts            FactMemoryStore
 	mediaFetcher     *mediaFetcher
 	hasExternalTools bool
 }
@@ -81,18 +105,17 @@ func NewEngineWithExternalTools(cfg Config, state *StateStore, model Model, trac
 		}
 		externalCount++
 	}
-	legacyPlugins := make([]Plugin, 0, len(plugins))
-	for _, plugin := range plugins {
-		toolPlugin, ok := plugin.(ToolPlugin)
-		if !ok {
-			legacyPlugins = append(legacyPlugins, plugin)
-			continue
+	contextStore := NewContextStore(cfg.ContextTTL, cfg.ContextMessages)
+	pluginHost, pluginErr := NewPluginHost(context.Background(), cfg, map[string]any{
+		"fairy.state": state, "fairy.trace": trace,
+	}, BuiltinPluginFactories(contextStore, facts, plugins...)...)
+	if pluginErr != nil {
+		log.Printf("[fairy] initialize plugin host: %v", pluginErr)
+	}
+	if pluginHost != nil {
+		if err := registry.SetDynamicProvider(pluginHost.Tools); err != nil {
+			log.Printf("[fairy] register dynamic plugin tools: %v", err)
 		}
-		if err := registry.Register(toolPlugin); err != nil {
-			log.Printf("[fairy] register tool plugin %s: %v", plugin.Name(), err)
-			continue
-		}
-		legacyPlugins = append(legacyPlugins, plugin)
 	}
 	toolRuntime := NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, trace)
 	fetcher, err := newMediaFetcher(cfg.ServerURL)
@@ -100,28 +123,35 @@ func NewEngineWithExternalTools(cfg Config, state *StateStore, model Model, trac
 		log.Printf("[fairy] initialize media fetcher: %v", err)
 	}
 	engine := &Engine{
-		cfg:              cfg,
-		state:            state,
-		contexts:         NewContextStore(cfg.ContextTTL, cfg.ContextMessages),
-		model:            model,
-		plugins:          legacyPlugins,
+		cfg:      cfg,
+		state:    state,
+		contexts: contextStore,
+		model:    model,
+		// Keep disabled legacy commands visible to the dispatcher so it can return
+		// an explicit disabled response. Enabled contributions are still owned by
+		// PluginHost and ToolRuntime.
+		plugins:          append([]Plugin(nil), plugins...),
+		pluginHost:       pluginHost,
 		tools:            toolRuntime,
-		prompts:          NewPromptAssembler(cfg.SystemPrompt, promptDigesterFromTrace(trace)),
+		prompts:          NewPromptAssembler(cfg.SystemPrompt, promptDigesterFromTrace(trace)).WithPluginHost(pluginHost),
 		now:              time.Now,
 		lastCall:         make(map[string]time.Time),
 		gate:             NewMessageGate(cfg.UserID, state),
 		trace:            trace,
-		facts:            facts,
 		mediaFetcher:     fetcher,
 		hasExternalTools: externalCount > 0,
 	}
 	engine.behavior.Store(behaviorConfigFromConfig(cfg))
-	engine.agent = NewAgentRuntime(cfg, model, toolRuntime)
+	engine.agent = NewAgentRuntimeWithPluginHost(cfg, model, toolRuntime, pluginHost)
 	return engine
 }
 
 func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, event messageEvent) {
 	if ctx.Err() != nil {
+		return
+	}
+	if err := e.emitPluginEvent(ctx, PluginHookBeforeGate, event.ConversationID, &event); err != nil {
+		log.Printf("[fairy] before-gate plugin hook: %v", err)
 		return
 	}
 	behavior := e.BehaviorConfig()
@@ -158,16 +188,12 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 	if forcedAgent {
 		request.Text = agentText
 	}
-	for _, plugin := range e.plugins {
+	for _, plugin := range e.activeCommandPlugins() {
 		if forcedAgent {
 			break
 		}
 		if !plugin.Match(request) {
 			continue
-		}
-		if !e.cfg.IsPluginEnabled(plugin.Name()) {
-			e.reply(ctx, messenger, event, "该 Fairy 插件已由服务器管理员停用。")
-			return
 		}
 		if toolPlugin, ok := plugin.(ToolPlugin); ok {
 			call, matched := toolPlugin.BuildToolCall(request)
@@ -208,6 +234,12 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		}
 		return
 	}
+	for _, plugin := range e.plugins {
+		if plugin.Match(request) && !e.pluginRunning(plugin.Name()) {
+			e.reply(ctx, messenger, event, "该 Fairy 插件已由服务器管理员停用。")
+			return
+		}
+	}
 	if e.cfg.EffectiveAIRolloutMode() == AIRolloutAllowlist && !e.cfg.AIUserAllowed(event.Sender.UserID) {
 		if !isGroup {
 			e.reply(ctx, messenger, event, "Fairy AI 当前仅向灰度账号开放；管理指令和 ZZZ 查询仍可使用。")
@@ -242,15 +274,17 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 	}
 	now := e.now()
 	contextKey := event.ConversationID
-	memoryEnabled := e.state.ContextEnabled(contextKey)
+	contextMemory, contextMemoryAvailable := e.contextMemory()
+	memoryEnabled := contextMemoryAvailable && e.state.ContextEnabled(contextKey)
 	history := make([]ChatMessage, 0, e.cfg.ContextMessages)
 	if memoryEnabled {
-		history = e.contexts.Snapshot(contextKey, now)
+		history = contextMemory.Snapshot(contextKey, now)
 	}
 	factScope := factScopeForEvent(event)
-	if e.facts != nil && e.state.FactMemoryEnabled(factScope) {
+	factMemory, factMemoryPluginAvailable := e.factMemory()
+	if factMemoryPluginAvailable && factMemory != nil && e.state.FactMemoryEnabled(factScope) {
 		factContext, cancel := requestTimeout(ctx, 5*time.Second)
-		memories, factErr := e.facts.List(factContext, factScope, now)
+		memories, factErr := factMemory.List(factContext, factScope, now)
 		cancel()
 		if factErr != nil {
 			log.Printf("[fairy] recall fact memories: %v", factErr)
@@ -278,6 +312,11 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		SourceTimeMS: event.Timestamp * 1000,
 	}
 	history = append(history, userMessage)
+	if err := e.emitPluginEvent(ctx, PluginHookBeforePrompt, event.ConversationID, &history); err != nil {
+		log.Printf("[fairy] before-prompt plugin hook: %v", err)
+		e.reply(ctx, messenger, event, "Fairy 的扩展组件暂时不可用，本次没有调用 AI。")
+		return
+	}
 	behaviorExperiences := selectBehaviorExperiences(e.cfg.BehaviorExperiences, event.MessageType, request.Text)
 	var response string
 	var err error
@@ -323,11 +362,65 @@ func (e *Engine) HandleMessage(ctx context.Context, messenger botMessenger, even
 		return
 	}
 	if memoryEnabled {
-		e.contexts.Append(contextKey, now, userMessage, ChatMessage{
+		contextMemory.Append(contextKey, now, userMessage, ChatMessage{
 			Role: "assistant", Content: response, SourceTimeMS: now.UnixMilli(),
 		})
 	}
 	e.reply(withFeedbackEligible(ctx), messenger, event, response)
+	if err := e.emitPluginEvent(ctx, PluginHookAfterReply, event.ConversationID, response); err != nil {
+		log.Printf("[fairy] after-reply plugin hook: %v", err)
+	}
+}
+
+func (e *Engine) emitPluginEvent(ctx context.Context, name PluginHookName, conversationID string, data any) error {
+	if e == nil || e.pluginHost == nil {
+		return nil
+	}
+	event := &PluginEvent{Name: name, ConversationID: conversationID, Data: data}
+	if scope, ok := turnTraceScopeFromContext(ctx); ok {
+		event.TraceID = scope.TraceID
+		event.TurnID = scope.TurnID
+	}
+	return e.pluginHost.Emit(ctx, event)
+}
+
+func (e *Engine) ClosePlugins(ctx context.Context) error {
+	if e == nil || e.pluginHost == nil {
+		return nil
+	}
+	return e.pluginHost.Close(ctx)
+}
+
+func (e *Engine) pluginRunning(id string) bool {
+	return e != nil && e.pluginHost != nil && e.pluginHost.Running(id)
+}
+
+func (e *Engine) activeCommandPlugins() []Plugin {
+	if e == nil || e.pluginHost == nil {
+		return nil
+	}
+	return e.pluginHost.Commands()
+}
+
+func (e *Engine) contextMemory() (*ContextStore, bool) {
+	if e == nil || e.pluginHost == nil {
+		return nil, false
+	}
+	capability, ok := e.pluginHost.Capability("memory.context")
+	store, valid := capability.(*ContextStore)
+	return store, ok && valid && store != nil
+}
+
+func (e *Engine) factMemory() (FactMemoryStore, bool) {
+	if e == nil || e.pluginHost == nil {
+		return nil, false
+	}
+	capability, ok := e.pluginHost.Capability("memory.fact")
+	wrapper, valid := capability.(*factMemoryCapability)
+	if !ok || !valid || wrapper == nil {
+		return nil, false
+	}
+	return wrapper.Store(), true
 }
 
 func (e *Engine) BehaviorConfig() BehaviorConfig {
@@ -443,9 +536,16 @@ func (e *Engine) completeChat(ctx context.Context, input AgentInput) (string, er
 		if len(response.ToolCalls) != 0 {
 			return "", &AgentFailure{Code: AgentFailureInvalidReply}
 		}
-		return ApplyOutputPolicy(response.Text, maxFinalReplyRunes)
+		reply, policyErr := ApplyOutputPolicy(response.Text, maxFinalReplyRunes)
+		status := "completed"
+		if policyErr != nil {
+			status = "failed"
+		}
+		appendAgentDecisionTrace(ctx, e.trace, TraceReplyerResult, status, request, response.Text, nil)
+		return reply, policyErr
 	}
 	messages := e.prompts.ReplyerMessages(input, "", nil)
+	request := ModelRequest{TaskID: ReplyerTaskID, Messages: messages}
 	if err := e.reserveModelCall(ReplyerTaskID); err != nil {
 		return "", err
 	}
@@ -453,7 +553,13 @@ func (e *Engine) completeChat(ctx context.Context, input AgentInput) (string, er
 	if err != nil {
 		return "", err
 	}
-	return ApplyOutputPolicy(response, maxFinalReplyRunes)
+	reply, policyErr := ApplyOutputPolicy(response, maxFinalReplyRunes)
+	status := "completed"
+	if policyErr != nil {
+		status = "failed"
+	}
+	appendAgentDecisionTrace(ctx, e.trace, TraceReplyerResult, status, request, response, nil)
+	return reply, policyErr
 }
 
 func (e *Engine) prepareMediaPrompt(ctx context.Context, summary mediaInputSummary, caption string) (string, error) {
@@ -579,7 +685,7 @@ func (e *Engine) visibleTools() map[string]bool {
 		return visible
 	}
 	for _, name := range e.tools.registry.Names() {
-		if knownPlugin(name) && !e.cfg.IsPluginEnabled(name) {
+		if knownPlugin(name) && !e.pluginRunning(name) {
 			continue
 		}
 		visible[name] = true
@@ -591,9 +697,9 @@ func (e *Engine) matchesToolIntent(request PluginRequest) bool {
 	if e.hasExternalTools {
 		return true
 	}
-	for _, plugin := range e.plugins {
+	for _, plugin := range e.activeCommandPlugins() {
 		matcher, ok := plugin.(ToolIntentMatcher)
-		if ok && e.cfg.IsPluginEnabled(plugin.Name()) && matcher.MatchToolIntent(request) {
+		if ok && matcher.MatchToolIntent(request) {
 			return true
 		}
 	}
@@ -700,7 +806,7 @@ func (e *Engine) handleManagement(
 		e.reply(ctx, messenger, event, "停止请求已处理；当前会话中正在执行的 Fairy 任务（如有）已停止。")
 		return true
 	case "help", "帮助":
-		e.reply(ctx, messenger, event, helpText)
+		e.reply(ctx, messenger, event, e.helpText())
 		return true
 	case "agent":
 		if strings.TrimSpace(argument) == "" {
@@ -709,14 +815,27 @@ func (e *Engine) handleManagement(
 		}
 		return false
 	case "clear", "清除", "清空":
-		e.contexts.Clear(event.ConversationID)
+		memory, available := e.contextMemory()
+		if !available {
+			e.reply(ctx, messenger, event, "Fairy 的临时记忆插件已由服务器管理员停用。")
+			return true
+		}
+		memory.Clear(event.ConversationID)
 		e.reply(ctx, messenger, event, "当前会话的 Fairy 临时上下文已清除。")
 		return true
 	case "privacy", "隐私":
+		memoryPrivacy := "临时记忆插件当前未启用，不会保留会话上下文。"
+		if e.pluginRunning(ContextMemoryPluginID) {
+			memoryPrivacy = fmt.Sprintf("临时上下文只保存在 Fairy 进程内存中，最多 %d 条，%s 后自动过期；溢出内容压缩为带来源范围的不可信摘要，状态文件、管理页和 Trace 都不保存消息正文。", e.cfg.ContextMessages, formatDuration(e.cfg.ContextTTL))
+		}
+		factPrivacy := "事实记忆插件当前未启用，不会召回或写入事实。"
+		if e.pluginRunning(FactMemoryPluginID) {
+			factPrivacy = "来源化事实记忆默认关闭，只保存你用 /fairy remember 明确提交的内容，保留来源消息 ID，180 天后过期，并可逐条或全部删除。事实正文只在 Fairy 的独立 facts.db 中保存，不写入状态文件、管理页或 Trace。"
+		}
 		e.reply(ctx, messenger, event, fmt.Sprintf(
-			"私聊内容会直接进入 Fairy；群聊普通消息先经过本地 Gate，默认 shadow 模式只记录固定分类，不调用模型、不保存正文、不回复。只有明确 @Fairy、指令，或群管理员开启 on 后同一用户 Focus 内的软触发消息才会进入回复流程。临时上下文只保存在 Fairy 进程内存中，最多 %d 条，%s 后自动过期；溢出内容压缩为带来源范围的不可信摘要，状态文件、管理页和 Trace 都不保存消息正文。来源化事实记忆默认关闭，只保存你用 /fairy remember 明确提交的内容，保留来源消息 ID，180 天后过期，并可逐条或全部删除。事实正文只在 Fairy 的独立 facts.db 中保存，不写入状态文件、管理页或 Trace。",
-			e.cfg.ContextMessages,
-			formatDuration(e.cfg.ContextTTL),
+			"私聊内容会直接进入 Fairy；群聊普通消息先经过本地 Gate，默认 shadow 模式只记录固定分类，不调用模型、不保存正文、不回复。只有明确 @Fairy、指令，或群管理员开启 on 后同一用户 Focus 内的软触发消息才会进入回复流程。%s%s",
+			memoryPrivacy,
+			factPrivacy,
 		))
 		return true
 	case "quota", "额度":
@@ -725,6 +844,11 @@ func (e *Engine) handleManagement(
 		e.reply(ctx, messenger, event, fmt.Sprintf("%s；今日已用 %d 次，剩余 %d 次（按 UTC 日期重置）。", modelStatus, used, remaining))
 		return true
 	case "memory", "记忆":
+		memory, available := e.contextMemory()
+		if !available {
+			e.reply(ctx, messenger, event, "Fairy 的临时记忆插件已由服务器管理员停用，不能修改记忆设置。")
+			return true
+		}
 		enabled, valid := parseSwitch(argument)
 		if !valid {
 			e.reply(ctx, messenger, event, "请使用 /fairy memory on 或 /fairy memory off。")
@@ -748,7 +872,7 @@ func (e *Engine) handleManagement(
 			return true
 		}
 		if !enabled {
-			e.contexts.Clear(event.ConversationID)
+			memory.Clear(event.ConversationID)
 			e.reply(ctx, messenger, event, "当前会话的临时记忆已关闭，已有上下文已立即清除；指令和插件仍可使用。")
 		} else {
 			e.reply(ctx, messenger, event, "当前会话的临时记忆已开启；只会记住明确触发 Fairy 的对话，并按时自动过期。")
@@ -770,18 +894,25 @@ func (e *Engine) handleManagement(
 				groupStatus = fmt.Sprintf("群回复已关闭，软触发模式 %s", softMode)
 			}
 		}
-		memoryStatus := "临时记忆已关闭"
-		if e.state.ContextEnabled(event.ConversationID) {
+		memoryStatus := "临时记忆插件未启用"
+		if e.pluginRunning(ContextMemoryPluginID) && !e.state.ContextEnabled(event.ConversationID) {
+			memoryStatus = "临时记忆已关闭"
+		} else if e.pluginRunning(ContextMemoryPluginID) {
 			memoryStatus = "临时记忆已开启"
 		}
-		factStatus := "事实记忆已关闭"
+		factStatus := "事实记忆插件未启用"
 		factScope := factScopeForEvent(event)
-		if e.state.FactMemoryEnabled(factScope) {
+		factMemory, factPluginAvailable := e.factMemory()
+		if factPluginAvailable && !e.state.FactMemoryEnabled(factScope) {
+			factStatus = "事实记忆已关闭"
+		} else if factPluginAvailable {
 			factStatus = "事实记忆已开启"
 		}
-		if e.facts != nil {
+		if factPluginAvailable && factMemory == nil {
+			factStatus = "事实记忆存储不可用"
+		} else if factMemory != nil {
 			factContext, cancel := requestTimeout(ctx, 5*time.Second)
-			memories, err := e.facts.List(factContext, factScope, e.now())
+			memories, err := factMemory.List(factContext, factScope, e.now())
 			cancel()
 			if err == nil {
 				factStatus += fmt.Sprintf("（%d 条）", len(memories))
@@ -796,7 +927,11 @@ func (e *Engine) handleManagement(
 			}
 			modelStatus = fmt.Sprintf("%s、%s，今日额度已用 %d 次、剩余 %d 次", e.modelAvailabilityStatus(event.Sender.UserID), agentStatus, used, remaining)
 		}
-		e.reply(ctx, messenger, event, groupStatus+"；"+memoryStatus+"；"+factStatus+"；"+modelStatus+"。")
+		selfStatus := "自我认知插件未启用"
+		if e.pluginRunning(SelfCognitionPluginID) {
+			selfStatus = "自我认知插件已启用"
+		}
+		e.reply(ctx, messenger, event, groupStatus+"；"+memoryStatus+"；"+factStatus+"；"+selfStatus+"；"+modelStatus+"。")
 		return true
 	case "proactive", "主动":
 		if !isGroup {
@@ -861,7 +996,7 @@ func (e *Engine) handleManagement(
 		return true
 	default:
 		if argument == "" && (command == "" || command == "fairy") {
-			e.reply(ctx, messenger, event, helpText)
+			e.reply(ctx, messenger, event, e.helpText())
 			return true
 		}
 	}
@@ -886,7 +1021,12 @@ func (e *Engine) modelAvailabilityStatus(userID string) string {
 }
 
 func (e *Engine) handleFactsCommand(ctx context.Context, messenger botMessenger, event messageEvent, argument string, isGroup bool) bool {
-	if e.facts == nil {
+	facts, pluginAvailable := e.factMemory()
+	if !pluginAvailable {
+		e.reply(ctx, messenger, event, "Fairy 的事实记忆插件已由服务器管理员停用。")
+		return true
+	}
+	if facts == nil {
 		e.reply(ctx, messenger, event, "Fairy 的事实记忆存储当前不可用。")
 		return true
 	}
@@ -912,7 +1052,7 @@ func (e *Engine) handleFactsCommand(ctx context.Context, messenger botMessenger,
 			page = parsed
 		}
 		factContext, cancel := requestTimeout(ctx, 5*time.Second)
-		memories, err := e.facts.List(factContext, scope, e.now())
+		memories, err := facts.List(factContext, scope, e.now())
 		cancel()
 		if err != nil {
 			log.Printf("[fairy] list fact memories: %v", err)
@@ -944,7 +1084,12 @@ func (e *Engine) handleFactsCommand(ctx context.Context, messenger botMessenger,
 }
 
 func (e *Engine) handleRememberCommand(ctx context.Context, messenger botMessenger, event messageEvent, argument string, isGroup bool) bool {
-	if e.facts == nil {
+	facts, pluginAvailable := e.factMemory()
+	if !pluginAvailable {
+		e.reply(ctx, messenger, event, "Fairy 的事实记忆插件已由服务器管理员停用。")
+		return true
+	}
+	if facts == nil {
 		e.reply(ctx, messenger, event, "Fairy 的事实记忆存储当前不可用。")
 		return true
 	}
@@ -966,7 +1111,7 @@ func (e *Engine) handleRememberCommand(ctx context.Context, messenger botMesseng
 		return true
 	}
 	factContext, cancel := requestTimeout(ctx, 5*time.Second)
-	memory, err := e.facts.Remember(factContext, scope, content, event.MessageID, e.now())
+	memory, err := facts.Remember(factContext, scope, content, event.MessageID, e.now())
 	cancel()
 	if err != nil {
 		switch {
@@ -985,7 +1130,12 @@ func (e *Engine) handleRememberCommand(ctx context.Context, messenger botMesseng
 }
 
 func (e *Engine) handleForgetCommand(ctx context.Context, messenger botMessenger, event messageEvent, argument string, isGroup bool) bool {
-	if e.facts == nil {
+	facts, pluginAvailable := e.factMemory()
+	if !pluginAvailable {
+		e.reply(ctx, messenger, event, "Fairy 的事实记忆插件已由服务器管理员停用。")
+		return true
+	}
+	if facts == nil {
 		e.reply(ctx, messenger, event, "Fairy 的事实记忆存储当前不可用。")
 		return true
 	}
@@ -1001,7 +1151,7 @@ func (e *Engine) handleForgetCommand(ctx context.Context, messenger botMessenger
 	factContext, cancel := requestTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if strings.EqualFold(target, "all") || target == "全部" {
-		count, err := e.facts.ForgetAll(factContext, scope, e.now())
+		count, err := facts.ForgetAll(factContext, scope, e.now())
 		if err != nil {
 			log.Printf("[fairy] clear fact memories: %v", err)
 			e.reply(ctx, messenger, event, "删除事实记忆失败，请稍后再试。")
@@ -1010,7 +1160,7 @@ func (e *Engine) handleForgetCommand(ctx context.Context, messenger botMessenger
 		e.reply(ctx, messenger, event, fmt.Sprintf("已永久删除当前范围的 %d 条事实；此操作不可恢复。", count))
 		return true
 	}
-	deleted, err := e.facts.Forget(factContext, scope, target, e.now())
+	deleted, err := facts.Forget(factContext, scope, target, e.now())
 	if err != nil && !errors.Is(err, ErrFactMemoryInvalid) {
 		log.Printf("[fairy] forget fact: %v", err)
 		e.reply(ctx, messenger, event, "删除事实失败，请稍后再试。")
@@ -1106,9 +1256,17 @@ func (e *Engine) reply(ctx context.Context, messenger botMessenger, event messag
 	}
 	replyCtx, cancel := requestTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := messenger.SendText(replyCtx, event.ConversationID, event.MessageID, text); err != nil {
+	if err := messenger.SendText(replyCtx, event.ConversationID, replyReferenceForEvent(event), text); err != nil {
 		log.Printf("[fairy] send reply: %v", err)
 	}
+}
+
+func replyReferenceForEvent(event messageEvent) string {
+	isGroup := event.MessageType == "group" || strings.HasPrefix(event.ConversationID, "group_")
+	if !isGroup {
+		return ""
+	}
+	return event.MessageID
 }
 
 func isMessageCandidate(event messageEvent, fairyUserID string) bool {

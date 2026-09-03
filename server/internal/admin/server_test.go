@@ -188,6 +188,20 @@ func TestAdminLoginRateLimitAndStaticSecurity(t *testing.T) {
 		!strings.Contains(page.Body.String(), `id="fairy-config-form"`) {
 		t.Fatalf("admin page failed: %d", page.Code)
 	}
+	for _, marker := range []string{
+		`data-fairy-section="runtime"`,
+		`data-fairy-section="models"`,
+		`data-fairy-section="behavior"`,
+		`data-fairy-section="plugins"`,
+		`data-fairy-section="decisions"`,
+		`id="fairy-decision-list"`,
+		`id="fairy-decision-detail"`,
+		`id="fairy-refresh-decisions"`,
+	} {
+		if !strings.Contains(page.Body.String(), marker) {
+			t.Fatalf("admin Fairy navigation is missing %s", marker)
+		}
+	}
 	if page.Header().Get("Content-Security-Policy") == "" || page.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("missing static security headers: %#v", page.Header())
 	}

@@ -9,12 +9,14 @@ class ImMemberGrid extends StatelessWidget {
     required this.participantIds,
     required this.resolveUserName,
     required this.resolveUserAvatar,
+    this.onMemberTap,
     super.key,
   });
 
   final List<String> participantIds;
   final Future<String> Function(String userId) resolveUserName;
   final Future<ImageProvider> Function(String userId) resolveUserAvatar;
+  final ValueChanged<String>? onMemberTap;
 
   @override
   Widget build(BuildContext context) {
@@ -38,31 +40,43 @@ class ImMemberGrid extends StatelessWidget {
                   final avatar =
                       snapshot.data?.avatar ??
                       AssetImage(AppAssets.fallbackAvatarForId(userId));
-                  return SizedBox(
-                    width: 66,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white24,
-                          ),
-                          child: ZzzAvatar(image: avatar, size: 44),
+                  return Semantics(
+                    button: onMemberTap != null,
+                    label: 'Open $name profile',
+                    child: InkWell(
+                      key: ValueKey('group-member-$userId'),
+                      borderRadius: BorderRadius.circular(8),
+                      onTap:
+                          onMemberTap == null
+                              ? null
+                              : () => onMemberTap!(userId),
+                      child: SizedBox(
+                        width: 66,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white24,
+                              ),
+                              child: ZzzAvatar(image: avatar, size: 44),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   );
                 },

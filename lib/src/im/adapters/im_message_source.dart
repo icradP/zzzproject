@@ -40,6 +40,16 @@ abstract class ImMessageSource {
     String? replyToMessageId,
   });
 
+  Future<ImMessage> sendComposedTextMessage({
+    required String conversationId,
+    required ImComposedText message,
+    String? replyToMessageId,
+  }) => sendTextMessage(
+    conversationId: conversationId,
+    text: message.plainText,
+    replyToMessageId: replyToMessageId,
+  );
+
   Future<ImMessage> sendStickerMessage({
     required String conversationId,
     required ImStickerReference sticker,

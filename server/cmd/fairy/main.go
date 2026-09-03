@@ -77,6 +77,13 @@ func run() int {
 	}()
 	log.Printf("[fairy] external tool providers initialized (%d tools)", len(externalTools.Tools()))
 	engine := fairy.NewEngineWithExternalTools(cfg, state, model, trace, facts, externalTools.Tools(), fairy.NewBuiltinPlugins(cfg)...)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := engine.ClosePlugins(shutdownCtx); err != nil {
+			log.Printf("[fairy] close plugin host: %v", err)
+		}
+	}()
 	runner := fairy.NewRunner(cfg, engine, trace)
 	configManager := fairy.NewConfigManager(cfg)
 	runtimeInspector := fairy.NewRuntimeInspector(engine, runner, trace, facts).WithExternalTools(externalTools)
