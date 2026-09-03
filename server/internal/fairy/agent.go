@@ -74,6 +74,7 @@ type AgentInput struct {
 	SenderID            string
 	Text                string
 	History             []ChatMessage
+	ReplyHistory        []ChatMessage
 	VisibleTools        map[string]bool
 	Now                 time.Time
 	ExpressionStyle     ExpressionStyle
@@ -172,7 +173,11 @@ func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome,
 }
 
 func (r *AgentRuntime) reply(ctx context.Context, input AgentInput, intent string, toolContext []string, step int) (AgentOutcome, error) {
-	messages := r.prompts.ReplyerMessages(input, intent, toolContext)
+	replyInput := input
+	if len(input.ReplyHistory) > 0 {
+		replyInput.History = cloneChatMessages(input.ReplyHistory)
+	}
+	messages := r.prompts.ReplyerMessages(replyInput, intent, toolContext)
 	request := ModelRequest{
 		TaskID: ReplyerTaskID, Messages: messages, Step: step,
 	}

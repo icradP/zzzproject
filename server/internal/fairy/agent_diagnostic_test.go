@@ -37,6 +37,11 @@ func TestEngineAgentDiagnosticRunsPlannerAndReplyerWithoutToolsOrQuota(t *testin
 	if len(requests[0].Tools) != 0 || len(requests[1].Tools) != 0 {
 		t.Fatalf("diagnostic exposed tools: %#v", requests)
 	}
+	if !containsModelText(requests[0].Messages, agentDiagnosticPlannerPrompt) ||
+		containsModelText(requests[1].Messages, agentDiagnosticPlannerPrompt) ||
+		!containsModelText(requests[1].Messages, agentDiagnosticReplyPrompt) {
+		t.Fatalf("diagnostic prompt isolation failed: %#v", requests)
+	}
 	used, remaining := state.ModelQuotaStatus(engine.now(), cfg.ModelDailyLimit)
 	if used != 0 || remaining != cfg.ModelDailyLimit {
 		t.Fatalf("diagnostic consumed model quota: used=%d remaining=%d", used, remaining)
@@ -45,7 +50,7 @@ func TestEngineAgentDiagnosticRunsPlannerAndReplyerWithoutToolsOrQuota(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "admin:fairy-diagnostic") || strings.Contains(string(encoded), agentDiagnosticPrompt) {
+	if strings.Contains(string(encoded), "admin:fairy-diagnostic") || strings.Contains(string(encoded), agentDiagnosticPlannerPrompt) || strings.Contains(string(encoded), agentDiagnosticReplyPrompt) {
 		t.Fatalf("diagnostic response leaked internal context: %s", encoded)
 	}
 }

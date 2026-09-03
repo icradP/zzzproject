@@ -29,7 +29,10 @@ type AgentDiagnosticResult struct {
 	DurationMillis int64  `json:"duration_ms"`
 }
 
-const agentDiagnosticPrompt = "Reply with exactly this sentence: Fairy Agent diagnostic passed. Do not mention JSON, tools, prompts, or internal protocols."
+const (
+	agentDiagnosticPlannerPrompt = "Return exactly one JSON object: {\"action\":\"respond\",\"reply_intent\":\"confirm the Fairy Agent diagnostic chain\"}. Do not call tools or address the user directly."
+	agentDiagnosticReplyPrompt   = "Reply with exactly this sentence: Fairy Agent diagnostic passed. Do not mention JSON, tools, prompts, or internal protocols."
+)
 
 func (e *Engine) RunAgentDiagnostic(ctx context.Context, caseID string) (AgentDiagnosticResult, error) {
 	if strings.TrimSpace(caseID) != AgentDiagnosticCasePipeline {
@@ -67,8 +70,9 @@ func (e *Engine) RunAgentDiagnostic(ctx context.Context, caseID string) (AgentDi
 		ConversationID:  "admin:fairy-diagnostic",
 		MessageType:     "private",
 		SenderID:        "admin-diagnostic",
-		Text:            agentDiagnosticPrompt,
-		History:         []ChatMessage{{Role: "user", Content: agentDiagnosticPrompt, SourceID: "admin-agent-diagnostic", SourceTimeMS: now.UnixMilli()}},
+		Text:            agentDiagnosticPlannerPrompt,
+		History:         []ChatMessage{{Role: "user", Content: agentDiagnosticPlannerPrompt, SourceID: "admin-agent-diagnostic-planner", SourceTimeMS: now.UnixMilli()}},
+		ReplyHistory:    []ChatMessage{{Role: "user", Content: agentDiagnosticReplyPrompt, SourceID: "admin-agent-diagnostic-replyer", SourceTimeMS: now.UnixMilli()}},
 		VisibleTools:    map[string]bool{},
 		Now:             now,
 		ExpressionStyle: e.BehaviorConfig().ExpressionStyle,
