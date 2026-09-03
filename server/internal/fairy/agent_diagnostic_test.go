@@ -87,7 +87,6 @@ func TestEngineAgentDiagnosticBuildsIsolatedRouterWhenProductionAIIsOff(t *testi
 		ID: "diagnostic-model", ProviderID: "diagnostic-provider", RemoteName: "diagnostic-remote", ContextWindow: 4096,
 	}}
 	cfg.ModelTasks = []ModelTaskConfig{
-		{ID: PlannerTaskID, Strategy: SequentialModelStrategy, CandidateModels: []string{"diagnostic-model"}, MaxOutputTokens: 128, Timeout: 5 * time.Second, DailyLimit: 2},
 		{ID: ReplyerTaskID, Strategy: SequentialModelStrategy, CandidateModels: []string{"diagnostic-model"}, MaxOutputTokens: 128, Timeout: 5 * time.Second, DailyLimit: 2},
 	}
 	state, err := OpenStateStoreWithDefaults(cfg.StateFile, cfg.GroupDefault, cfg.GroupSoftDefault)

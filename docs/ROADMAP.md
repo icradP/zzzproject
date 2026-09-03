@@ -524,7 +524,7 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 管理端新增固定 `pipeline-basic` 诊断请求，实际运行 Planner -> Replyer 链路；不接受自定义 Prompt，不读取用户聊天、事实记忆或行为经验，不执行工具、不发送 IM 消息，也不占用聊天日额度。
 - Agent 诊断与 Model Probe / Quality Eval 共用单诊断并发槽；生产 rollout 为 `off` 时，针对已保存模型建立临时隔离 Router，诊断结束后不会改变用户消息运行态。管理响应只返回固定场景、状态、耗时和经过 Output Policy 的短回复。
 - 已通过无模型、错误场景、并发冲突、工具/额度隔离和关闭 rollout 隔离 Router 测试，并完成 Fairy/Admin 回归、JavaScript 静态检查与差异检查。
-- 已从本机 CC Switch 向一次性测试进程注入 MiMo `mimo-v2.5-pro` 配置完成真实验证：5/5 固定质量 Case 通过，使用 1576 input / 364 output tokens，P50 约 5.24 秒、P95 约 8.57 秒；256 Token 安全探针约 1.83 秒通过，使用 25 input / 28 output tokens。凭据未回显、落盘或写入生产配置。
+- 已从本机 CC Switch 向一次性测试进程注入 MiMo `mimo-v2.5-pro` 配置完成真实验证：5/5 固定质量 Case 通过，使用 1576 input / 364 output tokens，P50 约 5.24 秒、P95 约 8.57 秒；256 Token 安全探针约 1.83 秒通过，使用 25 input / 28 output tokens；在仅配置 `replyer` 的隔离快照中派生 `planner` 并完成实际 Planner -> Replyer 诊断，耗时约 11.7 秒。凭据未回显、落盘或写入生产配置。
 - F5.20 尚未提交、推送或部署；生产 rollout 继续为 `off`，M8 继续暂停。
 
 ### M1-M7 使用体验修复批次（已完成并上线）

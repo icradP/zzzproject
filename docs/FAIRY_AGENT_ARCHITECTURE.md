@@ -607,7 +607,7 @@ F5.18 实现提交 `b2f7009` 与兼容修复 `ed900ef` 已通过 GitHub Actions 
 
 F5.19 将生产 AI 开关扩展为 `off / allowlist / all`：灰度名单最多 128 个合法账号并去重，空名单 fail closed；未获准账号的私聊模型请求返回固定提示，群聊模型请求静默忽略，管理指令与确定性插件不受影响。门控位于任何媒体下载、Planner、Replyer、Vision 或 Transcriber 调用前。受管配置升级为 v10 并兼容 v1-v9，旧 `ai_enabled` 稳定迁移为 `off` 或 `all`，矛盾的 v10 状态拒绝加载；名单不进入日志和审计。实现提交 `0ad94dc` 已通过 GitHub Actions CI/CD 运行 `33694897420`，本地构建的 release `0ad94dc3ffe5` 已部署到 `icrad.ltd`，生产机未编译源码。生产管理 API 为 schema v10 revision 2 active，MiMo 资格 1/1 保留且 `production_ready=true`；rollout 仍为 `off`、名单为空、Model Router 未启动。磁盘配置保持 v9 与 `0600`，下一次管理员保存时才写为 v10；M8 继续暂停。
 
-F5.20 已在本地实现固定合成 Agent 诊断：管理端只接受 `pipeline-basic`，实际运行 Planner -> Replyer；不携带用户上下文、事实记忆、行为经验或工具，不产生 IM 出站消息，不计入聊天日额度。诊断与探测、质量评测共享单并发槽，生产 rollout 关闭时使用临时隔离 Router。2026-09-03 从本机 CC Switch 注入一次性 MiMo 配置完成真实验证，5/5 固定质量 Case 通过（1576 input / 364 output tokens，P50 5.24 秒，P95 8.57 秒），256 Token 探针通过（1.83 秒，25 input / 28 output tokens）；凭据未回显或落盘。F5.20 尚未提交、推送或部署，生产 rollout 继续为 `off`，M8 继续暂停。
+F5.20 已在本地实现固定合成 Agent 诊断：管理端只接受 `pipeline-basic`，实际运行 Planner -> Replyer；不携带用户上下文、事实记忆、行为经验或工具，不产生 IM 出站消息，不计入聊天日额度。诊断与探测、质量评测共享单并发槽，生产 rollout 关闭时使用临时隔离 Router；仅保存 `replyer` 的旧候选会在内存快照中派生 `planner`，不改写受管配置。2026-09-03 从本机 CC Switch 注入一次性 MiMo 配置完成真实验证，5/5 固定质量 Case 通过（1576 input / 364 output tokens，P50 5.24 秒，P95 8.57 秒），256 Token 探针通过（1.83 秒，25 input / 28 output tokens），完整 Agent 诊断通过（约 11.7 秒）；凭据未回显或落盘。F5.20 尚未提交、推送或部署，生产 rollout 继续为 `off`，M8 继续暂停。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
