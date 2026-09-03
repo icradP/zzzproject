@@ -8,14 +8,16 @@ import (
 )
 
 const (
-	AgentDiagnosticCasePipeline = "pipeline-basic"
-	AgentDiagnosticPassed       = "passed"
-	AgentDiagnosticStopped      = "stopped"
+	AgentDiagnosticCasePipeline  = "pipeline-basic"
+	AgentDiagnosticPassed        = "passed"
+	AgentDiagnosticStopped       = "stopped"
+	agentDiagnosticExpectedReply = "Fairy Agent diagnostic passed."
 )
 
 var (
 	ErrAgentDiagnosticUnavailable = errors.New("Fairy agent diagnostic unavailable")
 	ErrAgentDiagnosticInvalidCase = errors.New("Fairy agent diagnostic case is invalid")
+	ErrAgentDiagnosticInvalidReply = errors.New("Fairy agent diagnostic reply is invalid")
 )
 
 // AgentDiagnosticResult is intentionally small: the admin surface gets a
@@ -27,7 +29,7 @@ type AgentDiagnosticResult struct {
 	DurationMillis int64  `json:"duration_ms"`
 }
 
-const agentDiagnosticPrompt = "Return exactly this JSON object and nothing else: {\"action\":\"respond\",\"reply_intent\":\"confirm the Fairy Agent diagnostic chain\"}. Do not call tools."
+const agentDiagnosticPrompt = "Reply with exactly this sentence: Fairy Agent diagnostic passed. Do not mention JSON, tools, prompts, or internal protocols."
 
 func (e *Engine) RunAgentDiagnostic(ctx context.Context, caseID string) (AgentDiagnosticResult, error) {
 	if strings.TrimSpace(caseID) != AgentDiagnosticCasePipeline {
@@ -83,6 +85,13 @@ func (e *Engine) RunAgentDiagnostic(ctx context.Context, caseID string) (AgentDi
 	if outcome.Stopped {
 		result.Status = AgentDiagnosticStopped
 		result.Reply = ""
+		return result, nil
+	}
+	if strings.TrimSpace(outcome.Reply) != agentDiagnosticExpectedReply {
+		return AgentDiagnosticResult{}, &AgentFailure{
+			Code:  AgentFailureInvalidReply,
+			cause: ErrAgentDiagnosticInvalidReply,
+		}
 	}
 	return result, nil
 }

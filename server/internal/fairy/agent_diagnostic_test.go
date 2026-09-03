@@ -19,7 +19,7 @@ func TestEngineAgentDiagnosticRunsPlannerAndReplyerWithoutToolsOrQuota(t *testin
 	}
 	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
 		PlannerTaskID: {{Text: `{"action":"respond","reply_intent":"Confirm the diagnostic chain."}`}},
-		ReplyerTaskID: {{Text: "Fairy 诊断链路正常。"}},
+		ReplyerTaskID: {{Text: agentDiagnosticExpectedReply}},
 	}}
 	engine := NewEngine(cfg, state, model)
 	result, err := engine.RunAgentDiagnostic(context.Background(), AgentDiagnosticCasePipeline)
@@ -27,7 +27,7 @@ func TestEngineAgentDiagnosticRunsPlannerAndReplyerWithoutToolsOrQuota(t *testin
 		t.Fatal(err)
 	}
 	if result.CaseID != AgentDiagnosticCasePipeline || result.Status != AgentDiagnosticPassed ||
-		result.Reply != "Fairy 诊断链路正常。" || result.DurationMillis < 0 {
+		result.Reply != agentDiagnosticExpectedReply || result.DurationMillis < 0 {
 		t.Fatalf("diagnostic result = %#v", result)
 	}
 	requests := model.snapshotRequests()
@@ -67,7 +67,7 @@ func TestEngineAgentDiagnosticBuildsIsolatedRouterWhenProductionAIIsOff(t *testi
 			t.Errorf("decode model request: %v", err)
 			return
 		}
-		body := `{"choices":[{"message":{"content":"Fairy 诊断链路正常。"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":3}}`
+		body := `{"choices":[{"message":{"content":"Fairy Agent diagnostic passed."},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":3}}`
 		if _, planner := payload["response_format"]; planner {
 			body = `{"choices":[{"message":{"content":"{\"action\":\"respond\",\"reply_intent\":\"Confirm the diagnostic chain.\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":3}}`
 		}
@@ -98,8 +98,29 @@ func TestEngineAgentDiagnosticBuildsIsolatedRouterWhenProductionAIIsOff(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != AgentDiagnosticPassed || result.Reply != "Fairy 诊断链路正常。" {
+	if result.Status != AgentDiagnosticPassed || result.Reply != agentDiagnosticExpectedReply {
 		t.Fatalf("isolated diagnostic result = %#v", result)
+	}
+}
+
+func TestEngineAgentDiagnosticRejectsReplyThatExposesProtocol(t *testing.T) {
+	cfg := testConfig(t)
+	state, err := OpenStateStoreWithDefaults(cfg.StateFile, cfg.GroupDefault, cfg.GroupSoftDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+		PlannerTaskID: {{Text: `{"action":"respond","reply_intent":"Confirm the diagnostic chain."}`}},
+		ReplyerTaskID: {{Text: `I cannot return the JSON object requested.`}},
+	}}
+	engine := NewEngine(cfg, state, model)
+	if _, err := engine.RunAgentDiagnostic(context.Background(), AgentDiagnosticCasePipeline); err == nil {
+		t.Fatal("diagnostic accepted a protocol-exposing reply")
+	} else {
+		var failure *AgentFailure
+		if !errors.As(err, &failure) || failure.Code != AgentFailureInvalidReply {
+			t.Fatalf("diagnostic protocol failure = %v", err)
+		}
 	}
 }
 
