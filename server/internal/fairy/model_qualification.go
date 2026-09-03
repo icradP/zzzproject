@@ -134,15 +134,31 @@ func modelQualificationViews(cfg Config) []ManagedModelQualificationView {
 }
 
 func replyerQualificationState(cfg Config) (required, missing []string) {
+	return taskQualificationState(cfg, ReplyerTaskID)
+}
+
+func productionQualificationState(cfg Config) (required, missing []string) {
+	return taskQualificationState(cfg, ReplyerTaskID, PlannerTaskID)
+}
+
+func taskQualificationState(cfg Config, taskIDs ...string) (required, missing []string) {
 	required = make([]string, 0)
 	missing = make([]string, 0)
 	_ = normalizeModelConfiguration(&cfg)
-	for _, task := range cfg.ModelTasks {
-		if task.ID != ReplyerTaskID {
-			continue
+	seen := make(map[string]bool)
+	for _, taskID := range taskIDs {
+		for _, task := range cfg.ModelTasks {
+			if task.ID != taskID {
+				continue
+			}
+			for _, modelID := range task.CandidateModels {
+				if !seen[modelID] {
+					required = append(required, modelID)
+					seen[modelID] = true
+				}
+			}
+			break
 		}
-		required = append(required, task.CandidateModels...)
-		break
 	}
 	qualified := make(map[string]bool, len(cfg.ModelQualifications))
 	for _, qualification := range cfg.ModelQualifications {
@@ -159,6 +175,6 @@ func replyerQualificationState(cfg Config) (required, missing []string) {
 }
 
 func (c Config) ProductionReady() bool {
-	required, missing := replyerQualificationState(c)
+	required, missing := productionQualificationState(c)
 	return len(required) > 0 && len(missing) == 0
 }

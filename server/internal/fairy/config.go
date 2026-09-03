@@ -328,15 +328,11 @@ func (c Config) modelTaskConfigured(taskID string) bool {
 }
 
 func (c Config) AgentEnabled() bool {
-	if !c.ModelEnabled() {
-		return false
-	}
-	for _, task := range c.ModelTasks {
-		if task.ID == PlannerTaskID && len(task.CandidateModels) > 0 {
-			return true
-		}
-	}
-	return false
+	return c.ModelEnabled() && c.AgentConfigured()
+}
+
+func (c Config) AgentConfigured() bool {
+	return c.modelTaskConfigured(ReplyerTaskID) && c.modelTaskConfigured(PlannerTaskID)
 }
 
 func (c Config) TaskEnabled(taskID string) bool {

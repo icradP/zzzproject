@@ -53,12 +53,80 @@ func TestReplyerQualificationRequiresEveryCandidateAndTracksModelConfiguration(t
 	}
 }
 
+func TestProductionQualificationIncludesEveryPlannerCandidate(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	cfg.AIEnabled = false
+	cfg.AIRolloutMode = AIRolloutOff
+	cfg.ModelDefinitions = append(cfg.ModelDefinitions, ModelDefinitionConfig{
+		ID: "planner-only", ProviderID: "provider", RemoteName: "planner-remote", ContextWindow: 128000,
+	})
+	cfg.ModelTasks = append(cfg.ModelTasks, ModelTaskConfig{
+		ID: PlannerTaskID, Strategy: SequentialModelStrategy,
+		CandidateModels: []string{"planner-only", "primary"}, MaxOutputTokens: 400, Timeout: 5 * time.Second,
+	})
+
+	required, missing := productionQualificationState(cfg)
+	if !reflect.DeepEqual(required, []string{"primary", "fallback", "planner-only"}) ||
+		!reflect.DeepEqual(missing, required) || cfg.ProductionReady() || !cfg.AgentConfigured() || cfg.AgentEnabled() {
+		t.Fatalf("initial production qualification = required %v missing %v ready %v configured %v enabled %v",
+			required, missing, cfg.ProductionReady(), cfg.AgentConfigured(), cfg.AgentEnabled())
+	}
+
+	cfg = qualifyModelsForTest(t, cfg, "primary", "fallback")
+	if _, missing = productionQualificationState(cfg); !reflect.DeepEqual(missing, []string{"planner-only"}) || cfg.ProductionReady() {
+		t.Fatalf("unqualified planner state = missing %v ready %v", missing, cfg.ProductionReady())
+	}
+	view := managedConfigView(cfg)
+	if !view.AgentConfigured || view.AgentEnabled || !reflect.DeepEqual(view.UnqualifiedProductionModels, []string{"planner-only"}) ||
+		len(view.UnqualifiedReplyerModels) != 0 {
+		t.Fatalf("unqualified planner view = %#v", view)
+	}
+
+	cfg = qualifyModelsForTest(t, cfg, "planner-only")
+	if _, missing = productionQualificationState(cfg); len(missing) != 0 || !cfg.ProductionReady() {
+		t.Fatalf("qualified Agent state = missing %v ready %v", missing, cfg.ProductionReady())
+	}
+	cfg.AIEnabled = true
+	cfg.AIRolloutMode = AIRolloutAll
+	if !cfg.AgentEnabled() {
+		t.Fatal("qualified configured Agent did not become enabled with rollout")
+	}
+}
+
+func TestManagedConfigActivationRejectsUnqualifiedPlannerModel(t *testing.T) {
+	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
+	cfg.AIEnabled = false
+	cfg.AIRolloutMode = AIRolloutOff
+	cfg.ModelDefinitions = append(cfg.ModelDefinitions, ModelDefinitionConfig{
+		ID: "planner-only", ProviderID: "provider", RemoteName: "planner-remote", ContextWindow: 128000,
+	})
+	cfg.ModelTasks = append(cfg.ModelTasks, ModelTaskConfig{
+		ID: PlannerTaskID, Strategy: SequentialModelStrategy,
+		CandidateModels: []string{"planner-only"}, MaxOutputTokens: 400, Timeout: 5 * time.Second,
+	})
+	cfg = qualifyModelsForTest(t, cfg, "primary", "fallback")
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed.json")
+	manager := NewConfigManager(cfg)
+	update := managedRouterUpdateForConfig(manager.Current())
+	enabled := true
+	update.AIEnabled = &enabled
+	update.AIRolloutMode = string(AIRolloutAll)
+
+	if _, err := manager.UpdateWithResult(update); err == nil || !strings.Contains(err.Error(), "planner-only") ||
+		!strings.Contains(err.Error(), "production models") {
+		t.Fatalf("unqualified planner activation error = %v", err)
+	}
+	if manager.Current().AIEnabled {
+		t.Fatal("failed planner qualification guard changed activation state")
+	}
+}
+
 func TestManagedConfigQualificationCollectionsUseEmptyArrays(t *testing.T) {
 	view := managedConfigView(testConfig(t))
-	if view.ModelQualifications == nil || view.UnqualifiedReplyerModels == nil ||
-		len(view.ModelQualifications) != 0 || len(view.UnqualifiedReplyerModels) != 0 {
-		t.Fatalf("empty qualification view = qualifications %#v missing %#v",
-			view.ModelQualifications, view.UnqualifiedReplyerModels)
+	if view.ModelQualifications == nil || view.UnqualifiedReplyerModels == nil || view.UnqualifiedProductionModels == nil ||
+		len(view.ModelQualifications) != 0 || len(view.UnqualifiedReplyerModels) != 0 || len(view.UnqualifiedProductionModels) != 0 {
+		t.Fatalf("empty qualification view = qualifications %#v replyer missing %#v production missing %#v",
+			view.ModelQualifications, view.UnqualifiedReplyerModels, view.UnqualifiedProductionModels)
 	}
 }
 
@@ -84,7 +152,8 @@ func TestConfigManagerPersistsQualificationsAndRedactsManagementAPI(t *testing.T
 
 	response := manager.Response(true)
 	if !response.Config.ProductionReady || len(response.Config.ModelQualifications) != 2 ||
-		len(response.Config.UnqualifiedReplyerModels) != 0 || response.ConfigStatus.Revision != "2" ||
+		len(response.Config.UnqualifiedReplyerModels) != 0 || len(response.Config.UnqualifiedProductionModels) != 0 ||
+		response.ConfigStatus.Revision != "2" ||
 		response.ConfigStatus.ActiveRevision != "2" || response.ConfigStatus.State != "active" ||
 		!reflect.DeepEqual(response.ConfigStatus.RecentChanges[0].Sections, []string{"model_validation"}) {
 		t.Fatalf("qualification response = %#v", response)

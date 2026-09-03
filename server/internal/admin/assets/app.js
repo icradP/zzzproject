@@ -1374,20 +1374,20 @@ function renderFairy(payload) {
   }
   modelBadge.className = `status-badge ${config.model_enabled && !restartPending ? "enabled" : "offline"}`;
   const readiness = document.querySelector("#fairy-ai-readiness");
-  const missingQualifications = config.unqualified_replyer_models || [];
+  const missingQualifications = config.unqualified_production_models || config.unqualified_replyer_models || [];
   if (config.production_ready) {
     const rollout = rolloutMode === "allowlist" ? `; ${allowedUsers.length} account${allowedUsers.length === 1 ? "" : "s"} allowed` : "";
-    readiness.textContent = `Ready: every replyer model passed quality corpus v${config.quality_corpus_version}${rollout}`;
+    readiness.textContent = `Ready: every production model passed quality corpus v${config.quality_corpus_version}${rollout}`;
   } else if (missingQualifications.length > 0) {
     readiness.textContent = `Quality gate required: ${missingQualifications.join(", ")}`;
   } else if (config.ai_enabled) {
     readiness.textContent = "Legacy AI is active; qualify models before changing its routing";
   } else {
-    readiness.textContent = "Configure a replyer task and qualify every candidate model before activation";
+    readiness.textContent = "Configure a replyer task and qualify every replyer/planner model before activation";
   }
   const agentBadge = document.querySelector("#fairy-agent-state");
-  agentBadge.textContent = config.agent_enabled ? "Planner enabled" : "Planner disabled";
-  agentBadge.className = `status-badge ${config.agent_enabled ? "enabled" : "offline"}`;
+  agentBadge.textContent = config.agent_enabled ? "Planner active" : config.agent_configured ? "Planner configured" : "Planner disabled";
+  agentBadge.className = `status-badge ${config.agent_enabled ? "enabled" : config.agent_configured ? "warning" : "offline"}`;
   const visionBadge = document.querySelector("#fairy-vision-state");
   visionBadge.textContent = config.vision_enabled ? "Vision enabled" : "Vision disabled";
   visionBadge.className = `status-badge ${config.vision_enabled ? "enabled" : "offline"}`;
@@ -2054,7 +2054,10 @@ fairyConfigForm.addEventListener("submit", async (event) => {
     const qualifiedModels = new Set([...document.querySelectorAll(".fairy-model-row")]
       .filter((row) => Boolean(row.dataset.qualifiedAt))
       .map((row) => row.querySelector("[data-field='id']").value.trim()));
-    const missingQualifications = replyerTask.candidate_models.filter((modelID) => !qualifiedModels.has(modelID));
+    const productionModelIDs = [...new Set(routing.tasks
+      .filter((task) => task.id === "replyer" || task.id === "planner")
+      .flatMap((task) => task.candidate_models))];
+    const missingQualifications = productionModelIDs.filter((modelID) => !qualifiedModels.has(modelID));
     if (missingQualifications.length > 0) {
       showToast(`Run and pass Quality before enabling: ${missingQualifications.join(", ")}`, true);
       return;

@@ -128,35 +128,37 @@ type ManagedConfigView struct {
 	ModelEnabled          bool     `json:"model_enabled"`
 	ProductionReady       bool     `json:"production_ready"`
 	QualityCorpusVersion  int      `json:"quality_corpus_version"`
+	AgentConfigured       bool     `json:"agent_configured"`
 	AgentEnabled          bool     `json:"agent_enabled"`
 	VisionEnabled         bool     `json:"vision_enabled"`
 	TranscriberEnabled    bool     `json:"transcriber_enabled"`
 	ModelAPIKeyConfigured bool     `json:"model_api_key_configured"`
 
-	Providers                []ManagedModelProviderView      `json:"providers"`
-	Models                   []ManagedModelDefinition        `json:"models"`
-	Tasks                    []ManagedModelTask              `json:"tasks"`
-	ModelQualifications      []ManagedModelQualificationView `json:"model_qualifications"`
-	UnqualifiedReplyerModels []string                        `json:"unqualified_replyer_models"`
-	ExternalToolProviders    []ManagedExternalToolProvider   `json:"external_tool_providers"`
-	BehaviorExperiences      []ManagedBehaviorExperience     `json:"behavior_experiences"`
-	BehaviorAutoLearning     bool                            `json:"behavior_auto_learning"`
-	ModelDailyLimit          int                             `json:"model_daily_limit"`
-	ModelMaxTokens           int                             `json:"model_max_tokens"`
-	TurnTimeoutSeconds       int64                           `json:"turn_timeout_seconds"`
-	SystemPrompt             string                          `json:"system_prompt"`
-	GroupDefault             bool                            `json:"group_default_enabled"`
-	GroupSoftDefault         string                          `json:"group_soft_trigger"`
-	FocusTTLSeconds          int64                           `json:"focus_ttl_seconds"`
-	SoftCooldownSeconds      int64                           `json:"soft_cooldown_seconds"`
-	ExpressionStyle          string                          `json:"expression_style"`
-	RateLimitSeconds         int64                           `json:"rate_limit_seconds"`
-	ContextTTLSeconds        int64                           `json:"context_ttl_seconds"`
-	ContextMessages          int                             `json:"context_messages"`
-	MaxConcurrent            int                             `json:"max_concurrent"`
-	ZZZAPIURL                string                          `json:"zzz_api_url"`
-	ZZZRequestTimeoutSecs    int64                           `json:"zzz_request_timeout_seconds"`
-	PluginEnabled            map[string]bool                 `json:"plugin_enabled"`
+	Providers                   []ManagedModelProviderView      `json:"providers"`
+	Models                      []ManagedModelDefinition        `json:"models"`
+	Tasks                       []ManagedModelTask              `json:"tasks"`
+	ModelQualifications         []ManagedModelQualificationView `json:"model_qualifications"`
+	UnqualifiedReplyerModels    []string                        `json:"unqualified_replyer_models"`
+	UnqualifiedProductionModels []string                        `json:"unqualified_production_models"`
+	ExternalToolProviders       []ManagedExternalToolProvider   `json:"external_tool_providers"`
+	BehaviorExperiences         []ManagedBehaviorExperience     `json:"behavior_experiences"`
+	BehaviorAutoLearning        bool                            `json:"behavior_auto_learning"`
+	ModelDailyLimit             int                             `json:"model_daily_limit"`
+	ModelMaxTokens              int                             `json:"model_max_tokens"`
+	TurnTimeoutSeconds          int64                           `json:"turn_timeout_seconds"`
+	SystemPrompt                string                          `json:"system_prompt"`
+	GroupDefault                bool                            `json:"group_default_enabled"`
+	GroupSoftDefault            string                          `json:"group_soft_trigger"`
+	FocusTTLSeconds             int64                           `json:"focus_ttl_seconds"`
+	SoftCooldownSeconds         int64                           `json:"soft_cooldown_seconds"`
+	ExpressionStyle             string                          `json:"expression_style"`
+	RateLimitSeconds            int64                           `json:"rate_limit_seconds"`
+	ContextTTLSeconds           int64                           `json:"context_ttl_seconds"`
+	ContextMessages             int                             `json:"context_messages"`
+	MaxConcurrent               int                             `json:"max_concurrent"`
+	ZZZAPIURL                   string                          `json:"zzz_api_url"`
+	ZZZRequestTimeoutSecs       int64                           `json:"zzz_request_timeout_seconds"`
+	PluginEnabled               map[string]bool                 `json:"plugin_enabled"`
 }
 
 type ManagedConfigResponse struct {
@@ -649,8 +651,8 @@ func applyManagedUpdate(current Config, update ManagedConfigUpdate) (Config, err
 		return Config{}, err
 	}
 	if next.AIEnabled && (!current.AIEnabled || modelRoutingChanged(current, next)) && !next.ProductionReady() {
-		_, missing := replyerQualificationState(next)
-		return Config{}, fmt.Errorf("Fairy production AI requires current quality qualification for replyer models: %s", strings.Join(missing, ", "))
+		_, missing := productionQualificationState(next)
+		return Config{}, fmt.Errorf("Fairy production AI requires current quality qualification for production models: %s", strings.Join(missing, ", "))
 	}
 	return next, nil
 }
@@ -772,24 +774,26 @@ func managedConfigView(cfg Config) ManagedConfigView {
 	_ = normalizeExternalToolConfiguration(&cfg)
 	pruneModelQualifications(&cfg)
 	projection := primaryModelProjection(cfg)
-	_, missingQualifications := replyerQualificationState(cfg)
+	_, missingReplyerQualifications := replyerQualificationState(cfg)
+	_, missingProductionQualifications := productionQualificationState(cfg)
 	return ManagedConfigView{
 		ModelBaseURL: projection.BaseURL, ModelName: projection.ModelName,
 		AIEnabled: cfg.AIEnabled, AIRolloutMode: string(cfg.AIRolloutMode),
 		AIAllowedUsers: append([]string{}, cfg.AIAllowedUsers...), ModelConfigured: cfg.ModelConfigured(),
 		ProductionReady: cfg.ProductionReady(), QualityCorpusVersion: QualityEvalCorpusVersion,
-		ModelEnabled: cfg.ModelEnabled(), AgentEnabled: cfg.AgentEnabled(),
+		ModelEnabled: cfg.ModelEnabled(), AgentConfigured: cfg.AgentConfigured(), AgentEnabled: cfg.AgentEnabled(),
 		VisionEnabled: cfg.TaskEnabled(VisionTaskID), TranscriberEnabled: cfg.TaskEnabled(TranscriberTaskID),
-		ModelAPIKeyConfigured:    projection.APIKey != "",
-		Providers:                managedProviderViews(cfg.ModelProviders),
-		Models:                   managedModelDefinitions(cfg.ModelDefinitions),
-		Tasks:                    managedModelTasks(cfg.ModelTasks),
-		ModelQualifications:      modelQualificationViews(cfg),
-		UnqualifiedReplyerModels: append([]string{}, missingQualifications...),
-		ExternalToolProviders:    managedExternalToolProviders(cfg.ExternalToolProviders),
-		BehaviorExperiences:      managedBehaviorExperiences(cfg.BehaviorExperiences),
-		BehaviorAutoLearning:     false,
-		ModelDailyLimit:          cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
+		ModelAPIKeyConfigured:       projection.APIKey != "",
+		Providers:                   managedProviderViews(cfg.ModelProviders),
+		Models:                      managedModelDefinitions(cfg.ModelDefinitions),
+		Tasks:                       managedModelTasks(cfg.ModelTasks),
+		ModelQualifications:         modelQualificationViews(cfg),
+		UnqualifiedReplyerModels:    append([]string{}, missingReplyerQualifications...),
+		UnqualifiedProductionModels: append([]string{}, missingProductionQualifications...),
+		ExternalToolProviders:       managedExternalToolProviders(cfg.ExternalToolProviders),
+		BehaviorExperiences:         managedBehaviorExperiences(cfg.BehaviorExperiences),
+		BehaviorAutoLearning:        false,
+		ModelDailyLimit:             cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
 		TurnTimeoutSeconds: int64(cfg.TurnTimeout / time.Second),
 		SystemPrompt:       cfg.SystemPrompt, GroupDefault: cfg.GroupDefault,
 		GroupSoftDefault: string(cfg.GroupSoftDefault), FocusTTLSeconds: int64(cfg.FocusTTL / time.Second),
