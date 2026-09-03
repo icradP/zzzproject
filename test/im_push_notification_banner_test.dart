@@ -49,7 +49,7 @@ void main() {
     expect(find.text('Notifications enabled on this device.'), findsOneWidget);
   });
 
-  testWidgets('compact inbox navigation can move below the conversation list', (
+  testWidgets('compact home switches sections with bottom navigation', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -75,22 +75,33 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(
-      tester.getCenter(find.text('Messages')).dy,
-      lessThan(tester.getTopLeft(find.byType(ConversationListView)).dy),
+    final navigation = find.byKey(
+      const ValueKey('mobile-bottom-navigation'),
     );
+    expect(navigation, findsOneWidget);
+    expect(find.byType(ConversationListView), findsOneWidget);
 
     await tester.tap(
-      find.byKey(const ValueKey('toggle-mobile-header-position')),
+      find.descendant(of: navigation, matching: find.text('Contacts')),
     );
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byKey(const ValueKey('mobile-contacts')), findsOneWidget);
+    expect(find.text('Contacts'), findsWidgets);
 
-    expect(
-      tester.getCenter(find.text('Messages')).dy,
-      greaterThan(tester.getBottomLeft(find.byType(ConversationListView)).dy),
+    await tester.tap(
+      find.descendant(of: navigation, matching: find.text('Settings')),
     );
-    final preferences = await SharedPreferences.getInstance();
-    expect(preferences.getBool('im_home_compact_header_at_bottom_v1'), isTrue);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(tester.widget<NavigationBar>(navigation).selectedIndex, 2);
+    expect(find.text('IM Settings'), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(of: navigation, matching: find.text('Conversations')),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(ConversationListView), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

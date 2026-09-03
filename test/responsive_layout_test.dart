@@ -72,12 +72,27 @@ Future<void> _setViewport(WidgetTester tester, Size size) async {
 }
 
 Future<void> _openAndCloseSettings(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('Settings'));
-  await _pumpFrames(tester);
+  if (tester.view.physicalSize.width < 860) {
+    final navigation = find.byKey(
+      const ValueKey('mobile-bottom-navigation'),
+    );
+    await tester.tap(
+      find.descendant(of: navigation, matching: find.text('Settings')),
+    );
+    await _pumpFrames(tester);
+    expect(find.text('IM Settings'), findsOneWidget);
+    await tester.tap(
+      find.descendant(of: navigation, matching: find.text('Conversations')),
+    );
+    await _pumpFrames(tester);
+  } else {
+    await tester.tap(find.byTooltip('Settings'));
+    await _pumpFrames(tester);
 
-  expect(find.text('IM Settings'), findsOneWidget);
-  await tester.tap(find.byTooltip('Back'));
-  await _pumpFrames(tester);
+    expect(find.text('IM Settings'), findsOneWidget);
+    await tester.tap(find.byTooltip('Back'));
+    await _pumpFrames(tester);
+  }
 
   expect(find.text('Messages'), findsOneWidget);
 }

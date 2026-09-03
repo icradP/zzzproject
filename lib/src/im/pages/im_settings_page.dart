@@ -19,9 +19,13 @@ import '../adapters/zzz_server/zzz_server_source.dart';
 import '../widgets/im_release_notes_panel.dart';
 
 class ImSettingsPage extends StatefulWidget {
-  const ImSettingsPage({super.key});
+  const ImSettingsPage({this.embedded = false, super.key});
 
   static const routeName = '/settings';
+
+  /// When embedded in the mobile home tabs, the page supplies only its
+  /// scrollable settings content and leaves the outer navigation visible.
+  final bool embedded;
 
   @override
   State<ImSettingsPage> createState() => _ImSettingsPageState();
@@ -309,7 +313,9 @@ class _ImSettingsPageState extends State<ImSettingsPage>
             behavior: SnackBarBehavior.floating,
           ),
         );
-        Navigator.of(context).pop();
+        if (!widget.embedded && context.mounted) {
+          Navigator.of(context).pop();
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -474,96 +480,101 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   @override
   Widget build(BuildContext context) {
     if (!_loaded) {
+      if (widget.embedded) {
+        return const Center(child: CircularProgressIndicator());
+      }
       return const Scaffold(
         backgroundColor: Colors.black,
         body: Center(child: CircularProgressIndicator()),
       );
     }
 
+    final content = Center(
+      child: SingleChildScrollView(
+        padding: widget.embedded
+            ? const EdgeInsets.fromLTRB(0, 0, 0, 16)
+            : const EdgeInsets.all(24),
+        child: ZzzPanel(
+          animateEntrance: true,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildHeader(),
+                const SizedBox(height: 20),
+                ZzzExpandableSection(
+                  title: 'Connections',
+                  subtitle: 'Client-managed IM sources',
+                  initiallyExpanded: false,
+                  child: _buildConnectionFields(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'Notifications',
+                  subtitle: 'Background message alerts',
+                  initiallyExpanded: false,
+                  child: _buildNotificationFields(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'Image hosting',
+                  subtitle: 'Direct HTTPS upload from this client',
+                  initiallyExpanded: false,
+                  child: _buildImageHostingFields(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'Visual',
+                  subtitle: 'Message display, animation, and motion',
+                  initiallyExpanded: false,
+                  child: _buildAnimationToggles(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'Backdrop',
+                  subtitle: 'Scrolling background text lines',
+                  initiallyExpanded: false,
+                  child: _buildBackdropEditor(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'NSFW Detection',
+                  subtitle: 'Content filtering with NudeNet ONNX',
+                  initiallyExpanded: false,
+                  child: _buildNsfwFields(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'Storage',
+                  subtitle: 'Media cache, avatars, chat history',
+                  initiallyExpanded: false,
+                  child: _buildStorageFields(),
+                ),
+                const SizedBox(height: 12),
+                ZzzExpandableSection(
+                  title: 'About',
+                  subtitle: 'Version and update history',
+                  initiallyExpanded: false,
+                  child: _buildAboutFields(),
+                ),
+                const SizedBox(height: 24),
+                _buildSaveButton(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (widget.embedded) return content;
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
         children: [
           ZzzBackground(controller: _bgController, animated: false),
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ZzzPanel(
-                  animateEntrance: true,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildHeader(),
-                        const SizedBox(height: 20),
-                        ZzzExpandableSection(
-                          title: 'Connections',
-                          subtitle: 'Client-managed IM sources',
-                          initiallyExpanded: false,
-                          child: _buildConnectionFields(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'Notifications',
-                          subtitle: 'Background message alerts',
-                          initiallyExpanded: false,
-                          child: _buildNotificationFields(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'Image hosting',
-                          subtitle: 'Direct HTTPS upload from this client',
-                          initiallyExpanded: false,
-                          child: _buildImageHostingFields(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'Visual',
-                          subtitle: 'Message display, animation, and motion',
-                          initiallyExpanded: false,
-                          child: _buildAnimationToggles(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'Backdrop',
-                          subtitle: 'Scrolling background text lines',
-                          initiallyExpanded: false,
-                          child: _buildBackdropEditor(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'NSFW Detection',
-                          subtitle: 'Content filtering with NudeNet ONNX',
-                          initiallyExpanded: false,
-                          child: _buildNsfwFields(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'Storage',
-                          subtitle: 'Media cache, avatars, chat history',
-                          initiallyExpanded: false,
-                          child: _buildStorageFields(),
-                        ),
-                        const SizedBox(height: 12),
-                        ZzzExpandableSection(
-                          title: 'About',
-                          subtitle: 'Version and update history',
-                          initiallyExpanded: false,
-                          child: _buildAboutFields(),
-                        ),
-                        const SizedBox(height: 24),
-                        _buildSaveButton(),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
+          SafeArea(child: content),
         ],
       ),
     );
@@ -572,12 +583,14 @@ class _ImSettingsPageState extends State<ImSettingsPage>
   Widget _buildHeader() {
     return Row(
       children: [
-        IconButton(
-          tooltip: 'Back',
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back_rounded),
-        ),
-        const SizedBox(width: 8),
+        if (!widget.embedded) ...[
+          IconButton(
+            tooltip: 'Back',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_rounded),
+          ),
+          const SizedBox(width: 8),
+        ],
         const Text(
           'IM Settings',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),

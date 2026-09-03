@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/routes/index.dart';
 import '../../assets/app_assets.dart';
@@ -20,6 +19,9 @@ import '../widgets/im_chat_room_view.dart';
 import '../widgets/im_conversation_avatar.dart';
 import '../widgets/im_group_details_panel.dart';
 import '../widgets/im_profile_card_panel.dart';
+import 'im_settings_page.dart';
+
+enum _MobileHomeSection { conversations, contacts, settings }
 
 class ImHomePage extends StatefulWidget {
   const ImHomePage({this.initialConversationId, super.key});
@@ -39,11 +41,8 @@ class _ImHomePageState extends State<ImHomePage>
   ImConversation? _pendingConversation;
   bool _showContacts = false;
   double _dragOffset = 0.0;
-  bool _compactHeaderAtBottom = false;
+  _MobileHomeSection _mobileSection = _MobileHomeSection.conversations;
   late final AnimationController _backgroundController;
-
-  static const _compactHeaderAtBottomKey =
-      'im_home_compact_header_at_bottom_v1';
 
   /// Cached snapshot data so switching conversations doesn't flash empty.
   final _conversationCache = <String, List<ImConversation>>{};
@@ -58,7 +57,6 @@ class _ImHomePageState extends State<ImHomePage>
       vsync: this,
       duration: const Duration(seconds: 30),
     )..repeat();
-    unawaited(_restoreCompactHeaderPosition());
   }
 
   @override
@@ -114,19 +112,11 @@ class _ImHomePageState extends State<ImHomePage>
     context.push(AppRoutes.demo);
   }
 
-  Future<void> _openContactsPage() async {
-    final result = await context.push<ImConversation>(AppRoutes.contacts);
-    if (result != null && mounted) {
-      ImScope.repositoryOf(context).ensureConversation(result);
-      _selectConversation(result);
-    }
-  }
-
   void _onNewChatPressed(bool isWide) {
     if (isWide) {
       setState(() => _showContacts = true);
     } else {
-      _openContactsPage();
+      setState(() => _mobileSection = _MobileHomeSection.contacts);
     }
   }
 
@@ -135,7 +125,10 @@ class _ImHomePageState extends State<ImHomePage>
   }
 
   void _onContactsSelection(ImConversation conversation) {
-    setState(() => _showContacts = false);
+    setState(() {
+      _showContacts = false;
+      _mobileSection = _MobileHomeSection.conversations;
+    });
     ImScope.repositoryOf(context).ensureConversation(conversation);
     _selectConversation(conversation);
   }
@@ -143,22 +136,6 @@ class _ImHomePageState extends State<ImHomePage>
   Future<String> _resolveUserName(String userId) async {
     final user = await ImScope.repositoryOf(context).getUser(userId);
     return user?.displayName ?? 'Unknown';
-  }
-
-  Future<void> _restoreCompactHeaderPosition() async {
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _compactHeaderAtBottom =
-          preferences.getBool(_compactHeaderAtBottomKey) ?? false;
-    });
-  }
-
-  Future<void> _toggleCompactHeaderPosition() async {
-    final next = !_compactHeaderAtBottom;
-    setState(() => _compactHeaderAtBottom = next);
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setBool(_compactHeaderAtBottomKey, next);
   }
 
   ImMessage? _findMessage(String id, List<ImMessage> messages) {
@@ -326,8 +303,13 @@ class _ImHomePageState extends State<ImHomePage>
   @override
   Widget build(BuildContext context) {
     final repository = ImScope.repositoryOf(context);
+    final isCompact = MediaQuery.sizeOf(context).width < 860;
 
     return Scaffold(
+      bottomNavigationBar:
+          isCompact && _selectedConversationId == null
+              ? _buildMobileNavigationBar()
+              : null,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -377,6 +359,11 @@ class _ImHomePageState extends State<ImHomePage>
   }
 
   Widget _buildAppHeader({required bool isWide}) {
+    final mobileTitle = switch (_mobileSection) {
+      _MobileHomeSection.conversations => 'Messages',
+      _MobileHomeSection.contacts => 'Contacts',
+      _MobileHomeSection.settings => 'Settings',
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
@@ -396,12 +383,12 @@ class _ImHomePageState extends State<ImHomePage>
             child: const Icon(Icons.forum_rounded, color: Colors.black),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Messages',
+                  isWide ? 'Messages' : mobileTitle,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                 ),
                 Text(
@@ -423,7 +410,8 @@ class _ImHomePageState extends State<ImHomePage>
               onPressed: _clearSelection,
               icon: const Icon(Icons.inbox_rounded),
             ),
-          if (!(isWide && _showContacts))
+          if (!(isWide && _showContacts) &&
+              (isWide || _mobileSection == _MobileHomeSection.conversations))
             IconButton(
               tooltip: 'New chat',
               onPressed: () => _onNewChatPressed(isWide),
@@ -434,21 +422,6 @@ class _ImHomePageState extends State<ImHomePage>
                 color: ZzzColors.yellow,
               ),
             ),
-          if (!isWide && _selectedConversationId == null)
-            IconButton(
-              key: const ValueKey('toggle-mobile-header-position'),
-              tooltip:
-                  _compactHeaderAtBottom
-                      ? 'Move navigation to top'
-                      : 'Move navigation to bottom',
-              onPressed: _toggleCompactHeaderPosition,
-              icon: Icon(
-                _compactHeaderAtBottom
-                    ? Icons.vertical_align_top_rounded
-                    : Icons.vertical_align_bottom_rounded,
-                color: Colors.white70,
-              ),
-            ),
           IconButton(
             tooltip: 'Profile',
             onPressed: () => context.push(AppRoutes.profile),
@@ -457,11 +430,12 @@ class _ImHomePageState extends State<ImHomePage>
               color: Colors.white70,
             ),
           ),
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: () => context.push(AppRoutes.settings),
-            icon: const Icon(Icons.settings_outlined, color: Colors.white54),
-          ),
+          if (isWide)
+            IconButton(
+              tooltip: 'Settings',
+              onPressed: () => context.push(AppRoutes.settings),
+              icon: const Icon(Icons.settings_outlined, color: Colors.white54),
+            ),
         ],
       ),
     );
@@ -558,14 +532,69 @@ class _ImHomePageState extends State<ImHomePage>
   }
 
   Widget _buildCompactInboxLayout(ImRepository repository) {
-    final header = _buildAppHeader(isWide: false);
-    final inbox = Expanded(child: _buildCompactLayout(repository));
-    final notificationBanner = _buildPushNotificationBanner();
     return Column(
-      children:
-          _compactHeaderAtBottom
-              ? [notificationBanner, inbox, const SizedBox(height: 12), header]
-              : [header, const SizedBox(height: 12), notificationBanner, inbox],
+      children: [
+        _buildAppHeader(isWide: false),
+        const SizedBox(height: 12),
+        if (_mobileSection == _MobileHomeSection.conversations)
+          _buildPushNotificationBanner(),
+        Expanded(child: _buildMobileSection(repository)),
+      ],
+    );
+  }
+
+  Widget _buildMobileSection(ImRepository repository) {
+    return switch (_mobileSection) {
+      _MobileHomeSection.conversations => _buildCompactLayout(repository),
+      _MobileHomeSection.contacts => ZzzPanel(
+        key: const ValueKey('mobile-contacts'),
+        animateEntrance: true,
+        background: const DecorationImage(
+          image: AssetImage(AppAssets.bgChatWithPatternDark2),
+          repeat: ImageRepeat.repeat,
+          opacity: 0.1,
+        ),
+        child: ContactsPanel(onConversationSelected: _onContactsSelection),
+      ),
+      _MobileHomeSection.settings => const ImSettingsPage(embedded: true),
+    };
+  }
+
+  Widget _buildMobileNavigationBar() {
+    final selectedIndex = switch (_mobileSection) {
+      _MobileHomeSection.conversations => 0,
+      _MobileHomeSection.contacts => 1,
+      _MobileHomeSection.settings => 2,
+    };
+    return NavigationBar(
+      key: const ValueKey('mobile-bottom-navigation'),
+      selectedIndex: selectedIndex,
+      onDestinationSelected: (index) {
+        final section = switch (index) {
+          0 => _MobileHomeSection.conversations,
+          1 => _MobileHomeSection.contacts,
+          _ => _MobileHomeSection.settings,
+        };
+        if (section == _mobileSection) return;
+        setState(() => _mobileSection = section);
+      },
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.forum_outlined),
+          selectedIcon: Icon(Icons.forum_rounded),
+          label: 'Conversations',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.people_outline_rounded),
+          selectedIcon: Icon(Icons.people_rounded),
+          label: 'Contacts',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings_rounded),
+          label: 'Settings',
+        ),
+      ],
     );
   }
 
