@@ -546,6 +546,15 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 实现提交 `71fe982`、`b2616f9` 已推送，CI/CD #103 成功；release `b2616f9bfc4c` 已按校验和与回滚保护部署，生产服务器未编译源码。生产严格诊断返回 HTTP 200 `passed`，回复精确匹配，耗时约 7.878 秒。
 - 生产保持 schema v10 revision 3 active，`production_ready=true`、`agent_configured=true`；`ai_enabled=false`、`agent_enabled=false`、rollout 为 `off`。MiMo 偶发 `planner / invalid_response` 仍作为 Model Health 风险继续观测，不影响当前关闭状态。M8 继续暂停。
 
+当前进度（M7 Agent 化 F5.23，Agent 结构化响应单次修复已部署，生产 rollout 保持关闭）：
+
+- 每个 Planner Step 对 `invalid_response` 或 Planner 决策格式错误最多执行一次独立修复；认证失败、内容拒绝、取消、超时和额度拒绝不进入修复。修复发生在任何新 Tool Call 前，使用独立版本化 Prompt，不携带被拒绝的模型正文，也不会重放已经执行的工具。
+- 固定严格诊断的 Replyer 在供应商返回无效响应或未精确匹配确认句时最多修复一次；修复只重试 Replyer，不重跑 Planner 或工具。普通聊天 Replyer 没有固定答案契约，不因文案差异重复调用模型。生产会话内的修复作为独立模型请求扣减对应额度；固定诊断仍不占聊天额度，但会产生独立供应商请求与费用。
+- Model Attempt Trace 新增脱敏 `repair` 标记；Model Health 按 Task / Provider / Model 聚合 Repair 次数，Recent Failures 标记失败是否发生在修复请求。管理页增加独立 `Repair` 列，未写入拒绝正文、Prompt、供应商错误或用户身份。
+- Planner/Replyer 修复、工具不重放、Prompt 隔离、额度、非法元数据和 Trace 聚合专项测试连续 10 次通过；全量 `go test ./...`、`go vet ./...`、JavaScript 与差异检查通过。MiMo 严格诊断本地连续 3 次通过，约为 18.7、16.1、12.3 秒。
+- 实现提交 `2f612c2` 已推送，GitHub Actions CI/CD 运行 `33705851757` 成功；release `2f612c2de710` 已由本地构建静态 Linux x86-64 制品、通过 Alpine smoke 后按哈希校验和回滚保护部署，生产服务器未编译源码。`zzz-im`、`zzz-fairy` 均为 active，本地与远端制品哈希一致，`/health`、`/ready` 和生产固定严格诊断均通过。
+- 管理页已使用生产脱敏 Model Health 数据在 1440x1000 与 390x844 视口验收；Repair 列与模型行对齐，移动端表格独立横向滚动，页面无全局横向溢出或控制台错误。生产保持 schema v10 revision 3 active，`production_ready=true`、`agent_configured=true`；`ai_enabled=false`、`agent_enabled=false`、rollout 为 `off`。M8 继续暂停。
+
 ### M1-M7 使用体验修复批次（已完成并上线）
 
 M8 暂停期间，优先处理生产使用中确认的以下问题：
@@ -601,7 +610,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.22 已部署；MiMo 的 Planner/Replyer 路由均已配置且取得资格，严格诊断通过，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.23 已部署；MiMo 的 Planner/Replyer 路由均已配置且取得资格，结构化响应单次修复与严格诊断通过，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

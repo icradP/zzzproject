@@ -592,6 +592,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 固定合成 Agent 诊断（F5.20）：管理端可验证实际 Planner -> Replyer 链路；场景 ID 固定为 `pipeline-basic`，不接受自定义 Prompt，不读取用户上下文、不执行工具、不发送 IM 消息，不计入聊天额度；与 Model Probe / Quality Eval 共用单诊断并发槽。生产 rollout 为 `off` 时针对已保存模型建立临时隔离 Router，诊断结束后不改变用户消息运行态。
 - Agent 全路由资格门禁（F5.21 已部署）：首次开启生产 AI 或修改已启用路由时，已配置的 `replyer` 与 `planner` 全部候选都必须持有当前质量语料资格；关闭 rollout 时仍允许配置、评测和诊断。
 - 严格 Agent 诊断契约（F5.22 已部署）：Planner 与 Replyer 分别接收隔离的固定请求，Replyer 仍继承 Planner 的 `reply_intent`，但不接触 Planner JSON 指令；只有 Planner 形成合法决策且 Replyer 精确返回固定确认句时才通过，错误正文和协议泄露一律拒绝。
+- Agent 结构化响应单次修复（F5.23 已部署）：每个 Planner Step 只对无效供应商响应或决策格式错误修复一次；固定严格诊断的 Replyer 只对无效响应或固定回复不匹配修复一次。修复请求不携带拒绝正文、不重放工具或上游阶段，使用独立 Prompt 版本、额度和脱敏 Repair Trace。
 
 ### 发布状态（2026-09-03）
 
@@ -618,6 +619,10 @@ F5.21 把 F5.18 的生产资格门禁扩展到完整 Agent 路由：`replyer` �
 F5.22 收紧固定 Agent 诊断契约：Planner 独立接收要求严格 JSON `respond` 决策的请求，Replyer 独立接收要求精确确认句的请求；Replyer 的历史不再继承 Planner Prompt，但仍使用 Planner 产出的 `reply_intent`。最终回复必须精确等于 `Fairy Agent diagnostic passed.`，因此仅返回任意文本、复述 JSON/协议、空回复或 Tool Call 都不能误报通过。测试确认 Planner -> Replyer 顺序、阶段上下文隔离、无工具调用、无聊天额度扣减和错误回复拒绝。
 
 实现提交 `71fe982`、`b2616f9` 已推送，CI/CD #103 成功；`go test ./...`、`go vet ./...`、管理端 JavaScript 静态检查、差异检查、Linux x86-64 静态构建与 Alpine SQLite/Fairy lifecycle smoke 均通过。release `b2616f9bfc4c` 已按远端哈希校验和回滚保护部署，生产服务器未编译源码；生产严格诊断返回 HTTP 200 `passed`，精确回复通过，耗时约 7.878 秒。生产 schema v10 revision 3 active，`production_ready=true`、`agent_configured=true`，rollout 继续为 `off`。MiMo 偶发 `planner / invalid_response` 仍由 Model Health 观测，不将单次成功解释为风险消失。
+
+F5.23 为模型结构化输出增加有界恢复。每个 Planner Step 只在所有候选均返回 `invalid_response`，或成功响应无法形成合法 Planner Decision 时创建一次修复请求；修复在任何新工具动作前完成，不携带被拒绝的模型正文，既有 Tool Result 继续保留但已执行工具不会重放。认证、内容拒绝、取消、超时和额度错误直接失败。固定严格诊断设置唯一预期回复，Replyer 可独立修复一次，但不会重跑 Planner 或工具；普通用户回复不按文案差异重试。Planner 与 Replyer 修复分别使用 `planner-repair-v1`、`replyer-repair-v1`；生产会话内每次修复独立占用模型额度，固定诊断仍不占聊天额度但会产生供应商请求费用。
+
+Model Attempt Trace 使用布尔 `repair` 标记且只允许 Planner/Replyer 的有效 Step；Model Health 聚合 Repair 次数，Recent Failures 只投影该脱敏标记。管理页 Model Health 增加 Repair 列。实现提交 `2f612c2` 已通过 GitHub Actions CI/CD 运行 `33705851757`，本地静态 Linux x86-64 构建、Alpine smoke 和远端哈希校验后以 release `2f612c2de710` 部署到 `icrad.ltd`，生产机未编译源码。生产服务、`/health`、`/ready` 与固定严格诊断均通过；管理页在 1440x1000 和 390x844 生产脱敏数据态验收，无全局横向溢出或控制台错误。生产仍为 schema v10 revision 3 active，rollout 保持 `off`。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
