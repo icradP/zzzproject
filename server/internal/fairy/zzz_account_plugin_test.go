@@ -15,6 +15,7 @@ import (
 type fakeZZZMYSService struct {
 	mu          sync.Mutex
 	createCalls int
+	abyssErr    error
 }
 
 func (f *fakeZZZMYSService) CreateQR(context.Context) (zzzQRLogin, error) {
@@ -50,6 +51,9 @@ func (f *fakeZZZMYSService) GachaPage(_ context.Context, _ zzzAccountCredential,
 }
 
 func (f *fakeZZZMYSService) Abyss(_ context.Context, account zzzAccountCredential, scheduleType int) (zzzAbyssSummary, error) {
+	if f.abyssErr != nil {
+		return zzzAbyssSummary{}, f.abyssErr
+	}
 	return zzzAbyssSummary{UID: account.UID, ScheduleType: scheduleType, Rating: "S", Score: 42000, MaxScore: 50000}, nil
 }
 
@@ -145,9 +149,13 @@ func TestZZZAccountPluginLoginUsesUploadedQRAndNeverRepliesWithCredentials(t *te
 		messenger.mu.Unlock()
 		t.Fatal("login did not upload a generated PNG QR code")
 	}
-	if len(messenger.segments) != 1 || len(messenger.segments[0]) != 3 || messenger.segments[0][1].Type != "image" {
+	if len(messenger.segments) != 1 || len(messenger.segments[0]) != 1 || messenger.segments[0][0].Type != "image" {
 		messenger.mu.Unlock()
 		t.Fatalf("login segments = %#v", messenger.segments)
+	}
+	if len(messenger.texts) == 0 || !strings.Contains(messenger.texts[0], "扫描下方二维码") {
+		messenger.mu.Unlock()
+		t.Fatalf("login instructions = %#v", messenger.texts)
 	}
 	messenger.mu.Unlock()
 	output := messenger.allOutput()
@@ -210,6 +218,46 @@ func TestZZZAccountScopedToolUsesRuntimeSenderOnly(t *testing.T) {
 		Execute(context.Background(), ToolCall{Name: zzzAccountToolName, Arguments: json.RawMessage(`{"owner_id":"bob"}`)})
 	if malicious.Failure == nil || malicious.Failure.Code != ToolFailureInvalidArguments {
 		t.Fatalf("malicious scoped result = %#v", malicious)
+	}
+}
+
+func TestZZZGachaToolProjectsNotBoundReasonForModelWithFallback(t *testing.T) {
+	plugin := newZZZAccountPluginWithDependencies(Config{}, openTestZZZAccountStore(t), &fakeZZZMYSService{})
+	tool := &zzzGachaScopedTool{plugin: plugin}
+	output, err := tool.ExecuteScoped(context.Background(), ToolScope{SenderID: "alice"}, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := tool.Project(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tool.Spec().ReplyMode != ToolReplyViaModel || !strings.Contains(projection.UserText, "/zzz login") || projection.ModelText != projection.UserText {
+		t.Fatalf("gacha projection=%#v spec=%#v", projection, tool.Spec())
+	}
+}
+
+func TestZZZAbyssToolProjectsSafeUpstreamReasonForModelWithFallback(t *testing.T) {
+	store := openTestZZZAccountStore(t)
+	if err := store.PutAccount(context.Background(), zzzAccountCredential{
+		OwnerID: "alice", MYSAccountID: "123456789", UID: "27280531", Cookie: "cookie", SToken: "stoken",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plugin := newZZZAccountPluginWithDependencies(Config{}, store, &fakeZZZMYSService{
+		abyssErr: &zzzMYSFailure{Code: zzzMYSFailureRisk},
+	})
+	tool := &zzzAbyssScopedTool{plugin: plugin}
+	output, err := tool.ExecuteScoped(context.Background(), ToolScope{SenderID: "alice"}, json.RawMessage(`{"schedule_type":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := tool.Project(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tool.Spec().ReplyMode != ToolReplyViaModel || !strings.Contains(projection.UserText, "安全验证") || projection.ModelText != projection.UserText {
+		t.Fatalf("abyss projection=%#v spec=%#v", projection, tool.Spec())
 	}
 }
 

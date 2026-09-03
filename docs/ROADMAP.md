@@ -612,6 +612,15 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 
 本批次已增加 Flutter 组件测试和 ZZZ Server 消息段测试；当前尚未提交、推送或部署，M8 继续暂停。
 
+### Fairy 与移动端体验热修（已本地验证、待发布）
+
+1. Tool Contract 增加插件级结果交付模式：`model` 允许 AI 基于插件结果组织回复，`direct` 直接返回插件投影；无论采用哪种模式，后续 Planner/Replyer 失败或达到步数上限时都回退已取得的安全用户投影，避免插件结果被通用 AI 错误覆盖。
+2. `zzz-account`、`zzz-gacha`、`zzz-abyss` 将未绑定、本地读取失败、米游社凭据失效、风控、限流和上游不可用映射为结构化插件结果及明确安全文案；当前配置为 `model`，正常时由 AI 确认，模型异常时由 Agent 原样兜底。
+3. `/zzz login` 将说明文字与二维码拆为两条消息，二维码消息只包含原生 image segment，避免 PWA 按首个 text segment 将整条混合消息降级显示为 `[图片]`。
+4. 手机主页面底部导航由 78px 全宽条改为 58px 浮动圆角玻璃面板，保留安全区和足够触控区域；选中态改为圆角矩形，不再使用方形斜角色块。
+
+本批次已通过 Fairy 专项测试、全量 Go/Flutter/Chrome Web 测试、Flutter Analyze、Go race、Web 资源校验，以及本地 Linux x86-64 静态构建与 Alpine SQLite/Fairy lifecycle smoke；M8 继续暂停。
+
 ### 2. 语音房间
 
 - 支持在私聊或群聊中发起临时语音房间。

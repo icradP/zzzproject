@@ -164,6 +164,71 @@ func TestAgentRuntimeGoldenToolLoop(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeDirectToolResultSkipsRemainingModelLoop(t *testing.T) {
+	modelTool := newFakeTool("context-lookup")
+	modelTool.project = func(json.RawMessage) (ToolProjection, error) {
+		return ToolProjection{ModelText: "record=model-result", UserText: "model-result"}, nil
+	}
+	directTool := newFakeTool("direct-lookup")
+	directTool.spec.ReplyMode = ToolReplyDirect
+	directTool.project = func(json.RawMessage) (ToolProjection, error) {
+		return ToolProjection{ModelText: "record=direct-result", UserText: "direct-result"}, nil
+	}
+	registry := NewToolRegistry()
+	for _, tool := range []Tool{modelTool, directTool} {
+		if err := registry.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+		PlannerTaskID: {{ToolCalls: []ModelToolCall{
+			nativeToolCall("call_1", "context-lookup", `{"value":"okay"}`),
+			nativeToolCall("call_2", "direct-lookup", `{"value":"okay"}`),
+		}}},
+	}}
+	agent := NewAgentRuntime(testConfig(t), model, NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil))
+	outcome, err := agent.Run(context.Background(), AgentInput{
+		ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+		History:      []ChatMessage{{Role: "user", Content: "look it up"}},
+		VisibleTools: map[string]bool{"context-lookup": true, "direct-lookup": true},
+	})
+	if err != nil || outcome.Reply != "model-result\n\ndirect-result" {
+		t.Fatalf("direct outcome=%#v err=%v", outcome, err)
+	}
+	requests := model.snapshotRequests()
+	if len(requests) != 1 || requests[0].TaskID != PlannerTaskID || modelTool.executions.Load() != 1 || directTool.executions.Load() != 1 {
+		t.Fatalf("direct requests=%#v model_executions=%d direct_executions=%d", requests, modelTool.executions.Load(), directTool.executions.Load())
+	}
+}
+
+func TestAgentRuntimeFallsBackToToolResultWhenPlannerFails(t *testing.T) {
+	tool := newFakeTool("lookup")
+	tool.spec.ReplyMode = ToolReplyViaModel
+	tool.project = func(json.RawMessage) (ToolProjection, error) {
+		return ToolProjection{ModelText: "record=safe-result", UserText: "safe-result"}, nil
+	}
+	registry := registerFakeTool(t, tool)
+	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{
+		PlannerTaskID: {
+			{ToolCalls: []ModelToolCall{nativeToolCall("call_1", "lookup", `{"value":"okay"}`)}},
+			{Text: `not valid planner json`},
+			{Text: `still not valid planner json`},
+		},
+	}}
+	agent := NewAgentRuntime(testConfig(t), model, NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil))
+	outcome, err := agent.Run(context.Background(), AgentInput{
+		ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
+		History: []ChatMessage{{Role: "user", Content: "look it up"}}, VisibleTools: map[string]bool{"lookup": true},
+	})
+	if err != nil || outcome.Reply != "safe-result" {
+		t.Fatalf("fallback outcome=%#v err=%v", outcome, err)
+	}
+	requests := model.snapshotRequests()
+	if len(requests) != 3 || !requests[2].Repair || tool.executions.Load() != 1 {
+		t.Fatalf("fallback requests=%#v executions=%d", requests, tool.executions.Load())
+	}
+}
+
 func TestAgentRuntimeRepairsPlannerInvalidResponse(t *testing.T) {
 	tool := newFakeTool("lookup")
 	registry := registerFakeTool(t, tool)
@@ -343,7 +408,7 @@ func TestAgentRuntimeCannotBypassToolPipeline(t *testing.T) {
 	}
 }
 
-func TestAgentRuntimeStopsAtPlannerStepLimit(t *testing.T) {
+func TestAgentRuntimeReturnsToolResultsAtPlannerStepLimit(t *testing.T) {
 	tool := newFakeTool("lookup")
 	registry := registerFakeTool(t, tool)
 	runtime := NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil)
@@ -356,14 +421,13 @@ func TestAgentRuntimeStopsAtPlannerStepLimit(t *testing.T) {
 	model := &scriptedToolAwareModel{responses: map[string][]ModelResponse{PlannerTaskID: plans}}
 	agent := NewAgentRuntime(testConfig(t), model, runtime)
 	var reservations atomic.Int32
-	_, err := agent.Run(context.Background(), AgentInput{
+	outcome, err := agent.Run(context.Background(), AgentInput{
 		ConversationID: "private_alice_fairy", MessageType: "private", SenderID: "alice",
 		History: []ChatMessage{{Role: "user", Content: "loop forever"}}, VisibleTools: map[string]bool{"lookup": true},
 		ReserveModel: func(string) error { reservations.Add(1); return nil },
 	})
-	var failure *AgentFailure
-	if !errors.As(err, &failure) || failure.Code != AgentFailureStepLimit {
-		t.Fatalf("step limit error = %#v", err)
+	if err != nil || outcome.Reply != strings.Join([]string{"ok", "ok", "ok", "ok"}, "\n\n") {
+		t.Fatalf("step limit fallback outcome=%#v err=%v", outcome, err)
 	}
 	if tool.executions.Load() != maxPlannerSteps || reservations.Load() != maxPlannerSteps {
 		t.Fatalf("executions=%d reservations=%d", tool.executions.Load(), reservations.Load())

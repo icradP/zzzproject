@@ -71,7 +71,7 @@ func TestToolRegistryCompilesSchemasAndKeepsImmutableSpecs(t *testing.T) {
 	}
 	tool.spec.InputSchema[0] = '['
 	spec, ok := registry.Resolve("lookup")
-	if !ok || spec.Name != "lookup" || spec.InputSchema[0] != '{' {
+	if !ok || spec.Name != "lookup" || spec.InputSchema[0] != '{' || spec.ReplyMode != ToolReplyViaModel {
 		t.Fatalf("resolved immutable spec = %#v", spec)
 	}
 	spec.InputSchema[0] = '['
@@ -84,6 +84,12 @@ func TestToolRegistryCompilesSchemasAndKeepsImmutableSpecs(t *testing.T) {
 	invalid.spec.InputSchema = json.RawMessage(`{"type":"object","properties":{"uid":{"type":"string","pattern":"["}}}`)
 	if err := registry.Register(invalid); err == nil {
 		t.Fatal("invalid schema registration succeeded")
+	}
+
+	invalidReplyMode := newFakeTool("invalid-reply-mode")
+	invalidReplyMode.spec.ReplyMode = ToolReplyMode("unknown")
+	if err := registry.Register(invalidReplyMode); err == nil {
+		t.Fatal("invalid reply mode registration succeeded")
 	}
 }
 
@@ -158,6 +164,21 @@ func TestToolRuntimeValidatesArgumentsVisibilityPolicyAndLimits(t *testing.T) {
 	unknown := successSession.Execute(context.Background(), ToolCall{Name: "missing", Arguments: json.RawMessage(`{}`)})
 	if unknown.Failure == nil || unknown.Failure.Code != ToolFailureNotFound {
 		t.Fatalf("unknown result = %#v", unknown)
+	}
+}
+
+func TestToolRuntimeRequiresUserProjectionForDirectReply(t *testing.T) {
+	tool := newFakeTool("direct")
+	tool.spec.ReplyMode = ToolReplyDirect
+	tool.project = func(json.RawMessage) (ToolProjection, error) {
+		return ToolProjection{ModelText: "model-only"}, nil
+	}
+	registry := registerFakeTool(t, tool)
+	result := NewToolRuntime(registry, DefaultToolPolicy(registry.Names()), nil, nil).
+		NewSession(ToolScope{VisibleTools: map[string]bool{"direct": true}}).
+		Execute(context.Background(), ToolCall{Name: "direct", Arguments: json.RawMessage(`{"value":"okay"}`)})
+	if result.Failure == nil || result.Failure.Code != ToolFailureInvalidOutput {
+		t.Fatalf("direct projection result = %#v", result)
 	}
 }
 

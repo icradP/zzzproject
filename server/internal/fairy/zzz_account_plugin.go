@@ -222,11 +222,13 @@ func (p *ZZZAccountPlugin) beginLogin(ctx context.Context, messenger interactive
 		p.releaseOperation(request.SenderID, true)
 		return err
 	}
-	segments := []protocol.MessageSegment{
-		protocol.TextSegment("请使用米游社 App 扫描二维码，并在两分钟内确认登录。二维码只用于本次短期登录，不要转发给其他人。"),
-		protocol.ImageSegment(upload.FileID, upload.URL),
-		protocol.TextSegment("Fairy 不会要求你在聊天中粘贴 Cookie、Stoken 或密码。确认后只会保存加密凭据。"),
+	if err := p.sendText(ctx, messenger, request,
+		"请使用米游社 App 扫描下方二维码，并在两分钟内确认登录。二维码只用于本次短期登录，不要转发给其他人。\nFairy 不会要求你在聊天中粘贴 Cookie、Stoken 或密码。确认后只会保存加密凭据。"); err != nil {
+		cancel()
+		p.releaseOperation(request.SenderID, true)
+		return err
 	}
+	segments := []protocol.MessageSegment{protocol.ImageSegment(upload.FileID, upload.URL)}
 	sendCtx, sendCancel := requestTimeout(ctx, 20*time.Second)
 	err = messenger.SendSegments(sendCtx, request.ConversationID, segments)
 	sendCancel()
@@ -676,7 +678,8 @@ func (t *zzzAccountScopedTool) Spec() ToolSpec {
         "type":"object","properties":{},"additionalProperties":false
     }`, `{
         "type":"object","properties":{
-            "status":{"type":"string","pattern":"^(ok|not_bound)$"},
+			"status":{"type":"string","pattern":"^(ok|not_bound|error)$"},
+			"message":{"type":"string"},
             "account":{"type":"object"}
         },"required":["status"],"additionalProperties":false
     }`)
@@ -689,7 +692,7 @@ func (t *zzzAccountScopedTool) Execute(context.Context, json.RawMessage) (json.R
 func (t *zzzAccountScopedTool) ExecuteScoped(ctx context.Context, scope ToolScope, _ json.RawMessage) (json.RawMessage, error) {
 	summary, err := t.plugin.store.Summary(ctx, scope.SenderID)
 	if err != nil {
-		return nil, err
+		return zzzToolStatus("error", "读取米游社绑定信息失败，请稍后再试。")
 	}
 	if !summary.Bound {
 		return json.Marshal(map[string]any{"status": "not_bound"})
@@ -700,16 +703,19 @@ func (t *zzzAccountScopedTool) ExecuteScoped(ctx context.Context, scope ToolScop
 func (t *zzzAccountScopedTool) Project(output json.RawMessage) (ToolProjection, error) {
 	var data struct {
 		Status  string            `json:"status"`
+		Message string            `json:"message"`
 		Account ZZZAccountSummary `json:"account"`
 	}
 	if err := json.Unmarshal(output, &data); err != nil {
 		return ToolProjection{}, err
 	}
 	text := zzzNotBoundText()
-	if data.Status == "ok" {
+	if data.Status == "error" {
+		text = data.Message
+	} else if data.Status == "ok" {
 		text = formatZZZAccountSummary(data.Account)
 	}
-	return ToolProjection{ModelText: text, UserText: text}, nil
+	return zzzToolProjection(text), nil
 }
 
 type zzzGachaScopedTool struct{ plugin *ZZZAccountPlugin }
@@ -719,7 +725,8 @@ func (t *zzzGachaScopedTool) Spec() ToolSpec {
         "type":"object","properties":{},"additionalProperties":false
     }`, `{
         "type":"object","properties":{
-            "status":{"type":"string","pattern":"^(ok|not_bound)$"},
+			"status":{"type":"string","pattern":"^(ok|not_bound|error)$"},
+			"message":{"type":"string"},
             "summary":{"type":"object"}
         },"required":["status"],"additionalProperties":false
     }`)
@@ -735,7 +742,7 @@ func (t *zzzGachaScopedTool) ExecuteScoped(ctx context.Context, scope ToolScope,
 		return json.Marshal(map[string]any{"status": "not_bound"})
 	}
 	if err != nil {
-		return nil, err
+		return zzzToolStatus("error", "读取本地抽卡记录失败，请稍后再试。")
 	}
 	return json.Marshal(map[string]any{"status": "ok", "summary": summary})
 }
@@ -743,16 +750,19 @@ func (t *zzzGachaScopedTool) ExecuteScoped(ctx context.Context, scope ToolScope,
 func (t *zzzGachaScopedTool) Project(output json.RawMessage) (ToolProjection, error) {
 	var data struct {
 		Status  string          `json:"status"`
+		Message string          `json:"message"`
 		Summary ZZZGachaSummary `json:"summary"`
 	}
 	if err := json.Unmarshal(output, &data); err != nil {
 		return ToolProjection{}, err
 	}
 	text := zzzNotBoundText()
-	if data.Status == "ok" {
+	if data.Status == "error" {
+		text = data.Message
+	} else if data.Status == "ok" {
 		text = formatZZZGachaSummary(data.Summary)
 	}
-	return ToolProjection{ModelText: text, UserText: text}, nil
+	return zzzToolProjection(text), nil
 }
 
 type zzzAbyssScopedTool struct{ plugin *ZZZAccountPlugin }
@@ -763,7 +773,8 @@ func (t *zzzAbyssScopedTool) Spec() ToolSpec {
         "required":["schedule_type"],"additionalProperties":false
     }`, `{
         "type":"object","properties":{
-            "status":{"type":"string","pattern":"^(ok|not_bound)$"},
+			"status":{"type":"string","pattern":"^(ok|not_bound|error)$"},
+			"message":{"type":"string"},
             "summary":{"type":"object"}
         },"required":["status"],"additionalProperties":false
     }`)
@@ -785,12 +796,12 @@ func (t *zzzAbyssScopedTool) ExecuteScoped(ctx context.Context, scope ToolScope,
 		return json.Marshal(map[string]any{"status": "not_bound"})
 	}
 	if err != nil {
-		return nil, err
+		return zzzToolStatus("error", "读取米游社绑定信息失败，请稍后再试。")
 	}
 	summary, err := t.plugin.mys.Abyss(ctx, account, input.ScheduleType)
 	if err != nil {
 		t.plugin.handleCredentialFailure(ctx, scope.SenderID, err)
-		return nil, err
+		return zzzToolStatus("error", zzzMYSUserMessage(err))
 	}
 	return json.Marshal(map[string]any{"status": "ok", "summary": summary})
 }
@@ -798,16 +809,27 @@ func (t *zzzAbyssScopedTool) ExecuteScoped(ctx context.Context, scope ToolScope,
 func (t *zzzAbyssScopedTool) Project(output json.RawMessage) (ToolProjection, error) {
 	var data struct {
 		Status  string          `json:"status"`
+		Message string          `json:"message"`
 		Summary zzzAbyssSummary `json:"summary"`
 	}
 	if err := json.Unmarshal(output, &data); err != nil {
 		return ToolProjection{}, err
 	}
 	text := zzzNotBoundText()
-	if data.Status == "ok" {
+	if data.Status == "error" {
+		text = data.Message
+	} else if data.Status == "ok" {
 		text = formatZZZAbyssSummary(data.Summary)
 	}
-	return ToolProjection{ModelText: text, UserText: text}, nil
+	return zzzToolProjection(text), nil
+}
+
+func zzzToolStatus(status, message string) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{"status": status, "message": message})
+}
+
+func zzzToolProjection(text string) ToolProjection {
+	return ToolProjection{ModelText: text, UserText: text}
 }
 
 func scopedZZZToolSpec(name, description string, timeout time.Duration, inputSchema, outputSchema string) ToolSpec {
@@ -815,7 +837,8 @@ func scopedZZZToolSpec(name, description string, timeout time.Duration, inputSch
 		Name: name, Description: description,
 		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(outputSchema),
 		Risk: RiskLow, Concurrency: ToolSerial, Idempotency: ToolReadOnly,
-		Timeout: timeout, MaxInputBytes: 1024, MaxOutputBytes: 64 * 1024,
+		ReplyMode: ToolReplyViaModel,
+		Timeout:   timeout, MaxInputBytes: 1024, MaxOutputBytes: 64 * 1024,
 	}
 }
 

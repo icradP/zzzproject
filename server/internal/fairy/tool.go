@@ -47,6 +47,16 @@ const (
 	ToolNonIdempotent ToolIdempotency = "non_idempotent"
 )
 
+// ToolReplyMode controls whether a projected tool result is returned as-is or
+// passed back through the model. Model-mediated results are still retained as
+// a safe fallback if the remaining agent loop fails.
+type ToolReplyMode string
+
+const (
+	ToolReplyViaModel ToolReplyMode = "model"
+	ToolReplyDirect   ToolReplyMode = "direct"
+)
+
 type ToolSpec struct {
 	Name           string          `json:"name"`
 	Description    string          `json:"description"`
@@ -55,6 +65,7 @@ type ToolSpec struct {
 	Risk           RiskLevel       `json:"risk"`
 	Concurrency    ToolConcurrency `json:"concurrency"`
 	Idempotency    ToolIdempotency `json:"idempotency"`
+	ReplyMode      ToolReplyMode   `json:"reply_mode"`
 	Timeout        time.Duration   `json:"timeout"`
 	MaxInputBytes  int             `json:"max_input_bytes"`
 	MaxOutputBytes int             `json:"max_output_bytes"`
@@ -126,6 +137,7 @@ func (f *ToolFailure) Unwrap() error {
 type ToolResult struct {
 	CallID      string
 	ToolName    string
+	ReplyMode   ToolReplyMode
 	Output      json.RawMessage
 	Projection  ToolProjection
 	ResultBytes int
@@ -309,6 +321,9 @@ func prepareRegisteredTool(tool Tool, dynamic bool) (registeredTool, error) {
 		return registeredTool{}, fmt.Errorf("register nil Fairy tool")
 	}
 	spec := cloneToolSpec(tool.Spec())
+	if spec.ReplyMode == "" {
+		spec.ReplyMode = ToolReplyViaModel
+	}
 	if err := validateToolSpec(spec); err != nil {
 		return registeredTool{}, err
 	}
@@ -382,6 +397,7 @@ func (s *ToolSession) Execute(ctx context.Context, call ToolCall) ToolResult {
 	if !ok {
 		return finish(&ToolFailure{Code: ToolFailureNotFound})
 	}
+	result.ReplyMode = registered.spec.ReplyMode
 	policy := s.runtime.policy
 	inputLimit := minPositive(registered.spec.MaxInputBytes, policy.MaxInputBytes)
 	if len(call.Arguments) == 0 || len(call.Arguments) > inputLimit {
@@ -469,6 +485,9 @@ func (s *ToolSession) Execute(ctx context.Context, call ToolCall) ToolResult {
 	}
 	projection.ModelText = strings.TrimSpace(limitRunes(projection.ModelText, policy.MaxProjectionRunes))
 	projection.UserText = strings.TrimSpace(limitRunes(projection.UserText, policy.MaxProjectionRunes))
+	if registered.spec.ReplyMode == ToolReplyDirect && projection.UserText == "" {
+		return finish(&ToolFailure{Code: ToolFailureInvalidOutput, err: errors.New("direct reply tool requires a user projection")})
+	}
 	if projection.ModelText == "" && projection.UserText == "" {
 		return finish(&ToolFailure{Code: ToolFailureInvalidOutput})
 	}
@@ -627,6 +646,11 @@ func validateToolSpec(spec ToolSpec) error {
 	case ToolReadOnly, ToolIdempotent, ToolNonIdempotent:
 	default:
 		return fmt.Errorf("Fairy tool %s has invalid idempotency", spec.Name)
+	}
+	switch spec.ReplyMode {
+	case ToolReplyViaModel, ToolReplyDirect:
+	default:
+		return fmt.Errorf("Fairy tool %s has invalid reply mode", spec.Name)
 	}
 	if spec.Timeout <= 0 || spec.Timeout > 2*time.Minute || spec.MaxInputBytes <= 0 || spec.MaxInputBytes > 1024*1024 || spec.MaxOutputBytes <= 0 || spec.MaxOutputBytes > 1024*1024 {
 		return fmt.Errorf("Fairy tool %s has invalid runtime limits", spec.Name)

@@ -75,10 +75,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    final navigation = find.byKey(
-      const ValueKey('mobile-bottom-navigation'),
-    );
+    final navigation = find.byKey(const ValueKey('mobile-bottom-navigation'));
     expect(navigation, findsOneWidget);
+    final navigationBar = tester.widget<NavigationBar>(navigation);
+    expect(navigationBar.height, 58);
+    expect(navigationBar.indicatorShape, isA<RoundedRectangleBorder>());
     expect(find.byType(ConversationListView), findsOneWidget);
 
     await tester.tap(

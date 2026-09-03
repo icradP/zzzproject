@@ -371,10 +371,13 @@ type ToolSpec struct {
     Risk        RiskLevel
     Concurrency ToolConcurrency
     Idempotency ToolIdempotency
+    ReplyMode   ToolReplyMode // model | direct
 }
 ```
 
 Tool 返回规范化结构，再分别投影为模型内容、UI presentation 和脱敏 Trace。不能只返回随意拼接的字符串。
+
+`ReplyMode=model` 允许 Planner/Replyer 基于插件结果组织最终回复；`ReplyMode=direct` 直接返回插件的用户投影。两种模式都会保留已经通过脱敏和长度限制的用户投影：后续模型响应无效、Replyer 失败或 Planner 达到步数上限时，Agent 必须回退到该投影，不能用通用 AI 错误覆盖已经取得的插件结果。
 
 ### 2. 执行流水线
 

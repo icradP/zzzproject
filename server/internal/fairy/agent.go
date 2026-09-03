@@ -156,6 +156,7 @@ func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome,
 	})
 	working := r.prompts.PlannerMessages(input, definitions)
 	toolContext := make([]string, 0, defaultToolMaxCalls)
+	userToolResults := make([]string, 0, defaultToolMaxCalls)
 
 	for step := 1; step <= maxPlannerSteps; step++ {
 		request := ModelRequest{
@@ -165,19 +166,26 @@ func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome,
 		request.PromptVersion, request.PromptDigest = r.prompts.TraceMetadata(request.TaskID, request.Messages)
 		decision, transcriptCalls, err := r.plan(ctx, input.ReserveModel, request)
 		if err != nil {
-			return AgentOutcome{}, err
+			return fallbackToToolResults(ctx, userToolResults, err)
 		}
 		switch decision.Action {
 		case PlannerCallTools:
 			working = append(working, ChatMessage{Role: "assistant", ToolCalls: transcriptCalls})
+			hasDirectReply := false
 			for index, call := range decision.ToolCalls {
 				toolCall := ToolCall{Name: call.Name, Arguments: call.Arguments, Step: step}
 				if err := r.emitPluginEvent(ctx, PluginHookBeforeToolExecution, input.ConversationID, &toolCall); err != nil {
 					return AgentOutcome{}, &AgentFailure{Code: AgentFailureUnavailable, cause: err}
 				}
 				result := session.Execute(ctx, toolCall)
+				if result.OK() && result.Projection.UserText != "" {
+					userToolResults = append(userToolResults, result.Projection.UserText)
+					if result.ReplyMode == ToolReplyDirect {
+						hasDirectReply = true
+					}
+				}
 				if err := r.emitPluginEvent(ctx, PluginHookAfterToolExecution, input.ConversationID, &result); err != nil {
-					return AgentOutcome{}, &AgentFailure{Code: AgentFailureUnavailable, cause: err}
+					return fallbackToToolResults(ctx, userToolResults, &AgentFailure{Code: AgentFailureUnavailable, cause: err})
 				}
 				if result.Failure != nil && ctx.Err() != nil &&
 					(result.Failure.Code == ToolFailureCancelled || result.Failure.Code == ToolFailureTimeout) {
@@ -189,19 +197,36 @@ func (r *AgentRuntime) Run(ctx context.Context, input AgentInput) (AgentOutcome,
 					Role: "tool", ToolCallID: transcriptCalls[index].ID, Content: projection,
 				})
 			}
+			if hasDirectReply {
+				return AgentOutcome{Reply: strings.Join(userToolResults, "\n\n")}, nil
+			}
 		case PlannerRespond, PlannerWait:
 			intent := decision.ReplyIntent
 			if decision.Action == PlannerWait && intent == "" {
 				intent = "Ask one concise clarification question for the missing information needed to continue."
 			}
-			return r.reply(ctx, input, intent, toolContext, step)
+			outcome, err := r.reply(ctx, input, intent, toolContext, step)
+			if err != nil {
+				return fallbackToToolResults(ctx, userToolResults, err)
+			}
+			return outcome, nil
 		case PlannerStop:
+			if len(userToolResults) > 0 {
+				return AgentOutcome{Reply: strings.Join(userToolResults, "\n\n")}, nil
+			}
 			return AgentOutcome{Stopped: true}, nil
 		default:
-			return AgentOutcome{}, &AgentFailure{Code: AgentFailureInvalidDecision}
+			return fallbackToToolResults(ctx, userToolResults, &AgentFailure{Code: AgentFailureInvalidDecision})
 		}
 	}
-	return AgentOutcome{}, &AgentFailure{Code: AgentFailureStepLimit}
+	return fallbackToToolResults(ctx, userToolResults, &AgentFailure{Code: AgentFailureStepLimit})
+}
+
+func fallbackToToolResults(ctx context.Context, results []string, failure error) (AgentOutcome, error) {
+	if ctx.Err() != nil || len(results) == 0 {
+		return AgentOutcome{}, failure
+	}
+	return AgentOutcome{Reply: strings.Join(results, "\n\n")}, nil
 }
 
 func (r *AgentRuntime) emitPluginEvent(ctx context.Context, name PluginHookName, conversationID string, data any) error {
