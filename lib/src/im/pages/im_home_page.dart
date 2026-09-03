@@ -566,35 +566,114 @@ class _ImHomePageState extends State<ImHomePage>
       _MobileHomeSection.contacts => 1,
       _MobileHomeSection.settings => 2,
     };
-    return NavigationBar(
-      key: const ValueKey('mobile-bottom-navigation'),
-      selectedIndex: selectedIndex,
-      onDestinationSelected: (index) {
-        final section = switch (index) {
-          0 => _MobileHomeSection.conversations,
-          1 => _MobileHomeSection.contacts,
-          _ => _MobileHomeSection.settings,
-        };
-        if (section == _mobileSection) return;
-        setState(() => _mobileSection = section);
-      },
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.forum_outlined),
-          selectedIcon: Icon(Icons.forum_rounded),
-          label: 'Conversations',
+    final activeIconColor = Colors.black;
+    final inactiveIconColor = Colors.white.withValues(alpha: 0.62);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xF2050505),
+        border: Border(
+          top: BorderSide(
+            color: ZzzColors.yellow.withValues(alpha: 0.48),
+            width: 1,
+          ),
         ),
-        NavigationDestination(
-          icon: Icon(Icons.people_outline_rounded),
-          selectedIcon: Icon(Icons.people_rounded),
-          label: 'Contacts',
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.42),
+            blurRadius: 16,
+            offset: const Offset(0, -5),
+          ),
+        ],
+      ),
+      child: NavigationBar(
+        key: const ValueKey('mobile-bottom-navigation'),
+        selectedIndex: selectedIndex,
+        onDestinationSelected: (index) {
+          final section = switch (index) {
+            0 => _MobileHomeSection.conversations,
+            1 => _MobileHomeSection.contacts,
+            _ => _MobileHomeSection.settings,
+          };
+          if (section == _mobileSection) return;
+          setState(() => _mobileSection = section);
+        },
+        height: 78,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: ZzzColors.yellow.withValues(alpha: 0.96),
+        indicatorShape: BeveledRectangleBorder(
+          borderRadius: BorderRadius.circular(7),
+          side: BorderSide(
+            color: ZzzColors.yellow.withValues(alpha: 0.72),
+            width: 1,
+          ),
         ),
-        NavigationDestination(
-          icon: Icon(Icons.settings_outlined),
-          selectedIcon: Icon(Icons.settings_rounded),
-          label: 'Settings',
-        ),
-      ],
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.pressed)) {
+            return ZzzColors.yellow.withValues(alpha: 0.12);
+          }
+          if (states.contains(WidgetState.hovered) ||
+              states.contains(WidgetState.focused)) {
+            return Colors.white.withValues(alpha: 0.08);
+          }
+          return Colors.transparent;
+        }),
+        labelPadding: const EdgeInsets.only(top: 4),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final isSelected = states.contains(WidgetState.selected);
+          return TextStyle(
+            color: isSelected ? ZzzColors.yellow : Colors.white54,
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+            letterSpacing: 0.2,
+          );
+        }),
+        destinations: [
+          NavigationDestination(
+            icon: Icon(
+              Icons.chat_bubble_outline_rounded,
+              color: inactiveIconColor,
+              size: 23,
+            ),
+            selectedIcon: Icon(
+              Icons.chat_bubble_rounded,
+              color: activeIconColor,
+              size: 23,
+            ),
+            label: 'Conversations',
+          ),
+          NavigationDestination(
+            icon: Image.asset(
+              AppAssets.iconGroupChat,
+              width: 27,
+              height: 22,
+              color: inactiveIconColor,
+              filterQuality: FilterQuality.medium,
+            ),
+            selectedIcon: Image.asset(
+              AppAssets.iconGroupChat,
+              width: 27,
+              height: 22,
+              color: activeIconColor,
+              filterQuality: FilterQuality.medium,
+            ),
+            label: 'Contacts',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.tune_rounded, color: inactiveIconColor, size: 24),
+            selectedIcon: Icon(
+              Icons.tune_rounded,
+              color: activeIconColor,
+              size: 24,
+            ),
+            label: 'Settings',
+          ),
+        ],
+      ),
     );
   }
 
