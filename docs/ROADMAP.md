@@ -528,12 +528,15 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 实现修复提交 `68a17f4` 已推送，GitHub Actions CI/CD 运行 `33698441254` 成功；`release-native.sh deploy root@119.23.212.96` 从本地构建并部署 release `68a17f4c2bea`，生产服务器未参与编译。远端 Agent 诊断返回 HTTP 200 `passed`（约 30.2 秒），`zzz-im`、`zzz-fairy` 均为 active，`/ready` 通过。
 - 生产管理 API schema v10 revision 2 active，MiMo 资格 1/1 保留且 `production_ready=true`；`ai_enabled=false`、`model_enabled=false`、rollout 为 `off`，因此不会处理真实用户对话。M8 继续暂停。
 
-当前进度（M7 Agent 化 F5.21，Agent 全路由资格门禁已本地实现、待发布）：
+当前进度（M7 Agent 化 F5.21，Agent 全路由资格门禁已部署，生产 rollout 保持关闭）：
 
 - 生产准入从仅检查 `replyer` 扩展为同时检查已配置的 `replyer` 与 `planner` 全部候选模型；同一模型被两个 Task 复用时只检查一次，候选顺序保持稳定。
 - 管理 API 新增 `agent_configured` 与 `unqualified_production_models`，并保留 `unqualified_replyer_models` 兼容旧管理端；管理页区分 Planner 未配置、已配置但 rollout 关闭、以及生产运行三种状态。
 - 首次开启生产 AI，或已开启时修改模型路由，都会拒绝任何未通过当前固定质量语料的 Planner 候选。关闭 rollout 时仍可安全保存 Planner 配置、运行探针、质量评测和固定 Agent 诊断。
-- 当前只覆盖 Planner / Replyer Agent 路由；Vision / Transcriber 后续必须使用与媒体能力匹配的独立质量语料，不能直接复用文本与 Tool Call 语料作为生产准入依据。生产 rollout 继续保持 `off`，M8 继续暂停。
+- 当前只覆盖 Planner / Replyer Agent 路由；Vision / Transcriber 后续必须使用与媒体能力匹配的独立质量语料，不能直接复用文本与 Tool Call 语料作为生产准入依据。
+- 实现提交 `84bca4a` 已推送，GitHub Actions CI/CD 运行 `33700083319` 全部成功；本地提交态构建与 Alpine SQLite/Fairy lifecycle smoke 通过后，release `84bca4ac8a45` 已按哈希校验和回滚保护部署，生产服务器未编译源码。
+- 生产受管配置已升级到 schema v10 revision 3 active，同一 MiMo `mimo-v2.5-pro` 资格被 `replyer` 与新增 `planner` 共同复用；`production_ready=true`、`agent_configured=true`，且无未取得资格的生产候选。保存触发的 Fairy 受控重启完成，`zzz-im`、`zzz-fairy` 与 `/ready` 均正常。
+- 配置后的固定 Agent 诊断最终返回 HTTP 200 `passed`，耗时约 22.6 秒。首次诊断出现一次脱敏 `planner / invalid_response` 并返回 502，随后 Planner/Replyer 链路成功；该偶发结构化响应问题继续通过 Model Health 观测。`ai_enabled=false`、`model_enabled=false`、`agent_enabled=false`、rollout 为 `off`，不会处理真实用户 AI 消息。M8 继续暂停。
 
 ### M1-M7 使用体验修复批次（已完成并上线）
 
@@ -590,7 +593,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.20 已部署，F5.21 全路由资格门禁已本地实现；MiMo 已取得资格，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.21 已部署；MiMo 的 Planner/Replyer 路由均已配置且取得资格，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策

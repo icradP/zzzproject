@@ -590,7 +590,7 @@ F5.4 已加入第一版确定性评测集 `server/internal/fairy/testdata/eval/v
 - 生产模型准入资格、v9 配置迁移和配置绑定失效（F5.18 已部署）；每个 `replyer` fallback 都必须通过当前质量语料后才能首次启用或变更生产路由。
 - `off / allowlist / all` 生产灰度、v10 配置迁移和模型前账号门控（F5.19 已部署）；未获准账号仍可使用管理指令和确定性插件。
 - 固定合成 Agent 诊断（F5.20）：管理端可验证实际 Planner -> Replyer 链路；场景 ID 固定为 `pipeline-basic`，不接受自定义 Prompt，不读取用户上下文、不执行工具、不发送 IM 消息，不计入聊天额度；与 Model Probe / Quality Eval 共用单诊断并发槽。生产 rollout 为 `off` 时针对已保存模型建立临时隔离 Router，诊断结束后不改变用户消息运行态。
-- Agent 全路由资格门禁（F5.21）：首次开启生产 AI 或修改已启用路由时，已配置的 `replyer` 与 `planner` 全部候选都必须持有当前质量语料资格；关闭 rollout 时仍允许配置、评测和诊断。
+- Agent 全路由资格门禁（F5.21 已部署）：首次开启生产 AI 或修改已启用路由时，已配置的 `replyer` 与 `planner` 全部候选都必须持有当前质量语料资格；关闭 rollout 时仍允许配置、评测和诊断。
 
 ### 发布状态（2026-09-03）
 
@@ -610,7 +610,9 @@ F5.19 将生产 AI 开关扩展为 `off / allowlist / all`：灰度名单最多 
 
 F5.20 已部署固定合成 Agent 诊断：管理端只接受 `pipeline-basic`，实际运行 Planner -> Replyer；不携带用户上下文、事实记忆、行为经验或工具，不产生 IM 出站消息，不计入聊天日额度。诊断与探测、质量评测共享单并发槽，生产 rollout 关闭时使用临时隔离 Router；仅保存 `replyer` 的旧候选会在内存快照中派生 `planner`，不改写受管配置。2026-09-03 从本机 CC Switch 注入一次性 MiMo 配置完成真实验证，5/5 固定质量 Case 通过（1576 input / 364 output tokens，P50 5.24 秒，P95 8.57 秒），256 Token 探针通过（1.83 秒，25 input / 28 output tokens），完整 Agent 诊断通过（本地约 11.7 秒、生产约 30.2 秒）。实现修复提交 `68a17f4` 已推送，GitHub Actions CI/CD 运行 `33698441254` 成功，release `68a17f4c2bea` 已部署至 `icrad.ltd`；凭据未回显或落盘，生产 rollout 继续为 `off`，M8 继续暂停。
 
-F5.21 把 F5.18 的生产资格门禁扩展到完整 Agent 路由：`replyer` 与已配置 `planner` 的全部候选按 Task 顺序去重检查，任一模型缺少当前语料资格时，首次启用生产 AI 或修改已启用路由都会被拒绝。管理投影区分 Agent 已配置与已运行，并保留旧 replyer-only 缺失列表兼容客户端。该门禁不把 `vision` / `transcriber` 混入文本质量语料；媒体 Task 需要单独建立能力语料后再纳入生产准入。生产 rollout 在验证期间继续保持 `off`。
+F5.21 把 F5.18 的生产资格门禁扩展到完整 Agent 路由：`replyer` 与已配置 `planner` 的全部候选按 Task 顺序去重检查，任一模型缺少当前语料资格时，首次启用生产 AI 或修改已启用路由都会被拒绝。管理投影区分 Agent 已配置与已运行，并保留旧 replyer-only 缺失列表兼容客户端。该门禁不把 `vision` / `transcriber` 混入文本质量语料；媒体 Task 需要单独建立能力语料后再纳入生产准入。
+
+实现提交 `84bca4a` 已通过 GitHub Actions CI/CD 运行 `33700083319`，并在提交态本地构建、Alpine smoke 后以 release `84bca4ac8a45` 部署到 `icrad.ltd`，生产机未编译源码。生产 schema v10 revision 3 active，MiMo `mimo-v2.5-pro` 同时绑定 `replyer` 与 `planner`，复用同一当前资格；`production_ready=true`、`agent_configured=true` 且未取得资格列表为空。配置后的固定 Agent 诊断最终以 HTTP 200 `passed` 完成；首次请求出现一次脱敏 Planner `invalid_response`，后续调用成功，该偶发响应继续由 Model Health 观测。rollout 保持 `off`，所以 `model_enabled=false`、`agent_enabled=false`，真实用户 AI 消息不会进入模型。
 
 事实记忆第一阶段只接受用户或群管理员通过指令显式写入，不做模型自动抽取。正文保存在 Fairy 独立的 `facts.db`，默认关闭，私聊按用户与会话双重隔离、群聊按群隔离；每条记录来源消息、创建和过期时间，支持分页查看、逐条删除和全部真实删除。召回内容以 `user` 角色的不可信 JSON 注入，不参与 system Prompt HMAC，不写入 Trace，管理页只展示聚合数量。
 
