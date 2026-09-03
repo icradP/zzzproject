@@ -538,6 +538,14 @@ Hash 去重必须结合访问权限，不能因为文件相同而让无权限用
 - 生产受管配置已升级到 schema v10 revision 3 active，同一 MiMo `mimo-v2.5-pro` 资格被 `replyer` 与新增 `planner` 共同复用；`production_ready=true`、`agent_configured=true`，且无未取得资格的生产候选。保存触发的 Fairy 受控重启完成，`zzz-im`、`zzz-fairy` 与 `/ready` 均正常。
 - 配置后的固定 Agent 诊断最终返回 HTTP 200 `passed`，耗时约 22.6 秒。首次诊断出现一次脱敏 `planner / invalid_response` 并返回 502，随后 Planner/Replyer 链路成功；该偶发结构化响应问题继续通过 Model Health 观测。`ai_enabled=false`、`model_enabled=false`、`agent_enabled=false`、rollout 为 `off`，不会处理真实用户 AI 消息。M8 继续暂停。
 
+当前进度（M7 Agent 化 F5.22，严格 Agent 诊断契约已部署，生产 rollout 保持关闭）：
+
+- 固定 `pipeline-basic` 诊断不再以“最终存在文本”作为通过条件。Planner 必须独立接收严格 JSON 决策请求，Replyer 必须独立接收固定确认句请求，并精确返回 `Fairy Agent diagnostic passed.`；协议泄露、错误正文、Tool Call 或空回复都会被拒绝。
+- Planner 与 Replyer 使用相互隔离的消息历史，Replyer 不会看到 Planner 的 JSON 指令，但仍接收 Planner 产生的 `reply_intent`。诊断继续保持无工具、无用户聊天、无 IM 出站消息且不占聊天日额度。
+- 回归测试覆盖 Planner -> Replyer 调用顺序、阶段 Prompt 隔离、Replyer 历史替换、工具与额度不变，以及错误回复和协议泄露拒绝。`go test ./...`、`go vet ./...`、管理端 JavaScript 静态检查、差异检查、Linux x86-64 静态构建和 Alpine SQLite/Fairy lifecycle smoke 均通过。
+- 实现提交 `71fe982`、`b2616f9` 已推送，CI/CD #103 成功；release `b2616f9bfc4c` 已按校验和与回滚保护部署，生产服务器未编译源码。生产严格诊断返回 HTTP 200 `passed`，回复精确匹配，耗时约 7.878 秒。
+- 生产保持 schema v10 revision 3 active，`production_ready=true`、`agent_configured=true`；`ai_enabled=false`、`agent_enabled=false`、rollout 为 `off`。MiMo 偶发 `planner / invalid_response` 仍作为 Model Health 风险继续观测，不影响当前关闭状态。M8 继续暂停。
+
 ### M1-M7 使用体验修复批次（已完成并上线）
 
 M8 暂停期间，优先处理生产使用中确认的以下问题：
@@ -593,7 +601,7 @@ M8 暂停期间，优先处理生产使用中确认的以下问题：
 | M4 | 语音消息、转发与链接分享、定位、戳一戳 | 已上线 | 完善日常通信能力 |
 | M5 | 管理员角色、群公告、屏蔽策略 | 已完成，随 1.3.0 发布 | 建立群组治理和通知规则 |
 | M6 | 称号和个人名片 | 已上线，随 1.4.0 发布 | 在权限与媒体能力稳定后扩展个人表达 |
-| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.21 已部署；MiMo 的 Planner/Replyer 路由均已配置且取得资格，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
+| M7 | Fairy AI 好友与 ZZZ 插件 | Agent F0-F5.22 已部署；MiMo 的 Planner/Replyer 路由均已配置且取得资格，严格诊断通过，生产 rollout 保持 `off` | 以独立 Bot 服务接入，控制对核心 IM 的影响 |
 | M8 | 语音房间、视频和直播房间 | 已完成接入点审计，暂停实施 | 先处理 M1-M7 实际使用体验问题，再恢复实时房间建设 |
 
 ## 七、产品决策
