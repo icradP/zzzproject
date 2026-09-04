@@ -216,19 +216,16 @@ class _ImGroupDetailsPanelState extends State<ImGroupDetailsPanel> {
   }
 
   Future<void> _pickGroupAvatar() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      withData: true,
-      allowMultiple: false,
-    );
-    final file = result?.files.single;
-    if (file == null || file.bytes == null) return;
-    if (file.bytes!.length > 5 * 1024 * 1024) {
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty) return;
+    final file = result.single;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
       setState(() => _error = 'Group avatar must be 5 MB or smaller.');
       return;
     }
     setState(() {
-      _avatarBytes = file.bytes;
+      _avatarBytes = bytes;
       _avatarName = file.name;
       _avatarMime = file.extension == null ? null : 'image/${file.extension}';
       _error = null;

@@ -89,6 +89,13 @@ func (s *PostgresStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
+	CREATE TABLE IF NOT EXISTS terminal_vaults (
+		user_id VARCHAR(32) PRIMARY KEY,
+		payload TEXT NOT NULL,
+		revision BIGINT NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	);
+
 	CREATE TABLE IF NOT EXISTS messages (
 		id VARCHAR(32) PRIMARY KEY,
 		conversation_id VARCHAR(32) NOT NULL,

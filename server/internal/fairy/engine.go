@@ -51,6 +51,15 @@ func (e *Engine) helpText() string {
 	} else {
 		disabled = append(disabled, "ZZZ 资料查询")
 	}
+	if e.pluginRunning(TerminalBridgePluginID) {
+		lines = append(lines,
+			"/term hosts - 请求在线 ZZZ Term 列出主机",
+			"/term info <主机ID> - 请求读取主机公开信息",
+			"/term run <主机ID> <命令> - 发起一次性本地审批执行",
+		)
+	} else {
+		disabled = append(disabled, "ZZZ Term 临时运维")
+	}
 	if e.pluginRunning(ZZZAccountPluginID) {
 		lines = append(lines,
 			"/zzz login - 私聊扫码绑定国服米游社账号",

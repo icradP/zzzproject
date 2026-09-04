@@ -71,6 +71,24 @@ func FaceSegment(faceID string) MessageSegment {
 	}
 }
 
+// TerminalRequestSegment asks an online ZZZ Term client to present a
+// short-lived, locally approved operation. It is transported as an IM message
+// so the requester and result remain visible in the conversation audit trail.
+func TerminalRequestSegment(requestID, operation, hostID, command string, expiresAtMS int64) MessageSegment {
+	data := map[string]interface{}{
+		"request_id": requestID,
+		"operation":  operation,
+		"expires_at": expiresAtMS,
+	}
+	if hostID != "" {
+		data["host_id"] = hostID
+	}
+	if command != "" {
+		data["command"] = command
+	}
+	return MessageSegment{Type: "terminal_request", Data: data}
+}
+
 // Sender represents the message sender info.
 type Sender struct {
 	UserID   string `json:"user_id"`
@@ -237,6 +255,9 @@ const (
 	ActionGetPushConfig              = "get_push_config"
 	ActionRegisterPush               = "register_push"
 	ActionUnregisterPush             = "unregister_push"
+	ActionGetTerminalVault           = "get_terminal_vault"
+	ActionPutTerminalVault           = "put_terminal_vault"
+	ActionDeleteTerminalVault        = "delete_terminal_vault"
 )
 
 // AuthParams are the params for the "auth" action.
@@ -265,6 +286,11 @@ type SendMessageParams struct {
 	ConversationID  string           `json:"conversation_id"`
 	Message         []MessageSegment `json:"message"`
 	ClientMessageID string           `json:"client_message_id,omitempty"`
+}
+
+type PutTerminalVaultParams struct {
+	Payload          string `json:"payload"`
+	ExpectedRevision int64  `json:"expected_revision"`
 }
 
 // RecallMessageParams are the params for the "recall_message" action.

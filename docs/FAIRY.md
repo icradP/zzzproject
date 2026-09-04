@@ -40,6 +40,16 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 - Prompt 按 `identity`、`persona`、`platform`、`safety`、`task`、`tools`、`expression` 和 `runtime_context` 分段组装；表达档位支持 `brief / normal / detailed`。Prompt Trace 只记录 section 版本和使用部署 `trace.key` 生成的 HMAC，不记录 Prompt 正文。工具投影始终按不可信外部数据处理，最终回复还会经过空值、长度、疑似凭据和危险链接检查。
 - 管理员可维护最多 64 条只读行为经验，每条包含作用域、最多 12 个关键词、场景、建议动作和观察结果。Fairy 只用用户原始文本确定性选择最多 3 条作为 advisory JSON 注入 Planner / Replyer；媒体识别文本不参与召回，聊天与模型均不能写回，自动学习固定关闭。
 
+## ZZZ Term 接入
+
+Fairy 可通过普通私聊向同账号在线的 ZZZ Term 客户端发出受限终端请求。首版命令为 `/term hosts`、`/term info <主机ID>` 和 `/term run <主机ID> <命令>`；请求有效期为 2 分钟。ZZZ Server 只转发并校验 `terminal_request` / `terminal_result` 消息段，不执行命令，也不接触 SSH 凭据。
+
+ZZZ Term 必须显示 Allow/Deny 审批卡，只有用户明确允许后才处理请求。`run_command` 只能使用当前客户端中已经连接且主机 ID 匹配的 SSH 会话；它不能让 Fairy 新建连接、选择凭据或跳过主机密钥校验。客户端会回传 `completed`、`failed`、`denied` 或 `expired` 状态以及有界输出。
+
+主机与凭据云同步使用账号级 terminal vault。客户端在本地完成 AES-256-GCM 加密，服务端只保存不透明 envelope、更新时间和乐观锁 revision。该 vault 不会把凭据交给 Fairy、Planner、模型供应商或消息历史。
+
+Fairy 的建群、邀请成员、设置公告和处理好友申请仍通过普通账号 Gateway 权限执行，不具备服务端特权。当前确定性聊天接口只暴露已有命令和上述 `/term` 桥接，不能视为已开放所有真人客户端操作。
+
 ## 指令
 
 当服务器存在 `fairy` 账号且尚未成为好友时，客户端会在联系人页的推荐区域显示 Fairy。可以先打开带 Bot 标识的个人名片，也可以直接发送好友请求；Fairy 在线时会自动接受。成为好友后推荐项消失，Fairy 作为普通联系人显示，并可被邀请进群。
@@ -64,6 +74,9 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 | `/fairy agent <请求>` | 显式使用 Planner 处理工具型或多步骤请求；需要配置 `planner` Task |
 | `/fairy on` | 群主或管理员开启群回复 |
 | `/fairy off` | 群主或管理员关闭群回复 |
+| `/term hosts` | 请求在线 ZZZ Term 返回主机列表；客户端仍需审批 |
+| `/term info <主机ID>` | 请求主机公开连接信息；客户端仍需审批 |
+| `/term run <主机ID> <命令>` | 请求在已连接 SSH 会话执行命令；客户端仍需审批 |
 | `/zzz <UID>` | 查询绝区零公开展示资料 |
 | `/zzz login` | 私聊发起国服米游社扫码绑定 |
 | `/zzz account` | 私聊查看脱敏账号和绑定 UID |

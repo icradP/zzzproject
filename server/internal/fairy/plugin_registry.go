@@ -1,6 +1,7 @@
 package fairy
 
 const ZZZProfilePluginID = "zzz-profile"
+const TerminalBridgePluginID = "terminal-bridge"
 
 type PluginDescriptor struct {
 	ID             string `json:"id"`
@@ -16,6 +17,13 @@ type PluginStatus struct {
 }
 
 var builtinPluginDescriptors = []PluginDescriptor{
+	{
+		ID:             TerminalBridgePluginID,
+		Name:           "ZZZ Term bridge",
+		Description:    "Creates short-lived terminal operations that require approval on an online same-account ZZZ Term client.",
+		Command:        "/term hosts|info|run",
+		DefaultEnabled: true,
+	},
 	{
 		ID:             ZZZProfilePluginID,
 		Name:           "ZZZ public profile",
@@ -65,7 +73,7 @@ func BuiltinPluginStatuses(cfg Config) []PluginStatus {
 }
 
 func NewBuiltinPlugins(cfg Config) []Plugin {
-	return []Plugin{NewZZZPlugin(cfg), NewZZZAccountPlugin(cfg)}
+	return []Plugin{NewTerminalBridgePlugin(), NewZZZPlugin(cfg), NewZZZAccountPlugin(cfg)}
 }
 
 const (

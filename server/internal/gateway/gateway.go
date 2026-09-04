@@ -296,6 +296,12 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleRegisterPush(client, req)
 	case protocol.ActionUnregisterPush:
 		g.handleUnregisterPush(client, req)
+	case protocol.ActionGetTerminalVault:
+		g.handleGetTerminalVault(client, req)
+	case protocol.ActionPutTerminalVault:
+		g.handlePutTerminalVault(client, req)
+	case protocol.ActionDeleteTerminalVault:
+		g.handleDeleteTerminalVault(client, req)
 	default:
 		g.sendError(client, req.Echo, "unknown action: "+req.Action)
 	}
@@ -1050,6 +1056,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			g.sendError(client, req.Echo, err.Error())
 			return
 		}
+		if err := validateTerminalSegment(segment, convType); err != nil {
+			g.sendError(client, req.Echo, err.Error())
+			return
+		}
 		if segment.Type != "reply" {
 			continue
 		}
@@ -1147,6 +1157,65 @@ func validClientMessageID(value string) bool {
 		return false
 	}
 	return true
+}
+
+func validateTerminalSegment(segment protocol.MessageSegment, conversationType string) error {
+	if segment.Type != "terminal_request" && segment.Type != "terminal_result" {
+		return nil
+	}
+	if conversationType != "private" {
+		return fmt.Errorf("terminal operations are only allowed in private conversations")
+	}
+	requestID, _ := segment.Data["request_id"].(string)
+	if !validClientMessageID(requestID) {
+		return fmt.Errorf("terminal request_id is invalid")
+	}
+	if segment.Type == "terminal_result" {
+		status, _ := segment.Data["status"].(string)
+		if status != "approved" && status != "denied" && status != "expired" && status != "failed" && status != "completed" {
+			return fmt.Errorf("terminal result status is invalid")
+		}
+		if output, ok := segment.Data["output"].(string); ok && len(output) > 64*1024 {
+			return fmt.Errorf("terminal result output is too large")
+		}
+		return nil
+	}
+	operation, _ := segment.Data["operation"].(string)
+	if operation != "list_hosts" && operation != "get_host" && operation != "run_command" {
+		return fmt.Errorf("terminal operation is invalid")
+	}
+	expiresAt, ok := exactInt64(segment.Data["expires_at"])
+	if !ok || expiresAt <= 0 {
+		return fmt.Errorf("terminal expires_at is invalid")
+	}
+	if expiresAt < time.Now().Add(-time.Minute).UnixMilli() || expiresAt > time.Now().Add(10*time.Minute).UnixMilli() {
+		return fmt.Errorf("terminal request expiry is outside the allowed window")
+	}
+	hostID, _ := segment.Data["host_id"].(string)
+	if (operation == "get_host" || operation == "run_command") && (strings.TrimSpace(hostID) == "" || len(hostID) > 128) {
+		return fmt.Errorf("terminal host_id is required")
+	}
+	command, _ := segment.Data["command"].(string)
+	if operation == "run_command" && (strings.TrimSpace(command) == "" || len(command) > 8192) {
+		return fmt.Errorf("terminal command is required and must not exceed 8192 bytes")
+	}
+	return nil
+}
+
+func exactInt64(value interface{}) (int64, bool) {
+	switch number := value.(type) {
+	case int64:
+		return number, true
+	case int:
+		return int64(number), true
+	case float64:
+		if number < math.MinInt64 || number > math.MaxInt64 || number != math.Trunc(number) {
+			return 0, false
+		}
+		return int64(number), true
+	default:
+		return 0, false
+	}
 }
 
 func validateImageSegmentURL(segment protocol.MessageSegment) error {
@@ -3361,6 +3430,10 @@ func pushBody(segments []protocol.MessageSegment) string {
 			} else {
 				text.WriteString("[System message]")
 			}
+		case "terminal_request":
+			text.WriteString("[Terminal approval request]")
+		case "terminal_result":
+			text.WriteString("[Terminal operation result]")
 		}
 	}
 	result := strings.TrimSpace(text.String())

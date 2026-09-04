@@ -44,6 +44,40 @@ class ZzzAccountResult {
   final String sessionToken;
 }
 
+class ZzzTerminalVault {
+  const ZzzTerminalVault({
+    required this.revision,
+    this.payload,
+    this.updatedAt,
+  });
+
+  final int revision;
+  final String? payload;
+  final DateTime? updatedAt;
+}
+
+class ZzzTerminalRequest {
+  const ZzzTerminalRequest({
+    required this.requestId,
+    required this.operation,
+    required this.conversationId,
+    required this.senderId,
+    required this.expiresAt,
+    this.hostId,
+    this.command,
+  });
+
+  final String requestId;
+  final String operation;
+  final String conversationId;
+  final String senderId;
+  final DateTime expiresAt;
+  final String? hostId;
+  final String? command;
+
+  bool get isExpired => !expiresAt.isAfter(DateTime.now());
+}
+
 /// WebSocket-backed source shared by PWA and native clients.
 class ZzzServerSource implements ImMessageSource {
   ZzzServerSource({
@@ -90,6 +124,8 @@ class ZzzServerSource implements ImMessageSource {
       StreamController<List<ImConversation>>.broadcast();
   final _friendRequestsController =
       StreamController<List<ImFriendRequest>>.broadcast();
+  final _terminalRequestsController =
+      StreamController<ZzzTerminalRequest>.broadcast();
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
 
   final _conversations = <String, ImConversation>{};
@@ -102,6 +138,9 @@ class ZzzServerSource implements ImMessageSource {
   final _echoCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _echoCounter = 0;
   ConnectionStatus _status = ConnectionStatus.disconnected;
+
+  Stream<ZzzTerminalRequest> get terminalRequests =>
+      _terminalRequestsController.stream;
 
   @override
   String get platformName => 'ZZZ Server';
@@ -164,6 +203,7 @@ class ZzzServerSource implements ImMessageSource {
     unawaited(_usersController.close());
     unawaited(_conversationsController.close());
     unawaited(_friendRequestsController.close());
+    unawaited(_terminalRequestsController.close());
     for (final controller in _messageControllers.values) {
       unawaited(controller.close());
     }
@@ -1552,6 +1592,10 @@ class ZzzServerSource implements ImMessageSource {
       case 'message':
         final message = _parseMessage(json);
         if (message != null) _addMessageToStream(message);
+        final terminalRequest = _parseTerminalRequest(json);
+        if (terminalRequest != null && !terminalRequest.isExpired) {
+          _terminalRequestsController.add(terminalRequest);
+        }
         break;
       case 'notice':
         _handleNoticeEvent(json);
@@ -1560,6 +1604,99 @@ class ZzzServerSource implements ImMessageSource {
         _handleRequestEvent(json);
         break;
     }
+  }
+
+  ZzzTerminalRequest? _parseTerminalRequest(Map<String, dynamic> json) {
+    final segments = json['message'];
+    if (segments is! List) return null;
+    for (final raw in segments.whereType<Map>()) {
+      if (raw['type'] != 'terminal_request' || raw['data'] is! Map) continue;
+      final data = Map<String, dynamic>.from(raw['data'] as Map);
+      final sender = Map<String, dynamic>.from(
+        json['sender'] as Map? ?? const {},
+      );
+      final requestId = '${data['request_id'] ?? ''}';
+      final operation = '${data['operation'] ?? ''}';
+      final conversationId = '${json['conversation_id'] ?? ''}';
+      final senderId = '${sender['user_id'] ?? ''}';
+      final expiresAt = (data['expires_at'] as num?)?.toInt() ?? 0;
+      if (requestId.isEmpty ||
+          operation.isEmpty ||
+          conversationId.isEmpty ||
+          senderId.isEmpty ||
+          !config.presetBotIds.contains(senderId) ||
+          expiresAt <= 0) {
+        return null;
+      }
+      return ZzzTerminalRequest(
+        requestId: requestId,
+        operation: operation,
+        conversationId: conversationId,
+        senderId: senderId,
+        hostId: data['host_id'] as String?,
+        command: data['command'] as String?,
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt),
+      );
+    }
+    return null;
+  }
+
+  Future<ZzzTerminalVault> getTerminalVault() async {
+    final response = await _request('get_terminal_vault', const {});
+    _requireOk(response, 'Load terminal vault');
+    return _terminalVaultFromResponse(response);
+  }
+
+  Future<ZzzTerminalVault> putTerminalVault({
+    required String payload,
+    required int expectedRevision,
+  }) async {
+    final response = await _request('put_terminal_vault', {
+      'payload': payload,
+      'expected_revision': expectedRevision,
+    });
+    _requireOk(response, 'Save terminal vault');
+    return _terminalVaultFromResponse(response);
+  }
+
+  Future<void> deleteTerminalVault() async {
+    final response = await _request('delete_terminal_vault', const {});
+    _requireOk(response, 'Delete terminal vault');
+  }
+
+  Future<ImMessage> sendTerminalResult({
+    required String conversationId,
+    required String requestId,
+    required String status,
+    required String summary,
+    String output = '',
+    int? exitCode,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'text',
+      'data': {'text': summary},
+    },
+    {
+      'type': 'terminal_result',
+      'data': {
+        'request_id': requestId,
+        'status': status,
+        if (output.isNotEmpty) 'output': output,
+        if (exitCode != null) 'exit_code': exitCode,
+      },
+    },
+  ]);
+
+  ZzzTerminalVault _terminalVaultFromResponse(Map<String, dynamic> response) {
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
+    final updatedAt = DateTime.tryParse('${data['updated_at'] ?? ''}');
+    return ZzzTerminalVault(
+      revision: (data['revision'] as num?)?.toInt() ?? 0,
+      payload: data['payload'] as String?,
+      updatedAt: updatedAt,
+    );
   }
 
   void _handleRequestEvent(Map<String, dynamic> json) {
@@ -1946,6 +2083,8 @@ class ZzzServerSource implements ImMessageSource {
       'forward' => '[聊天记录]',
       'poke' => '[戳一戳]',
       'system' => '${data['text'] ?? '[系统消息]'}',
+      'terminal_request' => '[终端授权请求]',
+      'terminal_result' => '[终端执行结果]',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',

@@ -133,6 +133,7 @@ class _RecalledContent extends StatelessWidget {
 class ImMessageBubble extends StatelessWidget {
   const ImMessageBubble({
     required this.message,
+    this.assetPackage,
     required this.senderName,
     required this.avatar,
     required this.showSenderName,
@@ -149,6 +150,7 @@ class ImMessageBubble extends StatelessWidget {
   });
 
   final ImMessage message;
+  final String? assetPackage;
   final String senderName;
   final ImageProvider avatar;
   final bool showSenderName;
@@ -256,6 +258,7 @@ class ImMessageBubble extends StatelessWidget {
             dimension: 150,
             child: Image.asset(
               sticker.assetPath,
+              package: assetPackage,
               fit: BoxFit.contain,
               errorBuilder:
                   (_, __, ___) => Text(

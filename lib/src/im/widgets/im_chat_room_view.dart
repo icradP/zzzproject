@@ -42,6 +42,10 @@ class ImChatRoomView extends StatefulWidget {
     this.onLoadOlder,
     this.onManageGroup,
     this.onBack,
+    this.composerEnabled = true,
+    this.composerHintText = 'Message something...',
+    this.attachmentsEnabled = true,
+    this.assetPackage,
     super.key,
   });
 
@@ -68,6 +72,10 @@ class ImChatRoomView extends StatefulWidget {
   final Future<bool> Function()? onLoadOlder;
   final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
+  final bool composerEnabled;
+  final String composerHintText;
+  final bool attachmentsEnabled;
+  final String? assetPackage;
 
   @override
   State<ImChatRoomView> createState() => _ImChatRoomViewState();
@@ -535,6 +543,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 
   Future<void> _submit() async {
+    if (_sending || !widget.composerEnabled) return;
     final text = _composerController.text.trim();
     if (text.isEmpty && _pendingMedia.isEmpty) return;
 
@@ -933,29 +942,22 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         final result = await FilePicker.pickFiles(
           type: FileType.image,
           allowMultiple: true,
-          withData: kIsWeb,
         );
-        if (result == null || result.files.isEmpty) return;
-        _stageFiles(result.files, ImMessageKind.image);
+        if (result.isEmpty) return;
+        await _stageFiles(result, ImMessageKind.image);
         return;
       case 'Voice':
         await _recordVoiceMessage();
         return;
       case 'Video':
-        final result = await FilePicker.pickFiles(
-          type: FileType.video,
-          withData: kIsWeb,
-        );
-        if (result == null || result.files.isEmpty) return;
-        _stageFiles(result.files, ImMessageKind.video);
+        final result = await FilePicker.pickFiles(type: FileType.video);
+        if (result.isEmpty) return;
+        await _stageFiles(result, ImMessageKind.video);
         return;
       case 'File':
-        final result = await FilePicker.pickFiles(
-          allowMultiple: true,
-          withData: kIsWeb,
-        );
-        if (result == null || result.files.isEmpty) return;
-        _stageFiles(result.files, ImMessageKind.file);
+        final result = await FilePicker.pickFiles(allowMultiple: true);
+        if (result.isEmpty) return;
+        await _stageFiles(result, ImMessageKind.file);
         return;
       case 'Location':
         await _shareLocation();
@@ -991,19 +993,21 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     }
   }
 
-  void _stageFiles(List<PlatformFile> files, ImMessageKind kind) {
-    final uploads = files
-        .where((file) => file.path != null || file.bytes != null)
-        .map(
-          (file) => ImMediaUpload(
-            kind: kind,
-            fileName: file.name,
-            filePath: file.path,
-            bytes: file.bytes,
-            mimeType: lookupMimeType(file.name, headerBytes: file.bytes),
-          ),
-        )
-        .toList(growable: false);
+  Future<void> _stageFiles(List<PlatformFile> files, ImMessageKind kind) async {
+    final uploads = <ImMediaUpload>[];
+    for (final file in files) {
+      final bytes =
+          kIsWeb || file.path == null ? await file.readAsBytes() : null;
+      uploads.add(
+        ImMediaUpload(
+          kind: kind,
+          fileName: file.name,
+          filePath: file.path,
+          bytes: bytes,
+          mimeType: lookupMimeType(file.name, headerBytes: bytes),
+        ),
+      );
+    }
     if (uploads.isNotEmpty && mounted) {
       setState(() => _pendingMedia.addAll(uploads));
     }
@@ -1114,7 +1118,11 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(AppAssets.stickerCorin, height: 120),
+            Image.asset(
+              AppAssets.stickerCorin,
+              height: 120,
+              package: widget.assetPackage,
+            ),
             const SizedBox(height: 12),
             const Text(
               'Say hello to start the chat.',
@@ -1163,7 +1171,10 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                 final senderName = snapshot.data?.$1 ?? '...';
                 final avatar =
                     snapshot.data?.$2 ??
-                    AssetImage(AppAssets.fallbackAvatarForId(message.senderId));
+                    AssetImage(
+                      AppAssets.fallbackAvatarForId(message.senderId),
+                      package: widget.assetPackage,
+                    );
                 _messageKeys.putIfAbsent(message.id, () => GlobalKey());
                 return GestureDetector(
                   key: _messageKeys[message.id],
@@ -1176,6 +1187,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                           _showMessageActions(message, details.globalPosition),
                   child: ImMessageBubble(
                     message: message,
+                    assetPackage: widget.assetPackage,
                     senderName: senderName,
                     avatar: avatar,
                     showSenderName: showName,
@@ -1408,6 +1420,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   padding: const EdgeInsets.all(6),
                   child: Image.asset(
                     sticker.assetPath,
+                    package: widget.assetPackage,
                     fit: BoxFit.contain,
                     errorBuilder:
                         (_, __, ___) => const Icon(
@@ -1432,7 +1445,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
           _buildMentionSuggestions(_filteredMentionCandidates),
         if (_replyingTo != null) _buildReplyComposerBar(_replyingTo!),
         IgnorePointer(
-          ignoring: _sending,
+          ignoring: _sending || !widget.composerEnabled,
           child: Row(
             children: [
               Expanded(
@@ -1462,7 +1475,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   child: ZzzTextInput(
                     controller: _composerController,
                     focusNode: _composerFocus,
-                    hintText: 'Message something...',
+                    hintText: widget.composerHintText,
                     minLines: 1,
                     maxLines: 3,
                     textInputAction: TextInputAction.send,
@@ -1472,23 +1485,28 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              SizedBox.square(
-                dimension: 44,
-                child: IconButton(
-                  key: const ValueKey('toggle-sticker-panel'),
-                  tooltip: _showStickers ? 'Close stickers' : 'Stickers',
-                  onPressed: widget.onSticker == null ? null : _toggleStickers,
-                  icon: Icon(
-                    _showStickers
-                        ? Icons.keyboard_rounded
-                        : Icons.emoji_emotions_outlined,
-                    color: _showStickers ? ZzzColors.yellow : Colors.white70,
+              if (widget.attachmentsEnabled) ...[
+                const SizedBox(width: 8),
+                SizedBox.square(
+                  dimension: 44,
+                  child: IconButton(
+                    key: const ValueKey('toggle-sticker-panel'),
+                    tooltip: _showStickers ? 'Close stickers' : 'Stickers',
+                    onPressed:
+                        !widget.composerEnabled || widget.onSticker == null
+                            ? null
+                            : _toggleStickers,
+                    icon: Icon(
+                      _showStickers
+                          ? Icons.keyboard_rounded
+                          : Icons.emoji_emotions_outlined,
+                      color: _showStickers ? ZzzColors.yellow : Colors.white70,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              ImCircleButton(onTap: _toggleAttach),
+                const SizedBox(width: 4),
+                ImCircleButton(onTap: _toggleAttach),
+              ],
             ],
           ),
         ),
@@ -1525,6 +1543,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                           snapshot.data ??
                           AssetImage(
                             AppAssets.fallbackAvatarForId(candidate.userId),
+                            package: widget.assetPackage,
                           ),
                       size: 32,
                     ),

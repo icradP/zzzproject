@@ -538,19 +538,17 @@ class _CreateGroupPanelState extends State<_CreateGroupPanel> {
   }
 
   Future<void> _pickGroupAvatar() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      withData: true,
-      allowMultiple: false,
-    );
-    final file = result?.files.single;
-    if (file == null || file.bytes == null || !mounted) return;
-    if (file.bytes!.length > 5 * 1024 * 1024) {
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty || !mounted) return;
+    final file = result.single;
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    if (bytes.length > 5 * 1024 * 1024) {
       setState(() => _avatarError = 'Group avatar must be 5 MB or smaller.');
       return;
     }
     setState(() {
-      _avatarBytes = file.bytes;
+      _avatarBytes = bytes;
       _avatarName = file.name;
       _avatarMime = file.extension == null ? null : 'image/${file.extension}';
       _avatarError = null;

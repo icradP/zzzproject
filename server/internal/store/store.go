@@ -11,6 +11,7 @@ import (
 )
 
 var ErrMessageIdempotencyConflict = errors.New("client_message_id was already used for a different message")
+var ErrTerminalVaultConflict = errors.New("terminal vault revision conflict")
 
 // Store defines the storage interface for the IM server.
 // Implementations can be MemoryStore, MySQLStore, SQLiteStore, etc.
@@ -34,6 +35,11 @@ type Store interface {
 	GetSession(tokenHash string) (*Session, error)
 	DeleteSession(tokenHash string) error
 	DeleteSessionsForUser(userID string) error
+
+	// ---- Encrypted terminal vault operations ----
+	GetTerminalVault(userID string) (*TerminalVault, error)
+	PutTerminalVault(userID, payload string, expectedRevision int64) (*TerminalVault, error)
+	DeleteTerminalVault(userID string) error
 
 	// ---- Conversation operations ----
 	GetOrCreateConversation(id, convType, title string) (*Conversation, error)
@@ -109,6 +115,15 @@ type Store interface {
 
 	// ---- Lifecycle ----
 	Close() error
+}
+
+// TerminalVault is an opaque client-encrypted envelope. The IM server never
+// parses payload and therefore never has access to host addresses or secrets.
+type TerminalVault struct {
+	UserID    string    `json:"-"`
+	Payload   string    `json:"payload"`
+	Revision  int64     `json:"revision"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func messageRequestFingerprint(conversationID string, segments []protocol.MessageSegment) (string, error) {

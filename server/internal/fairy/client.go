@@ -223,6 +223,31 @@ func (c *Client) GetGroupMembers(ctx context.Context, groupID string) ([]protoco
 	return response.Members, err
 }
 
+// The methods below intentionally mirror ordinary account actions. Fairy has
+// no privileged server API; all permission checks are performed by the same IM
+// gateway handlers used for human accounts.
+func (c *Client) CreateGroup(ctx context.Context, name string, memberIDs []string) (protocol.Group, error) {
+	var group protocol.Group
+	err := c.Request(ctx, protocol.ActionCreateGroup, protocol.CreateGroupParams{Name: name, Members: memberIDs}, &group)
+	return group, err
+}
+
+func (c *Client) InviteGroupMembers(ctx context.Context, groupID string, memberIDs []string) error {
+	return c.Request(ctx, protocol.ActionGroupInvite, protocol.GroupInviteParams{GroupID: groupID, Members: memberIDs}, nil)
+}
+
+func (c *Client) CreateGroupAnnouncement(ctx context.Context, groupID, content string, pinned bool) (map[string]interface{}, error) {
+	var announcement map[string]interface{}
+	err := c.Request(ctx, protocol.ActionCreateGroupAnnouncement, protocol.GroupAnnouncementParams{
+		GroupID: groupID, Content: content, IsPinned: pinned,
+	}, &announcement)
+	return announcement, err
+}
+
+func (c *Client) SendFriendRequest(ctx context.Context, userID, comment string) error {
+	return c.Request(ctx, protocol.ActionFriendRequest, protocol.FriendRequestParams{UserID: userID, Comment: comment}, nil)
+}
+
 func (c *Client) Close() error {
 	c.finish(ErrClientClosed)
 	return c.connection.Close()

@@ -127,19 +127,16 @@ class _ImWebSetupPageState extends State<ImWebSetupPage> {
   }
 
   Future<void> _pickAvatar() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      withData: true,
-      allowMultiple: false,
-    );
-    final file = result?.files.single;
-    if (file == null || file.bytes == null) return;
-    if (file.bytes!.length > 5 * 1024 * 1024) {
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty) return;
+    final file = result.single;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
       setState(() => _error = 'Avatar must be 5 MB or smaller.');
       return;
     }
     setState(() {
-      _avatarBytes = file.bytes;
+      _avatarBytes = bytes;
       _avatarName = file.name;
       _avatarMime = _imageMimeType(file.extension);
       _error = null;

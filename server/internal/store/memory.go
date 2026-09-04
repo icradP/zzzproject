@@ -32,6 +32,7 @@ type MemoryStore struct {
 	forwards            map[string]*ForwardMessage
 	mediaFiles          map[string]*MediaFile
 	pushSubscriptions   map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
+	terminalVaults      map[string]*TerminalVault
 	msgCounter          int64
 	announcementCounter int64
 	friendReqCounter    int64
@@ -63,6 +64,7 @@ func NewMemoryStore() *MemoryStore {
 		forwards:           make(map[string]*ForwardMessage),
 		mediaFiles:         make(map[string]*MediaFile),
 		pushSubscriptions:  make(map[string]map[string]*PushSubscription),
+		terminalVaults:     make(map[string]*TerminalVault),
 	}
 }
 

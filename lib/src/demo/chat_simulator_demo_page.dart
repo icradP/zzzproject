@@ -186,16 +186,9 @@ class _ChatSimulatorDemoPageState extends State<ChatSimulatorDemoPage>
   }
 
   Future<Uint8List?> _pickImageBytes() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return null;
-    final bytes = result.files.single.bytes;
-    if (bytes == null) {
-      _showSnack('没有读取到图片内容。');
-    }
-    return bytes;
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty) return null;
+    return result.single.readAsBytes();
   }
 
   void _addTextMessage() {
@@ -1062,10 +1055,7 @@ class _ChatSimulatorDemoPageState extends State<ChatSimulatorDemoPage>
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: EdgeInsets.zero,
                   ),
-                  icon: Image.asset(
-                    AppAssets.iconTrash,
-                    width: 21,
-                  ),
+                  icon: Image.asset(AppAssets.iconTrash, width: 21),
                 ),
                 child: content,
               ),
