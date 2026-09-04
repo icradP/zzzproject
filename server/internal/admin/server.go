@@ -214,6 +214,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleMedia(w)
 	case path == "/media" && r.Method == http.MethodDelete:
 		s.handleDeleteMedia(w, r)
+	case path == "/terminal" && r.Method == http.MethodGet:
+		s.handleTerminal(w, r)
 	case path == "/settings/registration" && r.Method == http.MethodGet:
 		s.handleRegistrationSettings(w)
 	case path == "/settings/registration" && r.Method == http.MethodPatch:
@@ -785,6 +787,8 @@ func (s *Server) allowedMethods(path string) string {
 	case "/groups", "/conversations", "/messages", "/media":
 		return "GET, DELETE"
 	case "/overview":
+		return "GET"
+	case "/terminal":
 		return "GET"
 	default:
 		return ""

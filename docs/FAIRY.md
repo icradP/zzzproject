@@ -42,6 +42,8 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 
 ## ZZZ Term 接入
 
+ZZZ Term 客户端的完整 WebSocket、消息段、审批、结果和 terminal vault 对接协议见 [ZZZTERM.md](ZZZTERM.md)。
+
 Fairy 可通过普通私聊向同账号在线的 ZZZ Term 客户端发出受限终端请求。首版命令为 `/term hosts`、`/term info <主机ID>` 和 `/term run <主机ID> <命令>`；请求有效期为 2 分钟。ZZZ Server 只转发并校验 `terminal_request` / `terminal_result` 消息段，不执行命令，也不接触 SSH 凭据。
 
 ZZZ Term 必须显示 Allow/Deny 审批卡，只有用户明确允许后才处理请求。`run_command` 只能使用当前客户端中已经连接且主机 ID 匹配的 SSH 会话；它不能让 Fairy 新建连接、选择凭据或跳过主机密钥校验。客户端会回传 `completed`、`failed`、`denied` 或 `expired` 状态以及有界输出。

@@ -9,6 +9,10 @@ const state = {
   conversations: [],
   messages: [],
   media: [],
+  terminalActivities: [],
+  terminalVaults: [],
+  terminalOverview: null,
+  terminalPollTimer: null,
   fairy: null,
   fairyDirty: false,
   fairyEvaluation: null,
@@ -486,6 +490,123 @@ async function loadMedia() {
   const payload = await api("media");
   state.media = payload.media || [];
   renderMedia();
+}
+
+function terminalStatusClass(status) {
+  if (["completed", "approved"].includes(status)) return "enabled";
+  if (["denied", "expired", "failed"].includes(status)) return "error";
+  return "offline";
+}
+
+function terminalStatusLabel(activity) {
+  if (activity.status) return activity.status;
+  if (activity.kind === "request") {
+    const expiresAt = activity.expires_at ? new Date(activity.expires_at) : null;
+    return expiresAt && expiresAt <= new Date() ? "expired" : "pending";
+  }
+  return "unknown";
+}
+
+function renderTerminal(payload) {
+  state.terminalActivities = payload.activities || [];
+  state.terminalVaults = payload.vaults || [];
+  state.terminalOverview = payload.overview || {};
+  const overview = state.terminalOverview;
+  const stats = [
+    ["Requests", overview.requests || 0, ""],
+    ["Results", overview.results || 0, "messages"],
+    ["Pending", overview.pending || 0, overview.pending ? "warning" : ""],
+    ["Vaults", overview.vaults_configured || 0, "storage"],
+  ];
+  document.querySelector("#terminal-stat-grid").replaceChildren(...stats.map(([label, value, className]) => {
+    const item = element("div", `stat-item ${className}`.trim());
+    item.append(element("span", "eyebrow", label), element("strong", "", String(value)));
+    return item;
+  }));
+  renderTerminalActivities();
+  const vaultState = document.querySelector("#terminal-vault-state");
+  vaultState.textContent = state.terminalVaults.length ? `${state.terminalVaults.length} configured` : "No vaults";
+  vaultState.className = `status-badge ${state.terminalVaults.length ? "enabled" : "offline"}`;
+  const vaultRows = state.terminalVaults.map((vault) => {
+    const row = document.createElement("tr");
+    const account = document.createElement("td");
+    account.append(element("span", "cell-title", vault.nickname || vault.user_id), element("span", "cell-subtitle mono", vault.user_id));
+    row.append(account, element("td", "mono", `r${vault.revision}`), element("td", "", formatBytes(vault.payload_bytes)), element("td", "", formatDate(vault.updated_at)));
+    return row;
+  });
+  document.querySelector("#terminal-vaults-body").replaceChildren(...vaultRows);
+  document.querySelector("#terminal-vaults-empty").hidden = vaultRows.length > 0;
+}
+
+function renderTerminalActivities() {
+  const query = document.querySelector("#terminal-search").value.trim().toLowerCase();
+  const activities = state.terminalActivities.filter((activity) => {
+    return `${activity.request_id} ${activity.message_id} ${activity.sender_id} ${activity.sender_nickname || ""} ${activity.operation || ""} ${activity.host_id || ""} ${activity.command || ""} ${activity.summary || ""} ${activity.status || ""}`.toLowerCase().includes(query);
+  });
+  const rows = activities.map((activity) => {
+    const row = document.createElement("tr");
+    const identity = document.createElement("td");
+    identity.append(element("span", "cell-title", activity.kind === "request" ? "Approval request" : "Execution result"), element("span", "cell-subtitle mono", activity.request_id));
+    const account = document.createElement("td");
+    account.append(element("span", "cell-title", activity.sender_nickname || activity.sender_id), element("span", "cell-subtitle mono", activity.sender_id));
+    const operation = element("td", "", activity.operation || "-");
+    const host = element("td", "mono", activity.host_id || "-");
+    const status = terminalStatusLabel(activity);
+    const statusCell = document.createElement("td");
+    statusCell.append(element("span", `status-badge ${terminalStatusClass(status)}`, status));
+    const time = element("td", "", formatDate(activity.timestamp));
+    const actions = document.createElement("td");
+    const inspect = element("button", "table-button", "Open");
+    inspect.type = "button";
+    inspect.addEventListener("click", () => openTerminalActivity(activity));
+    actions.append(inspect);
+    row.append(identity, account, operation, host, statusCell, time, actions);
+    return row;
+  });
+  document.querySelector("#terminal-activities-body").replaceChildren(...rows);
+  document.querySelector("#terminal-activities-empty").hidden = rows.length > 0;
+}
+
+function openTerminalActivity(activity) {
+  document.querySelector("#terminal-dialog-title").textContent = activity.kind === "request" ? "Approval request" : "Execution result";
+  appendDetails(document.querySelector("#terminal-details"), [
+    ["Request ID", activity.request_id, true],
+    ["Message ID", activity.message_id, true],
+    ["Account", activity.sender_nickname ? `${activity.sender_nickname} (${activity.sender_id})` : activity.sender_id, true],
+    ["Conversation", activity.conversation_id, true],
+    ["Operation", activity.operation || "-"],
+    ["Host", activity.host_id || "-", true],
+    ["Status", terminalStatusLabel(activity)],
+    ["Expires", formatDate(activity.expires_at)],
+    ["Exit code", activity.exit_code ?? "-"],
+  ]);
+  const command = document.querySelector("#terminal-command");
+  command.textContent = activity.command || "-";
+  const summary = document.querySelector("#terminal-summary");
+  summary.textContent = activity.summary || "-";
+  const output = document.querySelector("#terminal-output");
+  output.textContent = activity.output || "-";
+  document.querySelector("#terminal-dialog").showModal();
+}
+
+async function loadTerminal() {
+  const payload = await api("terminal?limit=200");
+  renderTerminal(payload);
+  scheduleTerminalPoll();
+}
+
+function scheduleTerminalPoll() {
+  window.clearTimeout(state.terminalPollTimer);
+  state.terminalPollTimer = null;
+  if (state.activeView !== "terminal" || appShell.hidden) return;
+  state.terminalPollTimer = window.setTimeout(async () => {
+    try {
+      await loadTerminal();
+    } catch (_) {
+      // The next scheduled refresh will retry after a transient failure.
+      scheduleTerminalPoll();
+    }
+  }, 5000);
 }
 
 function renderMedia() {
@@ -1923,6 +2044,10 @@ async function setActiveView(view) {
 	window.clearTimeout(state.fairyDecisionPollTimer);
 	state.fairyDecisionPollTimer = null;
   }
+  if (view !== "terminal") {
+    window.clearTimeout(state.terminalPollTimer);
+    state.terminalPollTimer = null;
+  }
   state.activeView = view;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   document.querySelectorAll(".view").forEach((section) => {
@@ -1944,6 +2069,7 @@ async function refreshActiveView() {
     messages: loadMessages,
     media: loadMedia,
     fairy: loadFairy,
+    terminal: loadTerminal,
     settings: loadRegistration,
   };
   try {
@@ -1996,6 +2122,7 @@ document.querySelector("#group-search").addEventListener("input", renderGroups);
 document.querySelector("#conversation-search").addEventListener("input", renderConversations);
 document.querySelector("#message-search").addEventListener("input", renderMessages);
 document.querySelector("#media-search").addEventListener("input", renderMedia);
+document.querySelector("#terminal-search").addEventListener("input", renderTerminalActivities);
 
 document.querySelectorAll("[data-close-dialog]").forEach((button) => {
   button.addEventListener("click", () => document.querySelector(`#${button.dataset.closeDialog}`).close());

@@ -41,6 +41,7 @@
         <button class="nav-button" type="button" data-view="messages">Messages</button>
         <button class="nav-button" type="button" data-view="media">Media</button>
         <button class="nav-button" type="button" data-view="fairy">Fairy</button>
+        <button class="nav-button" type="button" data-view="terminal">ZZZ Term</button>
         <button class="nav-button" type="button" data-view="settings">Settings</button>
       </nav>
       <div class="sidebar-footer">
@@ -500,6 +501,50 @@
         </form>
       </section>
 
+      <section id="view-terminal" class="view" data-section="terminal" hidden>
+        <div id="terminal-stat-grid" class="stat-grid terminal-stat-grid" aria-label="ZZZ Term statistics"></div>
+        <section class="surface terminal-surface">
+          <div class="section-heading responsive-heading">
+            <div>
+              <p class="eyebrow">ZZZ TERM</p>
+              <h3>Terminal activity</h3>
+            </div>
+            <label class="search-field">
+              <span>Search</span>
+              <input id="terminal-search" type="search" placeholder="Request, host, user, or command">
+            </label>
+          </div>
+          <div class="runtime-note terminal-boundary-note">
+            <strong>Client approved execution</strong>
+            <span>The server only transports and audits requests. Hosts, SSH sessions, and decrypted credentials remain on ZZZ Term clients.</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Activity</th><th>Account</th><th>Operation</th><th>Host</th><th>Status</th><th>Time</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="terminal-activities-body"></tbody>
+            </table>
+          </div>
+          <p id="terminal-activities-empty" class="empty-state" hidden>No terminal activity found.</p>
+        </section>
+        <section class="surface terminal-vault-surface">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">ENCRYPTED STORAGE</p>
+              <h3>Terminal vaults</h3>
+            </div>
+            <span id="terminal-vault-state" class="status-badge offline">No vaults</span>
+          </div>
+          <p class="form-note terminal-vault-note">Vault payloads are opaque client-encrypted envelopes. The admin console intentionally never displays or modifies their contents.</p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Account</th><th>Revision</th><th>Payload size</th><th>Updated</th></tr></thead>
+              <tbody id="terminal-vaults-body"></tbody>
+            </table>
+          </div>
+          <p id="terminal-vaults-empty" class="empty-state" hidden>No client vaults configured.</p>
+        </section>
+      </section>
+
       <section id="view-settings" class="view" data-section="settings" hidden>
         <section class="surface settings-surface">
           <div class="section-heading">
@@ -620,6 +665,26 @@
     <div class="modal-actions separated">
       <button id="delete-message-button" class="danger-button" type="button">Delete message</button>
       <button class="secondary-button" type="button" data-close-dialog="message-dialog">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="terminal-dialog" class="modal wide">
+    <div class="modal-header">
+      <div>
+        <p class="eyebrow">ZZZ TERM</p>
+        <h3 id="terminal-dialog-title">Terminal activity</h3>
+      </div>
+      <button class="icon-button" type="button" data-close-dialog="terminal-dialog" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <dl id="terminal-details" class="detail-grid compact-grid"></dl>
+    <div class="content-heading">Command</div>
+    <pre id="terminal-command" class="terminal-code">-</pre>
+    <div class="content-heading">Summary</div>
+    <pre id="terminal-summary" class="terminal-code">-</pre>
+    <div class="content-heading">Output</div>
+    <pre id="terminal-output" class="terminal-code">-</pre>
+    <div class="modal-actions separated">
+      <button class="secondary-button" type="button" data-close-dialog="terminal-dialog">Close</button>
     </div>
   </dialog>
 

@@ -185,7 +185,8 @@ func TestAdminLoginRateLimitAndStaticSecurity(t *testing.T) {
 	page := performRequest(handler, http.MethodGet, "/admin/", nil, nil, false)
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "ZZZ IM Server") ||
 		!strings.Contains(page.Body.String(), `id="view-fairy"`) ||
-		!strings.Contains(page.Body.String(), `id="fairy-config-form"`) {
+		!strings.Contains(page.Body.String(), `id="fairy-config-form"`) ||
+		!strings.Contains(page.Body.String(), `id="view-terminal"`) {
 		t.Fatalf("admin page failed: %d", page.Code)
 	}
 	for _, marker := range []string{
@@ -197,6 +198,9 @@ func TestAdminLoginRateLimitAndStaticSecurity(t *testing.T) {
 		`id="fairy-decision-list"`,
 		`id="fairy-decision-detail"`,
 		`id="fairy-refresh-decisions"`,
+		`id="terminal-activities-body"`,
+		`id="terminal-vaults-body"`,
+		`id="terminal-dialog"`,
 	} {
 		if !strings.Contains(page.Body.String(), marker) {
 			t.Fatalf("admin Fairy navigation is missing %s", marker)
@@ -302,6 +306,70 @@ func TestAdminContentAndPasswordManagement(t *testing.T) {
 	reports := performRequest(handler, http.MethodGet, "/admin/api/reports", nil, cookie, false)
 	if reports.Code != http.StatusOK || !strings.Contains(reports.Body.String(), "Repeated links") {
 		t.Fatalf("reports status=%d body=%s", reports.Code, reports.Body.String())
+	}
+}
+
+func TestAdminTerminalActivityDoesNotExposeVaultPayload(t *testing.T) {
+	database := store.NewMemoryStore()
+	seedAdminStore(t, database)
+	conversationID := "private-alice-bob"
+	requestID := "term-request-1"
+	if _, err := database.StoreMessage(conversationID, "fairy", "Fairy", []protocol.MessageSegment{
+		protocol.TextSegment("Requesting host status"),
+		protocol.TerminalRequestSegment(requestID, "run_command", "workstation", "uptime", time.Now().Add(time.Minute).UnixMilli()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.StoreMessage(conversationID, "alice", "Alice", []protocol.MessageSegment{
+		protocol.TextSegment("Completed"),
+		{Type: "terminal_result", Data: map[string]interface{}{
+			"request_id": requestID, "status": "completed", "output": "up 3 days", "exit_code": int64(0),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.StoreMessage(conversationID, "fairy", "Fairy", []protocol.MessageSegment{
+		protocol.TerminalRequestSegment("term-expired", "list_hosts", "", "", time.Now().Add(-time.Minute).UnixMilli()),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.PutTerminalVault("alice", "client-secret-envelope", 0); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Config{Store: database, Registration: &registrationStub{}, AdminToken: "admin", PublicPath: "/admin"})
+	cookie := loginCookie(t, handler, "admin")
+	response := performRequest(handler, http.MethodGet, "/admin/api/terminal?limit=20", nil, cookie, false)
+	if response.Code != http.StatusOK {
+		t.Fatalf("terminal status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "client-secret-envelope") {
+		t.Fatal("terminal vault payload leaked through admin API")
+	}
+	var payload struct {
+		Overview struct {
+			Requests         int `json:"requests"`
+			Results          int `json:"results"`
+			Completed        int `json:"completed"`
+			Expired          int `json:"expired"`
+			VaultsConfigured int `json:"vaults_configured"`
+		} `json:"overview"`
+		Activities []struct {
+			RequestID string `json:"request_id"`
+			Kind      string `json:"kind"`
+			Status    string `json:"status"`
+		} `json:"activities"`
+		Vaults []struct {
+			PayloadBytes int `json:"payload_bytes"`
+		} `json:"vaults"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Overview.Requests != 2 || payload.Overview.Results != 1 || payload.Overview.Completed != 1 || payload.Overview.Expired != 1 || payload.Overview.VaultsConfigured != 1 {
+		t.Fatalf("unexpected terminal overview: %#v", payload.Overview)
+	}
+	if len(payload.Activities) != 3 || len(payload.Vaults) != 1 || payload.Vaults[0].PayloadBytes != len("client-secret-envelope") {
+		t.Fatalf("unexpected terminal payload: activities=%#v vaults=%#v", payload.Activities, payload.Vaults)
 	}
 }
 
