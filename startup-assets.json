@@ -1,0 +1,438 @@
+{
+  "version": "72b0e8e792ae7a55",
+  "build_bytes": 60327702,
+  "resource_count": 106,
+  "startup": {
+    "main.dart.js": 4105288,
+    "canvaskit/canvaskit.js": 86859,
+    "canvaskit/canvaskit.wasm": 7229467,
+    "canvaskit/chromium/canvaskit.js": 86496,
+    "canvaskit/chromium/canvaskit.wasm": 5760502
+  },
+  "resources": {
+    ".last_build_id": {
+      "bytes": 32,
+      "sha256": "24363cd3c5653dd5f6d4fe5f70815eab0d113cb4ce9b8fa8634fe5cb0ad2ad17"
+    },
+    "app-sw.js": {
+      "bytes": 6231,
+      "sha256": "450a5a747ad1874faa0a6bc3f94594e28340c3cc2ab1704020b7484627ccb2e3"
+    },
+    "assets/AssetManifest.bin": {
+      "bytes": 5306,
+      "sha256": "4d3e8cd259740a612cfc312ca4e18ff0f3635d8827d3572c4f0dc43d9ded667b"
+    },
+    "assets/AssetManifest.bin.json": {
+      "bytes": 7078,
+      "sha256": "7f52c5507287ff5a6d14f8b4b34eb91ecab3d699cfbb5e4326a31c98f9ffca80"
+    },
+    "assets/FontManifest.json": {
+      "bytes": 291,
+      "sha256": "ba0261d7e90f39de3dc834d904562b959f3e45e0bf4b26b9e912e85c863b565a"
+    },
+    "assets/NOTICES": {
+      "bytes": 1414068,
+      "sha256": "52d8c40dc60166d6ef2e921de9c3de129a66552b3d0d303a449bd84c3dcd9eac"
+    },
+    "assets/assets/characters/AnbyDemara.png": {
+      "bytes": 11010,
+      "sha256": "83beba42ae542081533334a02e756bd8f62203afd8c6498560dc3742ca8f08fd"
+    },
+    "assets/assets/characters/AntonIvanov.png": {
+      "bytes": 10045,
+      "sha256": "39aca37be6d65bee42dc6c83c645c8a8707a1b0d942b70c57da2046a5f6fbc07"
+    },
+    "assets/assets/characters/Belle.png": {
+      "bytes": 9169,
+      "sha256": "aff20a4b8d4a2a7df8321c67eed6efe6890394da07624cb9e0ed411da6bda632"
+    },
+    "assets/assets/characters/BenBigger.png": {
+      "bytes": 9626,
+      "sha256": "6dfca46aa0054092cde62dafe39422db1ebe0a2f7e40337fb7783300645ae862"
+    },
+    "assets/assets/characters/BillyKid.png": {
+      "bytes": 9523,
+      "sha256": "9de6955ba588b55b88e17593a88770b2a3edca72b5dbdde6092e3ff316910e3e"
+    },
+    "assets/assets/characters/CorinWickes.png": {
+      "bytes": 9523,
+      "sha256": "e15da85a3f137434a9ce8106be2146cfa257b02910c328ba9727dbaf3c9cf450"
+    },
+    "assets/assets/characters/JaneDoe.png": {
+      "bytes": 10333,
+      "sha256": "eb4493489dbbc2c59cc935c662a2068d854436973825c3857b7ad095211543ed"
+    },
+    "assets/assets/characters/Lucy.png": {
+      "bytes": 10648,
+      "sha256": "f1cd080733218dbb83f07c95987f1695e8e1c8a47fbf52a7532d881c5e677464"
+    },
+    "assets/assets/characters/NicoleDemara.png": {
+      "bytes": 10113,
+      "sha256": "bcb2da9440cebf20b376e34d8132a16bbc345ba5d95b194c5ac9c625d4864685"
+    },
+    "assets/assets/characters/PiperWheel.png": {
+      "bytes": 9047,
+      "sha256": "d71b93e610c0bc1814bcb4a2b1f186820baa618aa096af33cff4ba4bf2764a77"
+    },
+    "assets/assets/characters/Qingyi.png": {
+      "bytes": 9762,
+      "sha256": "2f48f16e2391bf6742fad2e06d5fd678890b03148b5a3cdb28f582abd42c5032"
+    },
+    "assets/assets/characters/TsukishiroYanagi.png": {
+      "bytes": 9599,
+      "sha256": "1bad611700087f7ca46400c32df24b1705f48a18900d2a7bc4378a85f87eac2b"
+    },
+    "assets/assets/characters/VonLycaon.png": {
+      "bytes": 10928,
+      "sha256": "5f83bfd8fe946ee47ff2aafd92f6ef06890dcd4775391be67dcd017368d054da"
+    },
+    "assets/assets/characters/Wise.png": {
+      "bytes": 7919,
+      "sha256": "f742a31ffd234120fda8a7728b7d08eaee99fda07a6a2aaa7a67227b899e8a96"
+    },
+    "assets/assets/characters/ZhuYuan.png": {
+      "bytes": 7668,
+      "sha256": "9cbeedada925b6a5dd1b39b36d8a3ba687ed58408d4c1978381d5a77f287d7d0"
+    },
+    "assets/assets/characters/npcs/Amy.png": {
+      "bytes": 12534,
+      "sha256": "dec1070464d64855684130ab3477ca42978678e2b6a3f9fa56d335df71e10cb7"
+    },
+    "assets/assets/characters/npcs/Asha.png": {
+      "bytes": 12690,
+      "sha256": "ae74b1ff649a98b6e00676a6327bce73b6da873da75b519b827e0e72b82b06b3"
+    },
+    "assets/assets/characters/npcs/Elfy.png": {
+      "bytes": 10037,
+      "sha256": "72c8c3641510a80b5301c264caef1ccc94505afd84e49dbbcc46b21dfc177e00"
+    },
+    "assets/assets/characters/npcs/Enzo.png": {
+      "bytes": 12994,
+      "sha256": "fae16002d0f5e67b27931f2c3617f8c52630757f5c5699eeddb9c5d400f30089"
+    },
+    "assets/assets/characters/npcs/Foamy.png": {
+      "bytes": 10759,
+      "sha256": "ebe45868ba6f18330c60d00d621ce5d40f8aad1eed4137f0cbad62e87d262dec"
+    },
+    "assets/assets/characters/npcs/Heddy.png": {
+      "bytes": 8555,
+      "sha256": "5fce118af99f5e06015f99d288b84ca10fff32c2e2b28ab3194fd8620dc99b4e"
+    },
+    "assets/assets/characters/npcs/Monica.png": {
+      "bytes": 14970,
+      "sha256": "3f935c1701747d137378a36dc7b3ec6c2cb33962720bb4f3e616d05049588705"
+    },
+    "assets/assets/characters/npcs/OfficerMewmew.png": {
+      "bytes": 8646,
+      "sha256": "67ee8cccc0b37b5b9abfb79a7b2d8349a905edc26a4ab68ffc554ecab483eca7"
+    },
+    "assets/assets/characters/npcs/SageInABarrel.png": {
+      "bytes": 50657,
+      "sha256": "76a1ed2c2696cd0b38a2ee068879271350ed87f5c03268cea5fb966e401c95c7"
+    },
+    "assets/assets/characters/npcs/Sjal1.png": {
+      "bytes": 55870,
+      "sha256": "73880ab4d0d637de4da64cde6f9b9734e5021a395f704a4a08a759ef7a774e0d"
+    },
+    "assets/assets/characters/npcs/Sjal2.png": {
+      "bytes": 56513,
+      "sha256": "9555d64e19eee700f391e8d3ede8f58d13059a5e415b32f2048370a70831af4b"
+    },
+    "assets/assets/characters/npcs/Sjal3.png": {
+      "bytes": 55482,
+      "sha256": "b4334b924f3ba03eb9fcddb2ac01c94b5fa9cde29f065a958951c416f8bd3ea1"
+    },
+    "assets/assets/characters/npcs/Venus.png": {
+      "bytes": 11090,
+      "sha256": "11ebce2d2a2bdc6234172f84a71c47a471c75d2b285be1e4a2faf852c3d1501f"
+    },
+    "assets/assets/characters/temp/AlexandrinaSebastiane.png": {
+      "bytes": 11473,
+      "sha256": "ea90488564310fa648a520b5d83eb6ce271c3e91b954bce171aac485360a3f39"
+    },
+    "assets/assets/characters/temp/BurniceWhite.png": {
+      "bytes": 13929,
+      "sha256": "78c49f707150356b1960557f733629e9843c918e9b8efd11284f31be8244bbe0"
+    },
+    "assets/assets/characters/temp/CaesarKing.png": {
+      "bytes": 12486,
+      "sha256": "a641d76718c45ac6116a8d3cfc67ece54057f0fe3153fe9460ace8e94bd5dec3"
+    },
+    "assets/assets/characters/temp/EllenJoe.png": {
+      "bytes": 15830,
+      "sha256": "ba0e5eec41f2b8a65dbd323173e594d252801998d05ec5ccb5418454c551f05a"
+    },
+    "assets/assets/characters/temp/Fairy.png": {
+      "bytes": 11746,
+      "sha256": "2f036004d182a5100ec64dd53b05a37ee9cca31001eabcd3091a058a7d3ce64a"
+    },
+    "assets/assets/characters/temp/GraceHoward.png": {
+      "bytes": 10980,
+      "sha256": "b372b0fcb41b69f75f283cf3b486c1923a5a5cce122d0f24acf3dd7817479f08"
+    },
+    "assets/assets/characters/temp/HoshimiMiyabi.png": {
+      "bytes": 13511,
+      "sha256": "0761e3bb53203cb00944d9d2c919444348fe5e6f0091a04d857e0904f12a78d6"
+    },
+    "assets/assets/characters/temp/KoledaBelobog.png": {
+      "bytes": 15845,
+      "sha256": "197eaf1a1ee5752e7d0fbcca024663c86923aab3e8f49692b73939aecad1b8d0"
+    },
+    "assets/assets/characters/temp/Lighter.png": {
+      "bytes": 11907,
+      "sha256": "003c90b872b9326ad73431b5f751be2512a324a05e687cd226954ab117aa76e8"
+    },
+    "assets/assets/characters/temp/NekomiyaMana.png": {
+      "bytes": 13751,
+      "sha256": "2605eae09be1c64496d21c11dd66011b53c08df74864f5a3ae4fd4ef16b0ba97"
+    },
+    "assets/assets/characters/temp/SethLowell.png": {
+      "bytes": 10738,
+      "sha256": "ed029962cdfe85f669a41935570bafa48706a97eda5a02ea7177a0233575fd39"
+    },
+    "assets/assets/characters/temp/Soldier11.png": {
+      "bytes": 10813,
+      "sha256": "6183ea1ab5c70068a49144ac1dcb3ea6d9ed71b162822f9ed4fbebff492127e3"
+    },
+    "assets/assets/characters/temp/Soukaku.png": {
+      "bytes": 16573,
+      "sha256": "6776473b9ff67be317129b9a020d654e729f2db37869c1571369c759584216e8"
+    },
+    "assets/assets/data/characters.json": {
+      "bytes": 5249,
+      "sha256": "70e860256951b62db5c83a23d8216d5bb326223f215fd1d022d8edc764f38e7d"
+    },
+    "assets/assets/font/inpinhongmengti.ttf": {
+      "bytes": 1925392,
+      "sha256": "d74dd1167b2d013813b390096ee1c9293f69aef141832aaf545d17d5e439f6c5"
+    },
+    "assets/assets/icons/edit_icon.png": {
+      "bytes": 199,
+      "sha256": "0ebcf7f6b2174df2edd85dc8409c717d140581ee59f0ff1794bde6077ff95a43"
+    },
+    "assets/assets/icons/photo_icon.png": {
+      "bytes": 494,
+      "sha256": "ec2a963e47a22c5db3e53b20be139807282dfe7bd7d75d82c9e28a46561e7915"
+    },
+    "assets/assets/icons/zzz_agent_profile_icon.png": {
+      "bytes": 355,
+      "sha256": "3940616f01b7f8e3af88710a663bbbe884e4f977a56a741bfa9c90114f67c253"
+    },
+    "assets/assets/icons/zzz_back_icon.png": {
+      "bytes": 381,
+      "sha256": "645bc578c51178f92c83f9ae82e49295078664b5302ca1a7d98d2bc4ab8d538a"
+    },
+    "assets/assets/icons/zzz_dm_icon.png": {
+      "bytes": 297,
+      "sha256": "f1ca4c4acf9888fac0f6bce297afc3d5e16010913fe0dbff7559d0a389fbd65c"
+    },
+    "assets/assets/icons/zzz_group_chat_icon.png": {
+      "bytes": 421,
+      "sha256": "7921fab6544a5fec08ad8b3311633b0f052ffa489978ebaefd2b93dafe1f2d2b"
+    },
+    "assets/assets/icons/zzz_trash_icon.png": {
+      "bytes": 428,
+      "sha256": "29336c353787da0d674964d00d07fdfcbe89f9128185ced6c1fb6de655fe8f8b"
+    },
+    "assets/assets/images/bg_chat_with_pattern.png": {
+      "bytes": 189313,
+      "sha256": "c33743063bf839ce758e88a0de02711e7ac7479f5ff3a4d0bf98bda42621fb30"
+    },
+    "assets/assets/images/bg_chat_with_pattern_dark.png": {
+      "bytes": 76828,
+      "sha256": "8ff4ea3f9c9c150603a22954abd7c201b384b83dcec4f69a7e8cf082ec8a016a"
+    },
+    "assets/assets/images/bg_chat_with_pattern_dark_2.png": {
+      "bytes": 144603,
+      "sha256": "330983e4a0766551470bfaaf191838c5efce34c6680f44d6d1d99ecfef4b1540"
+    },
+    "assets/assets/images/bg_long_stripes.png": {
+      "bytes": 1105,
+      "sha256": "9f93fadf3c927d86bc858cc9b2d3f85d076bc058ecbeda2f0c1a1a898647a963"
+    },
+    "assets/assets/images/bg_sliding_anim.png": {
+      "bytes": 192678,
+      "sha256": "ebd08c80eff18d6170745cb060ccbad4a6258114a331d47bc6dd73879f5e445d"
+    },
+    "assets/assets/images/chatbox_point_l.png": {
+      "bytes": 284,
+      "sha256": "ce49c84fb4f9f50f53f0fccb15c213141f5ed5b750a27c0ff2bee2724258af19"
+    },
+    "assets/assets/images/chatbox_point_r.png": {
+      "bytes": 292,
+      "sha256": "cafda4842633aaf8550e9fb3eca3f3ad344362b2e5fc64429a58f355d06cc066"
+    },
+    "assets/assets/media/corin_sticker_01.png": {
+      "bytes": 464950,
+      "sha256": "59b7c26abada713da47ece96ee139a8c9ce382430f295e0ffe75b0b3d92dd212"
+    },
+    "assets/assets/media/ellen_sticker_01.png": {
+      "bytes": 311346,
+      "sha256": "b8b36c032e9feda0972ebbe23740fd28f14aae11cecae3f9cc9f4dc8ade96db2"
+    },
+    "assets/assets/models/.gitkeep": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "assets/assets/models/320n.onnx": {
+      "bytes": 12150158,
+      "sha256": "c15d8273adad2d0a92f014cc69ab2d6c311a06777a55545f2c4eb46f51911f0f"
+    },
+    "assets/fonts/MaterialIcons-Regular.otf": {
+      "bytes": 27668,
+      "sha256": "ce0c15a5ddd75c7e1e13832d1e2af95fa04bab8586a88b27ffd4f9e06b77eb37"
+    },
+    "assets/packages/cupertino_icons/assets/CupertinoIcons.ttf": {
+      "bytes": 1472,
+      "sha256": "3d90c370aa4cf00dc57ee2b902f6652147c0f81e03e483df584a9c08b1687c9d"
+    },
+    "assets/packages/record_web/assets/js/record.fixwebmduration.js": {
+      "bytes": 23286,
+      "sha256": "c345ad5d2fffb357ada647b9b690693452a2001bc5912f1e9066876ce016399b"
+    },
+    "assets/packages/record_web/assets/js/record.worklet.js": {
+      "bytes": 11803,
+      "sha256": "ba7e0f4c841480ee78c0b54e7eadd44455b916fefdb07410ee46159d82dcc08e"
+    },
+    "assets/shaders/ink_sparkle.frag": {
+      "bytes": 8890,
+      "sha256": "2dca5ab93d4ec29e963f996f3916320ba60825e9537dfb149a68008c7a16b026"
+    },
+    "assets/shaders/stretch_effect.frag": {
+      "bytes": 6737,
+      "sha256": "ab412f07a5b9b50b67a885b24dbe16929738ae28630407d6490c924caf0a3220"
+    },
+    "canvaskit/canvaskit.js": {
+      "bytes": 86859,
+      "sha256": "7361b744487f98262f77ac507006b3eae37830430048ab7811a626b79f34a52c"
+    },
+    "canvaskit/canvaskit.js.symbols": {
+      "bytes": 1357066,
+      "sha256": "43dd0e78dfb29b1e3826c4ff987e9c5c982e51e1d28f40753f693f412dd1b298"
+    },
+    "canvaskit/canvaskit.wasm": {
+      "bytes": 7229467,
+      "sha256": "6bdfaa51c76845c02ea90153d44f56f99da51de44a7ee0ea15ccaeb33ed8f476"
+    },
+    "canvaskit/chromium/canvaskit.js": {
+      "bytes": 86496,
+      "sha256": "d2aceb0e24ead163ab289a165ca0e26a36fa26d7118f5a295b8854d59d892896"
+    },
+    "canvaskit/chromium/canvaskit.js.symbols": {
+      "bytes": 1274971,
+      "sha256": "23a68c0f21677d699eaf86516fb2081556b313d1e429d61c4cb7fbfeb84d9986"
+    },
+    "canvaskit/chromium/canvaskit.wasm": {
+      "bytes": 5760502,
+      "sha256": "c2fc2864763540922c71d464e983bebf97b3a5312fd01c6a8988969747d13314"
+    },
+    "canvaskit/experimental_webparagraph/canvaskit.js": {
+      "bytes": 76497,
+      "sha256": "803f7bab5f280fb6793495573bc83e6f70110916f75878a79c41e30b86585df8"
+    },
+    "canvaskit/experimental_webparagraph/canvaskit.js.symbols": {
+      "bytes": 1004464,
+      "sha256": "5746d266932128f390441e40139649b186e2c80322be100867b0aef69b34db0e"
+    },
+    "canvaskit/experimental_webparagraph/canvaskit.wasm": {
+      "bytes": 4138344,
+      "sha256": "6b916e684369558b9a4fdd774fedf2717d7481cf0b7dffb28e084129512bbd3f"
+    },
+    "canvaskit/skwasm.js": {
+      "bytes": 63316,
+      "sha256": "e0316a798a929008cf9221d9ae0e8a4e0a5f07869ff2c0ad68a71f56ab9998a4"
+    },
+    "canvaskit/skwasm.js.symbols": {
+      "bytes": 1541208,
+      "sha256": "5e13d39db7315f06e6edd2cd3f4bf3a970bbf0cf33d128a38b6fccf4d25fec8b"
+    },
+    "canvaskit/skwasm.wasm": {
+      "bytes": 3580947,
+      "sha256": "084a99454e405ad9e396803f5c02369562c92210ad9ff83a053ca68a1047a8f4"
+    },
+    "canvaskit/skwasm_heavy.js": {
+      "bytes": 63429,
+      "sha256": "fbf1c3374cd28b38ea4c48f8189012263c40e78e0a55323a557443c97a58c58c"
+    },
+    "canvaskit/skwasm_heavy.js.symbols": {
+      "bytes": 1666301,
+      "sha256": "5dbcc8bc79d9af9aba141a682ac0378f17242ae62b2338be2b979361694c8ca2"
+    },
+    "canvaskit/skwasm_heavy.wasm": {
+      "bytes": 5172643,
+      "sha256": "8b8279650b1847d8259ad4591c5cb7cb635b513134ec7565f85b1aa4271d896c"
+    },
+    "canvaskit/wimp.js": {
+      "bytes": 58396,
+      "sha256": "3f2cc5ae040789508b6914897a9858389a496b3a7cadcc71ef120cca99f70586"
+    },
+    "canvaskit/wimp.js.symbols": {
+      "bytes": 1800831,
+      "sha256": "207c97c9fb2376928a72939bcd4a986151197c60d3ad53b7ec57a02f7401fcc4"
+    },
+    "canvaskit/wimp.wasm": {
+      "bytes": 3513876,
+      "sha256": "3dd51d102cbd43ab4012671e2fcb5b0f188e4db27410713ba48a2be3a56fe2d4"
+    },
+    "favicon.png": {
+      "bytes": 2213,
+      "sha256": "d7e9e1c8e14695d05cf51f80a2601a3658974f92506987a896f4a8ddf5195698"
+    },
+    "flutter.js": {
+      "bytes": 9553,
+      "sha256": "a483fd28f51ed2fadd0da3fade5b672eba56310d549d736ce62eabf624a6a578"
+    },
+    "flutter_bootstrap.js": {
+      "bytes": 12535,
+      "sha256": "e741a62450ac8fa22a89a51c3fb6dd2253e65232fbf076beb5cf4bad99410ec2"
+    },
+    "flutter_service_worker.js": {
+      "bytes": 784,
+      "sha256": "a131df5ca46154cc4eb79044f7f5a14029c2f8bfccf8cef34e3ec3b5a9f5a88c"
+    },
+    "icons/Icon-192.png": {
+      "bytes": 7809,
+      "sha256": "397c1db5157ff2f8c764c8963a02fb577fc521ad9ab128c901c1d7c708d62ece"
+    },
+    "icons/Icon-512.png": {
+      "bytes": 33058,
+      "sha256": "6a5548cb6ebb1a0938c28e1f6e5c5e5c9bcae97d674cc5d183040f4af1d72ab4"
+    },
+    "icons/Icon-maskable-192.png": {
+      "bytes": 7809,
+      "sha256": "397c1db5157ff2f8c764c8963a02fb577fc521ad9ab128c901c1d7c708d62ece"
+    },
+    "icons/Icon-maskable-512.png": {
+      "bytes": 33058,
+      "sha256": "6a5548cb6ebb1a0938c28e1f6e5c5e5c9bcae97d674cc5d183040f4af1d72ab4"
+    },
+    "index.html": {
+      "bytes": 6384,
+      "sha256": "2e560b25c805bd8defae61cbff881d382d478fb204785d7ab219e370ef5f2850"
+    },
+    "loading.js": {
+      "bytes": 15412,
+      "sha256": "79ee16996943bb4f65d4090c7060e5ed4b2264a256460384a7819e6e15711e5b"
+    },
+    "main.dart.js": {
+      "bytes": 4105288,
+      "sha256": "7994b38975c4248c44752ba0a9127a1f928acc5e41c1e08be65243548bb93ab4"
+    },
+    "manifest.json": {
+      "bytes": 930,
+      "sha256": "f3d7464878b07d0e17ed59660a011eac553d65cf9d4ffc94bcda117316d88470"
+    },
+    "push-sw.js": {
+      "bytes": 2112,
+      "sha256": "0406ae06522814ee265bcdac3139143a5d0f12e26e5d744b6e346e834d85e51c"
+    },
+    "push_client.js": {
+      "bytes": 2127,
+      "sha256": "9af9e3403b9778a2e6688c159fe8eb8f4b9732438e21caa50b0210cab2002898"
+    },
+    "version.json": {
+      "bytes": 90,
+      "sha256": "78b4fc9629f09bc5c8984866553fdcb83c16062efcae0db9b628a21d05921ee5"
+    }
+  }
+}
