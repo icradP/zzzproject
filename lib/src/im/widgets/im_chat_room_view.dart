@@ -17,6 +17,7 @@ import '../im_scope.dart';
 import '../data/im_draft_store.dart';
 import '../data/im_message_display_config.dart';
 import '../data/im_sticker_catalog.dart';
+import '../dynamic/im_dynamic.dart';
 import '../models/im_models.dart';
 import 'im_chat_widgets.dart';
 
@@ -56,6 +57,9 @@ class ImChatRoomView extends StatefulWidget {
     this.onManageGroup,
     this.onBack,
     this.messageBuilder,
+    this.dynamicContentRegistry,
+    this.onDynamicEvent,
+    this.dynamicContentBuilder,
     this.composerEnabled = true,
     this.composerHintText = 'Message something...',
     this.attachmentsEnabled = true,
@@ -93,6 +97,16 @@ class ImChatRoomView extends StatefulWidget {
   /// sender resolution. A custom renderer only replaces the visual message
   /// body, which keeps richer Agent cards compatible with normal IM behavior.
   final ImMessageWidgetBuilder? messageBuilder;
+
+  /// Registry used by `dynamic_content` message segments. The default
+  /// registry is safe and intentionally limited to built-in components.
+  final ImDynamicComponentRegistry? dynamicContentRegistry;
+
+  /// Receives user interaction from a rendered dynamic content node. Business
+  /// code decides whether an action calls an API, updates a message, or runs a
+  /// local operation.
+  final ValueChanged<ImDynamicEvent>? onDynamicEvent;
+  final ImMessageContentBuilder? dynamicContentBuilder;
   final bool composerEnabled;
   final String composerHintText;
   final bool attachmentsEnabled;
@@ -1228,6 +1242,9 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                         compact: compact,
                         hideTimestamp: hideTimestamp,
                         showMessageStatus: _showMessageStatus,
+                        dynamicContentRegistry: widget.dynamicContentRegistry,
+                        onDynamicEvent: widget.onDynamicEvent,
+                        dynamicContentBuilder: widget.dynamicContentBuilder,
                         resolveQuote: widget.resolveMessage,
                         onQuoteTap:
                             message.isReply

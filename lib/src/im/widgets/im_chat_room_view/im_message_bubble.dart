@@ -5,6 +5,7 @@ import '../../../theme/zzz_colors.dart';
 import '../../../widgets/zzz_widgets.dart';
 import '../../models/im_models.dart';
 import '../../data/im_sticker_catalog.dart';
+import '../../dynamic/im_dynamic.dart';
 import 'im_file_card.dart';
 import 'im_forward_bubble.dart';
 import 'im_nsfw_guard.dart';
@@ -19,6 +20,21 @@ String? _previewLocationFor(ImMessage message) =>
     message.thumbnailUrl ??
     message.mediaPath ??
     message.mediaUrl;
+
+/// Builds the content inside the shared message bubble. Unlike
+/// [ImMessageWidgetBuilder], this keeps the common avatar, alignment, reply,
+/// reaction, timestamp, and message-status chrome.
+typedef ImMessageContentBuilder =
+    Widget Function(
+      BuildContext context, {
+      required ImMessage message,
+      required String senderName,
+      required bool showSenderName,
+      required bool hideAvatar,
+      required bool compact,
+      required bool hideTimestamp,
+      required bool showMessageStatus,
+    });
 
 /// Collapsible recalled-message banner — system-message style.
 class _RecalledBanner extends StatefulWidget {
@@ -146,6 +162,9 @@ class ImMessageBubble extends StatelessWidget {
     this.onQuoteTap,
     this.resolveUserName,
     this.onReactionTap,
+    this.dynamicContentRegistry,
+    this.onDynamicEvent,
+    this.dynamicContentBuilder,
     super.key,
   });
 
@@ -184,6 +203,10 @@ class ImMessageBubble extends StatelessWidget {
 
   /// Called when the user taps an existing reaction chip.
   final ValueChanged<ImReaction>? onReactionTap;
+
+  final ImDynamicComponentRegistry? dynamicContentRegistry;
+  final ValueChanged<ImDynamicEvent>? onDynamicEvent;
+  final ImMessageContentBuilder? dynamicContentBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -247,10 +270,33 @@ class ImMessageBubble extends StatelessWidget {
         (message.kind == ImMessageKind.record) &&
         (message.text.isEmpty || message.text == '[语音]');
     final isJsonCard = message.kind == ImMessageKind.json;
+    final dynamicContent = _dynamicContent();
+    final isDynamicContent = dynamicContent != null;
+    final isCustomContent = dynamicContentBuilder != null;
     final isForward = message.kind == ImMessageKind.forward;
     final sticker = ImStickerCatalog.resolveMessage(message);
 
     Widget buildBubbleContent() {
+      if (dynamicContentBuilder != null) {
+        return dynamicContentBuilder!(
+          context,
+          message: message,
+          senderName: senderName,
+          showSenderName: showSenderName,
+          hideAvatar: hideAvatar,
+          compact: compact,
+          hideTimestamp: hideTimestamp,
+          showMessageStatus: showMessageStatus,
+        );
+      }
+      if (dynamicContent != null) {
+        return ImDynamicContentView(
+          messageId: message.id,
+          content: dynamicContent,
+          registry: dynamicContentRegistry,
+          onEvent: onDynamicEvent,
+        );
+      }
       if (sticker != null) {
         return Semantics(
           label: 'Sticker: ${sticker.label}',
@@ -421,7 +467,9 @@ class ImMessageBubble extends StatelessWidget {
 
     final bubbleContent = buildBubbleContent();
     final wrappedContent =
-        isJsonCard
+        isCustomContent
+            ? bubbleContent
+            : isJsonCard
             ? Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
@@ -438,6 +486,7 @@ class ImMessageBubble extends StatelessWidget {
             : isImageOnly ||
                 isRecordOnly ||
                 isJsonCard ||
+                isDynamicContent ||
                 isForward ||
                 message.kind == ImMessageKind.share ||
                 message.kind == ImMessageKind.location ||
@@ -642,6 +691,14 @@ class ImMessageBubble extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Unable to open this attachment.')),
     );
+  }
+
+  ImDynamicContent? _dynamicContent() {
+    for (final segment in message.segments ?? const []) {
+      if (segment.type != 'dynamic_content') continue;
+      return ImDynamicContent.tryFromSegmentData(segment.data);
+    }
+    return null;
   }
 }
 

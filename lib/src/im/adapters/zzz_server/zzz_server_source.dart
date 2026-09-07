@@ -2183,6 +2183,7 @@ class ZzzServerSource implements ImMessageSource {
       'agent_route' => '',
       'terminal_request' => '[终端授权请求]',
       'terminal_result' => '[终端执行结果]',
+      'dynamic_content' => '[动态内容]',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',
@@ -2201,6 +2202,7 @@ class ZzzServerSource implements ImMessageSource {
     'poke' => ImMessageKind.poke,
     'system' => ImMessageKind.system,
     'json' => ImMessageKind.json,
+    'dynamic_content' => ImMessageKind.dynamicContent,
     _ => ImMessageKind.text,
   };
 

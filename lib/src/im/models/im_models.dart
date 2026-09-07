@@ -70,6 +70,7 @@ enum ImMessageKind {
   music,
   contact,
   json,
+  dynamicContent,
   system,
   poke,
 }

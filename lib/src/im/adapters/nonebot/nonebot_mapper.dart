@@ -70,6 +70,8 @@ String oneBotSegmentsToDisplayText(
         buf.write('[合并转发]');
       case 'json':
         buf.write(_parseJsonCard(seg.data['data'] as String?).text);
+      case 'dynamic_content':
+        buf.write('[动态内容]');
       case 'file':
         buf.write(seg.data['name'] ?? seg.data['file'] ?? '[文件]');
       default:
@@ -108,6 +110,8 @@ ImMessageKind oneBotSegmentToMessageKind(OneBotMessageSegment seg) {
       return ImMessageKind.contact;
     case 'json':
       return ImMessageKind.json;
+    case 'dynamic_content':
+      return ImMessageKind.dynamicContent;
     default:
       return ImMessageKind.text;
   }
