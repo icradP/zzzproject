@@ -1,5 +1,16 @@
 import 'dart:convert';
 
+const _maxDynamicWireIdentifierLength = 128;
+const _maxDynamicWirePatches = 100;
+const _maxDynamicWirePatchIndex = 50;
+const _allowedDynamicWireEvents = <String>{
+  'click',
+  'tap',
+  'submit',
+  'change',
+  'select',
+};
+
 /// The producer of a dynamic message. The value is part of the wire schema.
 enum ImDynamicContentSource { ai, user, system, plugin, server, unknown }
 
@@ -284,24 +295,58 @@ class ImDynamicPatch {
   final ImDynamicNode? node;
 
   factory ImDynamicPatch.fromJson(Map<String, dynamic> json) {
+    final operation = imDynamicPatchOperationFromString(
+      _stringField(json, 'operation'),
+    );
+    final nodeId = _identifierField(json, 'node_id');
+    final parentNodeId = _stringField(json, 'parent_node_id');
+    final rawIndex = json['index'];
+    if (json.containsKey('index') &&
+        (rawIndex is! num ||
+            !rawIndex.toDouble().isFinite ||
+            rawIndex.toDouble() != rawIndex.truncateToDouble() ||
+            rawIndex < 0 ||
+            rawIndex > _maxDynamicWirePatchIndex)) {
+      throw const FormatException('Dynamic patch index is invalid');
+    }
+    final rawProps = json['props'];
+    if (json.containsKey('props') && rawProps is! Map) {
+      throw const FormatException('Dynamic patch props are not an object');
+    }
     final rawNode = json['node'];
+    if (json.containsKey('node') && rawNode is! Map) {
+      throw const FormatException('Dynamic patch node is not an object');
+    }
+    final node =
+        rawNode is Map
+            ? ImDynamicNode.fromJson(Map<String, dynamic>.from(rawNode))
+            : null;
+    if (operation == ImDynamicPatchOperation.create &&
+        !_isDynamicIdentifier(parentNodeId)) {
+      throw const FormatException(
+        'Dynamic create patch requires parent_node_id',
+      );
+    }
+    if ((operation == ImDynamicPatchOperation.create ||
+            operation == ImDynamicPatchOperation.replace) &&
+        node == null) {
+      throw FormatException('Dynamic ${operation.name} patch requires a node');
+    }
+    if (node != null && node.id != nodeId) {
+      throw const FormatException(
+        'Dynamic patch node id does not match node_id',
+      );
+    }
     return ImDynamicPatch(
-      operation: imDynamicPatchOperationFromString(
-        json['operation']?.toString(),
-      ),
-      nodeId: json['node_id']?.toString() ?? '',
-      parentNodeId: json['parent_node_id']?.toString(),
-      index: (json['index'] as num?)?.toInt(),
+      operation: operation,
+      nodeId: nodeId,
+      parentNodeId: parentNodeId,
+      index: rawIndex is num ? rawIndex.toInt() : null,
       props:
-          json['props'] is Map
-              ? Map.unmodifiable(
-                Map<String, dynamic>.from(json['props'] as Map),
-              )
+          rawProps is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawProps))
               : const <String, dynamic>{},
-      node:
-          rawNode is Map
-              ? ImDynamicNode.fromJson(Map<String, dynamic>.from(rawNode))
-              : null,
+      node: node,
     );
   }
 
@@ -331,12 +376,15 @@ class ImDynamicPatchSet {
     if (rawPatches is! List) {
       throw const FormatException('Dynamic update patches are missing');
     }
+    if (rawPatches.isEmpty || rawPatches.length > _maxDynamicWirePatches) {
+      throw const FormatException('Dynamic update patch count is invalid');
+    }
     if (rawPatches.any((patch) => patch is! Map)) {
       throw const FormatException('Dynamic update contains an invalid patch');
     }
     return ImDynamicPatchSet(
-      messageId: json['message_id']?.toString() ?? '',
-      contentId: json['content_id']?.toString() ?? '',
+      messageId: _identifierField(json, 'message_id'),
+      contentId: _identifierField(json, 'content_id'),
       patches: List.unmodifiable(
         rawPatches
             .map((patch) => patch as Map)
@@ -360,6 +408,8 @@ class ImDynamicPatchSet {
               if (!nested.containsKey('content_id') &&
                   data.containsKey('content_id'))
                 'content_id': data['content_id'],
+              if (!nested.containsKey('patches') && data.containsKey('patches'))
+                'patches': data['patches'],
             }
             : data;
     return ImDynamicPatchSet.fromJson(json);
@@ -417,13 +467,19 @@ class ImDynamicState {
     values: values ?? this.values,
   );
 
-  factory ImDynamicState.fromJson(Map<String, dynamic> json) => ImDynamicState(
-    lifecycle: imDynamicLifecycleFromString(json['lifecycle']?.toString()),
-    values:
-        json['values'] is Map
-            ? Map.unmodifiable(Map<String, dynamic>.from(json['values'] as Map))
-            : const <String, dynamic>{},
-  );
+  factory ImDynamicState.fromJson(Map<String, dynamic> json) {
+    final rawValues = json['values'];
+    if (json.containsKey('values') && rawValues is! Map) {
+      throw const FormatException('Dynamic state values are not an object');
+    }
+    return ImDynamicState(
+      lifecycle: imDynamicLifecycleFromString(_stringField(json, 'lifecycle')),
+      values:
+          rawValues is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawValues))
+              : const <String, dynamic>{},
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'lifecycle': lifecycle.name,
@@ -448,25 +504,48 @@ class ImDynamicEvent {
   final String? action;
   final Map<String, dynamic> payload;
 
-  factory ImDynamicEvent.fromJson(Map<String, dynamic> json) => ImDynamicEvent(
-    messageId: _stringValue(json['message_id']) ?? '',
-    contentId: _stringValue(json['content_id']) ?? '',
-    nodeId: _stringValue(json['node_id']) ?? '',
-    event: _stringValue(json['event']) ?? '',
-    action: _stringValue(json['action']),
-    payload:
-        json['payload'] is Map
-            ? Map.unmodifiable(
-              Map<String, dynamic>.from(json['payload'] as Map),
-            )
-            : const <String, dynamic>{},
-  );
+  factory ImDynamicEvent.fromJson(Map<String, dynamic> json) {
+    final event = _stringField(json, 'event');
+    if (event == null || !_allowedDynamicWireEvents.contains(event)) {
+      throw FormatException('Dynamic event type is not allowed: $event');
+    }
+    final action = _stringField(json, 'action');
+    if (action != null && action.length > _maxDynamicWireIdentifierLength) {
+      throw const FormatException('Dynamic event action is too long');
+    }
+    final rawPayload = json['payload'];
+    if (json.containsKey('payload') && rawPayload is! Map) {
+      throw const FormatException('Dynamic event payload is not an object');
+    }
+    return ImDynamicEvent(
+      messageId: _identifierField(json, 'message_id'),
+      contentId: _identifierField(json, 'content_id'),
+      nodeId: _identifierField(json, 'node_id'),
+      event: event,
+      action: action,
+      payload:
+          rawPayload is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawPayload))
+              : const <String, dynamic>{},
+    );
+  }
 
   factory ImDynamicEvent.fromSegmentData(Map<String, dynamic> data) {
     final nested = data['event'];
-    return ImDynamicEvent.fromJson(
-      nested is Map ? Map<String, dynamic>.from(nested) : data,
-    );
+    if (nested is! Map) return ImDynamicEvent.fromJson(data);
+    final json = Map<String, dynamic>.from(nested);
+    for (final key in const [
+      'message_id',
+      'content_id',
+      'node_id',
+      'action',
+      'payload',
+    ]) {
+      if (!json.containsKey(key) && data.containsKey(key)) {
+        json[key] = data[key];
+      }
+    }
+    return ImDynamicEvent.fromJson(json);
   }
 
   static ImDynamicEvent? tryFromSegmentData(Map<String, dynamic> data) {
@@ -505,16 +584,26 @@ class ImDynamicEventEnvelope {
   final DateTime sentAt;
 }
 
-String? _stringValue(Object? value) =>
-    value is String ? value : value?.toString();
-
 String? _stringField(Map<String, dynamic> json, String key) {
+  if (!json.containsKey(key)) return null;
   final value = json[key];
-  if (value == null) return null;
   if (value is! String) {
     throw FormatException('Dynamic field $key is not a string');
   }
   return value;
+}
+
+bool _isDynamicIdentifier(String? value) =>
+    value != null &&
+    value.trim().isNotEmpty &&
+    value.length <= _maxDynamicWireIdentifierLength;
+
+String _identifierField(Map<String, dynamic> json, String key) {
+  final value = _stringField(json, key);
+  if (!_isDynamicIdentifier(value)) {
+    throw FormatException('Dynamic field $key is not a valid identifier');
+  }
+  return value!;
 }
 
 Map<String, dynamic> _dynamicSchemaFromSegmentData(Map<String, dynamic> data) {

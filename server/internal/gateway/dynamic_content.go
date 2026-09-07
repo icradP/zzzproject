@@ -25,6 +25,7 @@ var allowedDynamicEvents = map[string]struct{}{
 	"tap":    {},
 	"submit": {},
 	"change": {},
+	"select": {},
 }
 
 func validateDynamicContentSegment(segment protocol.MessageSegment) error {
@@ -66,7 +67,11 @@ func validateDynamicEventSegment(segment protocol.MessageSegment) error {
 		}
 	}
 	if payload, exists := segment.Data["payload"]; exists {
-		if err := validateDynamicValues(payload, "payload", 0); err != nil {
+		payloadMap, ok := payload.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("dynamic event payload is invalid")
+		}
+		if err := validateDynamicValues(payloadMap, "payload", 0); err != nil {
 			return err
 		}
 	}

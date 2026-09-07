@@ -267,7 +267,7 @@ bool _validDynamicImageUrl(String raw) {
       uri.userInfo.isEmpty;
 }
 
-const _allowedEvents = {'click', 'tap', 'submit', 'change'};
+const _allowedEvents = {'click', 'tap', 'submit', 'change', 'select'};
 const _knownTypes = {
   'text',
   'markdown',

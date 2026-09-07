@@ -66,6 +66,12 @@ func TestDynamicContentValidationRejectsUnsafeAndMalformedTrees(t *testing.T) {
 	if err := validateDynamicContentSegment(valid); err != nil {
 		t.Fatalf("valid dynamic content rejected: %v", err)
 	}
+	valid.Data["tree"].(map[string]interface{})["events"] = map[string]interface{}{
+		"select": map[string]interface{}{"action": "select_option"},
+	}
+	if err := validateDynamicContentSegment(valid); err != nil {
+		t.Fatalf("documented select event rejected: %v", err)
+	}
 
 	unsafeImage := protocol.DynamicContentSegment(map[string]interface{}{
 		"id": "image-1", "version": "1.0", "source": "server",
@@ -503,6 +509,17 @@ func TestDynamicEventDispatchesTransientlyAndValidatesSchema(t *testing.T) {
 	})
 	if rejected["status"] != "error" {
 		t.Fatalf("invalid event was accepted: %#v", rejected)
+	}
+
+	invalidPayload := dynamicEvent
+	invalidPayload.Data = cloneDynamicMap(dynamicEvent.Data)
+	invalidPayload.Data["payload"] = []interface{}{"not", "an", "object"}
+	payloadRejected := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{invalidPayload},
+	})
+	if payloadRejected["status"] != "error" {
+		t.Fatalf("invalid event payload was accepted: %#v", payloadRejected)
 	}
 
 	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{

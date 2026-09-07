@@ -109,7 +109,7 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 }
 ```
 
-`tree` 只能描述 JSON/DSL 组件，客户端通过本地 Component Registry 渲染；服务端和客户端都会限制节点数、树深、文本长度、事件类型及图片 URL（仅 HTTPS）。任何未知组件都会降级显示，不执行 Dart、Flutter 或脚本代码。
+`tree` 只能描述 JSON/DSL 组件，客户端通过本地 Component Registry 渲染；服务端和客户端都会限制节点数、树深、文本长度、事件类型及图片 URL（仅 HTTPS）。已知字段的类型不符时整段视为无效，不能静默转成空属性。任何未知组件或无法解析的树都会优先显示 `fallback.content`，没有可用 fallback 时显示通用的不支持提示；两种情况都不会执行 Dart、Flutter 或脚本代码。
 
 动态内容的局部变化使用 `dynamic_update` 段。它通过稳定的 `message_id`、`content_id` 和节点 ID patch 更新原消息，不会新增历史消息：
 
@@ -126,7 +126,7 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 }
 ```
 
-服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，业务层决定是否将其作为审计消息保存。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
+服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，`payload` 必须是 JSON 对象，业务层决定是否将其作为审计消息保存。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
 
 需要支持网络重试的动态更新应额外携带 `client_message_id`（沿用发送者维度的 1-128 位客户端请求 ID）：
 

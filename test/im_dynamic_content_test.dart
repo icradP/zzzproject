@@ -100,6 +100,86 @@ void main() {
     );
   });
 
+  test('dynamic patch and event models reject lossy wire values', () {
+    expect(
+      () => ImDynamicPatchSet.fromJson({
+        'message_id': 42,
+        'content_id': 'content-1',
+        'patches': [
+          {
+            'operation': 'update',
+            'node_id': 'status',
+            'props': {'text': 'Done'},
+          },
+        ],
+      }),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => ImDynamicPatch.fromJson({
+        'operation': 'create',
+        'node_id': 'new-node',
+        'parent_node_id': 'root',
+        'index': 1.5,
+        'node': {'id': 'new-node', 'type': 'text'},
+      }),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => ImDynamicPatch.fromJson({
+        'operation': 'update',
+        'node_id': 'status',
+        'props': [],
+      }),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => ImDynamicEvent.fromJson({
+        'message_id': 'message-1',
+        'content_id': 'content-1',
+        'node_id': 'retry',
+        'event': 'click',
+        'payload': [],
+      }),
+      throwsA(isA<FormatException>()),
+    );
+
+    final update = ImDynamicPatchSet.fromSegmentData({
+      'message_id': 'message-1',
+      'content_id': 'content-1',
+      'patches': [
+        {
+          'operation': 'update',
+          'node_id': 'status',
+          'props': {'text': 'Done'},
+        },
+      ],
+      'update': <String, dynamic>{},
+    });
+    expect(update.patches.single.nodeId, 'status');
+
+    final event = ImDynamicEvent.fromSegmentData({
+      'message_id': 'message-1',
+      'content_id': 'content-1',
+      'node_id': 'retry',
+      'action': 'retry',
+      'payload': {'source': 'test'},
+      'event': {'event': 'click'},
+    });
+    expect(event.messageId, 'message-1');
+    expect(event.event, 'click');
+    expect(event.payload['source'], 'test');
+
+    final selectEvent = ImDynamicEvent.fromJson({
+      'message_id': 'message-1',
+      'content_id': 'content-1',
+      'node_id': 'choice',
+      'event': 'select',
+      'action': 'select_option',
+    });
+    expect(selectEvent.event, 'select');
+  });
+
   test(
     'dynamic content has an explicit message kind in both segment adapters',
     () {
