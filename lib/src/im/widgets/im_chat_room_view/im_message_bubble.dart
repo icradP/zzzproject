@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../theme/zzz_colors.dart';
@@ -20,21 +21,6 @@ String? _previewLocationFor(ImMessage message) =>
     message.thumbnailUrl ??
     message.mediaPath ??
     message.mediaUrl;
-
-/// Builds the content inside the shared message bubble. Unlike
-/// [ImMessageWidgetBuilder], this keeps the common avatar, alignment, reply,
-/// reaction, timestamp, and message-status chrome.
-typedef ImMessageContentBuilder =
-    Widget Function(
-      BuildContext context, {
-      required ImMessage message,
-      required String senderName,
-      required bool showSenderName,
-      required bool hideAvatar,
-      required bool compact,
-      required bool hideTimestamp,
-      required bool showMessageStatus,
-    });
 
 /// Collapsible recalled-message banner — system-message style.
 class _RecalledBanner extends StatefulWidget {
@@ -163,8 +149,8 @@ class ImMessageBubble extends StatelessWidget {
     this.resolveUserName,
     this.onReactionTap,
     this.dynamicContentRegistry,
+    this.contentAdapterRegistry,
     this.onDynamicEvent,
-    this.dynamicContentBuilder,
     super.key,
   });
 
@@ -205,8 +191,8 @@ class ImMessageBubble extends StatelessWidget {
   final ValueChanged<ImReaction>? onReactionTap;
 
   final ImDynamicComponentRegistry? dynamicContentRegistry;
+  final ImMessageContentAdapterRegistry? contentAdapterRegistry;
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
-  final ImMessageContentBuilder? dynamicContentBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -271,24 +257,10 @@ class ImMessageBubble extends StatelessWidget {
         (message.text.isEmpty || message.text == '[语音]');
     final isJsonCard = message.kind == ImMessageKind.json;
     final dynamicContent = _dynamicContent();
-    final isDynamicContent = dynamicContent != null;
-    final isCustomContent = dynamicContentBuilder != null;
     final isForward = message.kind == ImMessageKind.forward;
     final sticker = ImStickerCatalog.resolveMessage(message);
 
     Widget buildBubbleContent() {
-      if (dynamicContentBuilder != null) {
-        return dynamicContentBuilder!(
-          context,
-          message: message,
-          senderName: senderName,
-          showSenderName: showSenderName,
-          hideAvatar: hideAvatar,
-          compact: compact,
-          hideTimestamp: hideTimestamp,
-          showMessageStatus: showMessageStatus,
-        );
-      }
       if (dynamicContent != null) {
         return _buildDynamicContentWithCompanions(context);
       }
@@ -462,9 +434,7 @@ class ImMessageBubble extends StatelessWidget {
 
     final bubbleContent = buildBubbleContent();
     final wrappedContent =
-        isCustomContent
-            ? bubbleContent
-            : isJsonCard
+        isJsonCard
             ? Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
@@ -481,7 +451,6 @@ class ImMessageBubble extends StatelessWidget {
             : isImageOnly ||
                 isRecordOnly ||
                 isJsonCard ||
-                isDynamicContent ||
                 isForward ||
                 message.kind == ImMessageKind.share ||
                 message.kind == ImMessageKind.location ||
@@ -690,20 +659,25 @@ class ImMessageBubble extends StatelessWidget {
 
   Widget _buildDynamicContentWithCompanions(BuildContext context) {
     final children = <Widget>[];
-    for (final segment in message.segments ?? const []) {
+    final segments = message.segments ?? const [];
+    for (var segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+      final segment = segments[segmentIndex];
       final data = segment.data;
+      final content = _contentForSegment(segment, segmentIndex);
+      if (content != null) {
+        children.add(
+          ImDynamicContentView(
+            messageId: message.id,
+            content: content,
+            registry: dynamicContentRegistry,
+            onEvent: onDynamicEvent,
+          ),
+        );
+        continue;
+      }
       switch (segment.type) {
         case 'dynamic_content':
-          final content = ImDynamicContent.tryFromSegmentData(data);
-          if (content == null) break;
-          children.add(
-            ImDynamicContentView(
-              messageId: message.id,
-              content: content,
-              registry: dynamicContentRegistry,
-              onEvent: onDynamicEvent,
-            ),
-          );
+          break;
         case 'text':
           final text = data['text']?.toString() ?? '';
           if (text.trim().isNotEmpty) {
@@ -796,11 +770,26 @@ class ImMessageBubble extends StatelessWidget {
   }
 
   ImDynamicContent? _dynamicContent() {
-    for (final segment in message.segments ?? const []) {
-      if (segment.type != 'dynamic_content') continue;
-      return ImDynamicContent.tryFromSegmentData(segment.data);
+    final segments = message.segments ?? const [];
+    for (var index = 0; index < segments.length; index++) {
+      final content = _contentForSegment(segments[index], index);
+      if (content != null) return content;
     }
     return null;
+  }
+
+  ImDynamicContent? _contentForSegment(
+    OneBotMessageSegment segment,
+    int segmentIndex,
+  ) {
+    if (segment.type == 'dynamic_content') {
+      return ImDynamicContent.tryFromSegmentData(segment.data);
+    }
+    return contentAdapterRegistry?.convert(
+      message: message,
+      segment: segment,
+      segmentIndex: segmentIndex,
+    );
   }
 }
 

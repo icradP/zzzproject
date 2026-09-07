@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zzzproject/zzz_im_chat.dart';
 import 'package:zzzproject/src/im/adapters/nonebot/nonebot_mapper.dart';
-import 'package:zzzproject/src/im/widgets/im_chat_room_view/im_message_bubble.dart';
 
 void main() {
   test('dynamic content round-trips its schema and ignores unknown fields', () {
@@ -610,4 +609,105 @@ void main() {
     expect(find.text('Between'), findsOneWidget);
     expect(find.text('Second dynamic'), findsOneWidget);
   });
+
+  testWidgets(
+    'legacy adapter renders a registered business component in the shared bubble',
+    (tester) async {
+      ImDynamicEvent? event;
+      final message = ImMessage(
+        id: 'message-legacy',
+        conversationId: 'conversation-1',
+        senderId: 'fairy',
+        text: 'Review this action',
+        sentAt: DateTime(2026),
+        segments: [
+          OneBotMessageSegment(
+            type: 'text',
+            data: {'text': 'Review this action'},
+          ),
+          OneBotMessageSegment(
+            type: 'legacy_approval',
+            data: {'request_id': 'request-1'},
+          ),
+        ],
+      );
+      final componentRegistry =
+          ImDynamicComponentRegistry.standard()
+            ..register(const _TestApprovalRenderer());
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ImMessageBubble(
+              message: message,
+              senderName: 'Fairy',
+              avatar: MemoryImage(
+                base64Decode(
+                  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                ),
+              ),
+              showSenderName: false,
+              contentAdapterRegistry: ImMessageContentAdapterRegistry(
+                adapters: const [_TestApprovalAdapter()],
+              ),
+              dynamicContentRegistry: componentRegistry,
+              onDynamicEvent: (value) => event = value,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Review this action'), findsOneWidget);
+      expect(find.text('Approve request-1'), findsOneWidget);
+      await tester.tap(find.text('Approve request-1'));
+      expect(event?.messageId, 'message-legacy');
+      expect(event?.contentId, 'adapted-message-legacy-1');
+      expect(event?.action, 'approve');
+    },
+  );
+}
+
+class _TestApprovalAdapter extends ImMessageContentAdapter {
+  const _TestApprovalAdapter();
+
+  @override
+  String get segmentType => 'legacy_approval';
+
+  @override
+  ImDynamicContent convert(ImMessageContentAdapterContext context) {
+    final requestId = context.segment.data['request_id']?.toString() ?? '';
+    return ImDynamicContent(
+      id: 'adapted-${context.message.id}-${context.segmentIndex}',
+      version: '1.0',
+      source: ImDynamicContentSource.system,
+      tree: ImDynamicNode(
+        id: 'approval-$requestId',
+        type: 'test_approval',
+        props: {'request_id': requestId},
+        events: const {
+          'click': {'action': 'approve'},
+        },
+      ),
+    );
+  }
+}
+
+class _TestApprovalRenderer extends ImDynamicComponentRenderer {
+  const _TestApprovalRenderer();
+
+  @override
+  String get type => 'test_approval';
+
+  @override
+  Widget build(
+    BuildContext context,
+    ImDynamicNode node,
+    ImDynamicRenderContext renderContext,
+  ) {
+    final requestId = node.props['request_id']?.toString() ?? '';
+    return FilledButton(
+      onPressed: () => renderContext.emit(node, 'click'),
+      child: Text('Approve $requestId'),
+    );
+  }
 }

@@ -128,6 +128,19 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 
 服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，业务层决定是否将其作为审计消息保存。
 
+### 2.2 旧业务消息段兼容层
+
+客户端可以通过 `ImMessageContentAdapterRegistry` 将既有业务消息段映射为 `ImDynamicContent`，再交给同一套 Component Registry 和 Runtime 渲染。该转换只发生在显示层，不修改服务端保存的原消息段，也不改变旧客户端的协议行为。
+
+ZZZTerm 当前注册了以下适配：
+
+| 原消息段 | Dynamic Business Component | 用途 |
+| --- | --- | --- |
+| `terminal_request` | `zzzterm_terminal_request` | 计划、命令修改、允许与拒绝 |
+| `terminal_result` | `zzzterm_terminal_result` | 状态、退出码和折叠的终端输出 |
+
+普通文本仍使用现有文本 Renderer。`text + terminal_request`、`text + terminal_result` 以及原生 `dynamic_content` 都由同一个 `ImMessageBubble` 组合，统一保留头像、方向、回复引用、反应、时间和发送状态。业务组件只负责气泡内部内容，不允许绕过本地命令审批或执行脚本代码。
+
 ## 3. `terminal_request` 请求段
 
 Fairy 当前支持三种操作：

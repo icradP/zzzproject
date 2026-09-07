@@ -58,8 +58,8 @@ class ImChatRoomView extends StatefulWidget {
     this.onBack,
     this.messageBuilder,
     this.dynamicContentRegistry,
+    this.contentAdapterRegistry,
     this.onDynamicEvent,
-    this.dynamicContentBuilder,
     this.composerEnabled = true,
     this.composerHintText = 'Message something...',
     this.attachmentsEnabled = true,
@@ -102,11 +102,15 @@ class ImChatRoomView extends StatefulWidget {
   /// registry is safe and intentionally limited to built-in components.
   final ImDynamicComponentRegistry? dynamicContentRegistry;
 
+  /// Optional compatibility adapters for legacy business message segments.
+  /// Registered segments render through the Dynamic Content runtime while
+  /// their persisted wire representation remains unchanged.
+  final ImMessageContentAdapterRegistry? contentAdapterRegistry;
+
   /// Receives user interaction from a rendered dynamic content node. Business
   /// code decides whether an action calls an API, updates a message, or runs a
   /// local operation.
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
-  final ImMessageContentBuilder? dynamicContentBuilder;
   final bool composerEnabled;
   final String composerHintText;
   final bool attachmentsEnabled;
@@ -1243,8 +1247,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                         hideTimestamp: hideTimestamp,
                         showMessageStatus: _showMessageStatus,
                         dynamicContentRegistry: widget.dynamicContentRegistry,
+                        contentAdapterRegistry: widget.contentAdapterRegistry,
                         onDynamicEvent: widget.onDynamicEvent,
-                        dynamicContentBuilder: widget.dynamicContentBuilder,
                         resolveQuote: widget.resolveMessage,
                         onQuoteTap:
                             message.isReply
