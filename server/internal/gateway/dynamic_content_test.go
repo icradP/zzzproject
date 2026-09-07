@@ -104,6 +104,20 @@ func TestDynamicContentValidationRejectsUnsafeAndMalformedTrees(t *testing.T) {
 	if err := validateDynamicContentSegment(imageHeavy); err == nil {
 		t.Fatal("dynamic content image limit was not enforced")
 	}
+
+	invalidMetadata := validDynamicContentSegment()
+	invalidMetadata.Data["metadata"] = []interface{}{"not", "an", "object"}
+	if err := validateDynamicContentSegment(invalidMetadata); err == nil {
+		t.Fatal("non-object dynamic metadata was accepted")
+	}
+
+	invalidFallback := validDynamicContentSegment()
+	invalidFallback.Data["fallback"] = map[string]interface{}{
+		"type": "text", "content": 42,
+	}
+	if err := validateDynamicContentSegment(invalidFallback); err == nil {
+		t.Fatal("non-string dynamic fallback content was accepted")
+	}
 }
 
 func TestDynamicEventTargetAcceptsLegacyTerminalAdapterIdentity(t *testing.T) {

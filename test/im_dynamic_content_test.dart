@@ -61,6 +61,45 @@ void main() {
     expect(content.metadata['template'], 'diagnosis');
   });
 
+  test('dynamic model rejects malformed known fields', () {
+    Map<String, dynamic> schemaWithTree(Map<String, dynamic> tree) => {
+      'id': 'strict-1',
+      'version': '1.0',
+      'source': 'ai',
+      'tree': tree,
+    };
+
+    for (final tree in <Map<String, dynamic>>[
+      {'id': 'root', 'type': 'text', 'props': []},
+      {'id': 'root', 'type': 'column', 'children': {}},
+      {'id': 'root', 'type': 'button', 'events': []},
+      {
+        'id': 'root',
+        'type': 'button',
+        'events': {'click': 'run'},
+      },
+    ]) {
+      expect(
+        () => ImDynamicContent.fromJson(schemaWithTree(tree)),
+        throwsA(isA<FormatException>()),
+      );
+    }
+    expect(
+      () => ImDynamicContent.fromJson({
+        ...schemaWithTree({'id': 'root', 'type': 'text'}),
+        'metadata': [],
+      }),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => ImDynamicContent.fromJson({
+        ...schemaWithTree({'id': 'root', 'type': 'text'}),
+        'fallback': {'type': 'text', 'content': 42},
+      }),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test(
     'dynamic content has an explicit message kind in both segment adapters',
     () {
@@ -433,6 +472,57 @@ void main() {
     await tester.pump();
     expect(find.text('Summary'), findsOneWidget);
     expect(find.text('Ready'), findsOneWidget);
+  });
+
+  testWidgets('malformed dynamic content preserves its fallback and siblings', (
+    tester,
+  ) async {
+    final message = ImMessage(
+      id: 'message-malformed',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: 'Summary',
+      sentAt: DateTime(2026),
+      segments: [
+        OneBotMessageSegment(type: 'text', data: {'text': 'Summary'}),
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: {
+            'id': 'malformed-content',
+            'version': '1.0',
+            'source': 'ai',
+            'fallback': {
+              'type': 'text',
+              'content': 'Please update ZZZ to view this content.',
+            },
+            'tree': {'id': 'root', 'type': 'text', 'props': []},
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImMessageBubble(
+            message: message,
+            senderName: 'Fairy',
+            avatar: MemoryImage(
+              base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+            ),
+            showSenderName: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Summary'), findsOneWidget);
+    expect(
+      find.text('Please update ZZZ to view this content.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

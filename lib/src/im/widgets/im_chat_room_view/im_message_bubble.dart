@@ -256,12 +256,12 @@ class ImMessageBubble extends StatelessWidget {
         (message.kind == ImMessageKind.record) &&
         (message.text.isEmpty || message.text == '[语音]');
     final isJsonCard = message.kind == ImMessageKind.json;
-    final dynamicContent = _dynamicContent();
+    final hasDynamicContent = _hasDynamicContent();
     final isForward = message.kind == ImMessageKind.forward;
     final sticker = ImStickerCatalog.resolveMessage(message);
 
     Widget buildBubbleContent() {
-      if (dynamicContent != null) {
+      if (hasDynamicContent) {
         return _buildDynamicContentWithCompanions(context);
       }
       if (sticker != null) {
@@ -677,7 +677,20 @@ class ImMessageBubble extends StatelessWidget {
       }
       switch (segment.type) {
         case 'dynamic_content':
-          break;
+          final fallback = ImDynamicFallback.tryFromSegmentData(data);
+          final text = fallback?.content.trim();
+          children.add(
+            SelectableText(
+              text == null || text.isEmpty
+                  ? 'Unable to display this dynamic content.'
+                  : text,
+              style: TextStyle(
+                color: message.isMine ? Colors.white : Colors.black87,
+                fontSize: 15,
+                height: 1.35,
+              ),
+            ),
+          );
         case 'text':
           final text = data['text']?.toString() ?? '';
           if (text.trim().isNotEmpty) {
@@ -769,27 +782,33 @@ class ImMessageBubble extends StatelessWidget {
     );
   }
 
-  ImDynamicContent? _dynamicContent() {
+  bool _hasDynamicContent() {
     final segments = message.segments ?? const [];
-    for (var index = 0; index < segments.length; index++) {
-      final content = _contentForSegment(segments[index], index);
-      if (content != null) return content;
+    for (final segment in segments) {
+      if (segment.type == 'dynamic_content' ||
+          contentAdapterRegistry?.find(segment.type) != null) {
+        return true;
+      }
     }
-    return null;
+    return false;
   }
 
   ImDynamicContent? _contentForSegment(
     OneBotMessageSegment segment,
     int segmentIndex,
   ) {
-    if (segment.type == 'dynamic_content') {
-      return ImDynamicContent.tryFromSegmentData(segment.data);
+    try {
+      if (segment.type == 'dynamic_content') {
+        return ImDynamicContent.tryFromSegmentData(segment.data);
+      }
+      return contentAdapterRegistry?.convert(
+        message: message,
+        segment: segment,
+        segmentIndex: segmentIndex,
+      );
+    } on Object {
+      return null;
     }
-    return contentAdapterRegistry?.convert(
-      message: message,
-      segment: segment,
-      segmentIndex: segmentIndex,
-    );
   }
 }
 

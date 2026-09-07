@@ -237,13 +237,25 @@ func validateDynamicSchema(schema map[string]interface{}) error {
 		if !ok {
 			return fmt.Errorf("dynamic fallback is invalid")
 		}
-		content, _ := fallbackMap["content"].(string)
+		if fallbackType, exists := fallbackMap["type"]; exists {
+			if _, ok := fallbackType.(string); !ok {
+				return fmt.Errorf("dynamic fallback type is invalid")
+			}
+		}
+		content, contentExists := fallbackMap["content"].(string)
+		if _, exists := fallbackMap["content"]; exists && !contentExists {
+			return fmt.Errorf("dynamic fallback content is invalid")
+		}
 		if len([]rune(content)) > maxDynamicTextLength {
 			return fmt.Errorf("dynamic fallback is too long")
 		}
 	}
 	if metadata, exists := schema["metadata"]; exists {
-		if err := validateDynamicValues(metadata, "metadata", 0); err != nil {
+		metadataMap, ok := metadata.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("dynamic metadata is invalid")
+		}
+		if err := validateDynamicValues(metadataMap, "metadata", 0); err != nil {
 			return err
 		}
 	}

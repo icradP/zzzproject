@@ -48,56 +48,35 @@ class ImDynamicContent {
     if (rawTree is! Map) {
       throw const FormatException('Dynamic content tree is missing');
     }
+    final rawFallback = json['fallback'];
+    if (json.containsKey('fallback') && rawFallback is! Map) {
+      throw const FormatException('Dynamic content fallback is not an object');
+    }
+    final rawMetadata = json['metadata'];
+    if (json.containsKey('metadata') && rawMetadata is! Map) {
+      throw const FormatException('Dynamic content metadata is not an object');
+    }
     return ImDynamicContent(
-      id: _stringValue(json['id']) ?? '',
-      version: _stringValue(json['version']) ?? '1.0',
-      source: imDynamicContentSourceFromString(_stringValue(json['source'])),
+      id: _stringField(json, 'id') ?? '',
+      version: _stringField(json, 'version') ?? '1.0',
+      source: imDynamicContentSourceFromString(_stringField(json, 'source')),
       tree: ImDynamicNode.fromJson(Map<String, dynamic>.from(rawTree)),
       fallback:
-          json['fallback'] is Map
+          rawFallback is Map
               ? ImDynamicFallback.fromJson(
-                Map<String, dynamic>.from(json['fallback'] as Map),
+                Map<String, dynamic>.from(rawFallback),
               )
               : null,
       metadata:
-          json['metadata'] is Map
-              ? Map.unmodifiable(
-                Map<String, dynamic>.from(json['metadata'] as Map),
-              )
+          rawMetadata is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawMetadata))
               : const <String, dynamic>{},
     );
   }
 
   /// Reads both the documented `{schema: {...}}` envelope and a flat segment.
   factory ImDynamicContent.fromSegmentData(Map<String, dynamic> data) {
-    final nested = data['content'] ?? data['schema'];
-    Map<String, dynamic> schema;
-    if (nested is String) {
-      final decoded = jsonDecode(nested);
-      if (decoded is! Map) {
-        throw const FormatException('Dynamic content schema is not an object');
-      }
-      schema = Map<String, dynamic>.from(decoded);
-    } else if (nested is Map) {
-      schema = Map<String, dynamic>.from(nested);
-    } else {
-      schema = Map<String, dynamic>.from(data);
-    }
-
-    // Permit transport metadata to live beside the schema for compact events.
-    for (final key in const [
-      'id',
-      'version',
-      'source',
-      'tree',
-      'fallback',
-      'metadata',
-    ]) {
-      if (!schema.containsKey(key) && data.containsKey(key)) {
-        schema[key] = data[key];
-      }
-    }
-    return ImDynamicContent.fromJson(schema);
+    return ImDynamicContent.fromJson(_dynamicSchemaFromSegmentData(data));
   }
 
   static ImDynamicContent? tryFromSegmentData(Map<String, dynamic> data) {
@@ -145,9 +124,26 @@ class ImDynamicFallback {
 
   factory ImDynamicFallback.fromJson(Map<String, dynamic> json) {
     return ImDynamicFallback(
-      type: _stringValue(json['type']) ?? 'text',
-      content: _stringValue(json['content']) ?? '',
+      type: _stringField(json, 'type') ?? 'text',
+      content: _stringField(json, 'content') ?? '',
     );
+  }
+
+  /// Recovers a transport fallback even when the dynamic tree itself cannot
+  /// be parsed. This keeps malformed or newer schemas readable.
+  static ImDynamicFallback? tryFromSegmentData(Map<String, dynamic> data) {
+    Object? rawFallback;
+    try {
+      rawFallback = _dynamicSchemaFromSegmentData(data)['fallback'];
+    } on Object {
+      rawFallback = data['fallback'];
+    }
+    if (rawFallback is! Map) return null;
+    try {
+      return ImDynamicFallback.fromJson(Map<String, dynamic>.from(rawFallback));
+    } on Object {
+      return null;
+    }
   }
 
   Map<String, dynamic> toJson() => {'type': type, 'content': content};
@@ -172,6 +168,9 @@ class ImDynamicNode {
   factory ImDynamicNode.fromJson(Map<String, dynamic> json) {
     final rawChildren = json['children'];
     final children = <ImDynamicNode>[];
+    if (json.containsKey('children') && rawChildren is! List) {
+      throw const FormatException('Dynamic node children are not a list');
+    }
     if (rawChildren is List) {
       for (final child in rawChildren) {
         if (child is! Map) {
@@ -183,24 +182,33 @@ class ImDynamicNode {
 
     final eventMap = <String, Map<String, dynamic>>{};
     final rawEvents = json['events'];
+    if (json.containsKey('events') && rawEvents is! Map) {
+      throw const FormatException('Dynamic node events are not an object');
+    }
     if (rawEvents is Map) {
       for (final entry in rawEvents.entries) {
-        if (entry.value is Map) {
-          eventMap['${entry.key}'] = Map<String, dynamic>.from(
-            entry.value as Map,
+        if (entry.key is! String || entry.value is! Map) {
+          throw const FormatException(
+            'Dynamic event definition is not an object',
           );
         }
+        eventMap[entry.key as String] = Map<String, dynamic>.from(
+          entry.value as Map,
+        );
       }
     }
 
+    final rawProps = json['props'];
+    if (json.containsKey('props') && rawProps is! Map) {
+      throw const FormatException('Dynamic node props are not an object');
+    }
+
     return ImDynamicNode(
-      id: _stringValue(json['id']) ?? '',
-      type: _stringValue(json['type']) ?? '',
+      id: _stringField(json, 'id') ?? '',
+      type: _stringField(json, 'type') ?? '',
       props:
-          json['props'] is Map
-              ? Map.unmodifiable(
-                Map<String, dynamic>.from(json['props'] as Map),
-              )
+          rawProps is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawProps))
               : const <String, dynamic>{},
       children: List.unmodifiable(children),
       events: Map.unmodifiable(eventMap),
@@ -499,3 +507,45 @@ class ImDynamicEventEnvelope {
 
 String? _stringValue(Object? value) =>
     value is String ? value : value?.toString();
+
+String? _stringField(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value == null) return null;
+  if (value is! String) {
+    throw FormatException('Dynamic field $key is not a string');
+  }
+  return value;
+}
+
+Map<String, dynamic> _dynamicSchemaFromSegmentData(Map<String, dynamic> data) {
+  Object? nested = data['content'];
+  if (nested is! String && nested is! Map) nested = data['schema'];
+
+  Map<String, dynamic> schema;
+  if (nested is String) {
+    final decoded = jsonDecode(nested);
+    if (decoded is! Map) {
+      throw const FormatException('Dynamic content schema is not an object');
+    }
+    schema = Map<String, dynamic>.from(decoded);
+  } else if (nested is Map) {
+    schema = Map<String, dynamic>.from(nested);
+  } else {
+    schema = Map<String, dynamic>.from(data);
+  }
+
+  // Permit transport metadata to live beside the schema for compact events.
+  for (final key in const [
+    'id',
+    'version',
+    'source',
+    'tree',
+    'fallback',
+    'metadata',
+  ]) {
+    if (!schema.containsKey(key) && data.containsKey(key)) {
+      schema[key] = data[key];
+    }
+  }
+  return schema;
+}
