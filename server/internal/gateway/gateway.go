@@ -78,6 +78,14 @@ type Gateway struct {
 	clients  map[string]map[*Client]struct{} // userID -> active clients
 	pokeMu   sync.Mutex
 	pokeLast map[string]time.Time
+
+	dynamicUpdateMu    sync.Mutex
+	dynamicUpdateLocks map[string]*dynamicMessageUpdateLock
+}
+
+type dynamicMessageUpdateLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // PushSender abstracts VAPID delivery so the gateway remains testable.
@@ -102,8 +110,9 @@ func NewGateway(database store.Store, pushSenders ...PushSender) *Gateway {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients:  make(map[string]map[*Client]struct{}),
-		pokeLast: make(map[string]time.Time),
+		clients:            make(map[string]map[*Client]struct{}),
+		pokeLast:           make(map[string]time.Time),
+		dynamicUpdateLocks: make(map[string]*dynamicMessageUpdateLock),
 	}
 }
 
@@ -1214,6 +1223,8 @@ func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, con
 		g.sendError(client, req.Echo, err.Error())
 		return
 	}
+	unlock := g.lockDynamicMessageUpdate(messageID)
+	defer unlock()
 	fingerprint := ""
 	if clientMessageID != "" {
 		fingerprint, err = dynamicUpdateRequestFingerprint(conversationID, segment)
@@ -1318,6 +1329,28 @@ func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, con
 		Timestamp:      updated.Timestamp.Unix(),
 		TimestampMS:    updated.Timestamp.UnixMilli(),
 	}, "")
+}
+
+func (g *Gateway) lockDynamicMessageUpdate(messageID string) func() {
+	g.dynamicUpdateMu.Lock()
+	lock := g.dynamicUpdateLocks[messageID]
+	if lock == nil {
+		lock = &dynamicMessageUpdateLock{}
+		g.dynamicUpdateLocks[messageID] = lock
+	}
+	lock.refs++
+	g.dynamicUpdateMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		g.dynamicUpdateMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(g.dynamicUpdateLocks, messageID)
+		}
+		g.dynamicUpdateMu.Unlock()
+	}
 }
 
 func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conversationID, conversationType string, segment protocol.MessageSegment) {

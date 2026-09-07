@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,34 @@ import (
 	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
 )
+
+type slowDynamicUpdateStore struct {
+	store.Store
+	mu            sync.Mutex
+	activeReads   int
+	maxConcurrent int
+}
+
+func (s *slowDynamicUpdateStore) GetMessage(messageID string) (*store.Message, error) {
+	message, err := s.Store.GetMessage(messageID)
+	s.mu.Lock()
+	s.activeReads++
+	if s.activeReads > s.maxConcurrent {
+		s.maxConcurrent = s.activeReads
+	}
+	s.mu.Unlock()
+	time.Sleep(40 * time.Millisecond)
+	s.mu.Lock()
+	s.activeReads--
+	s.mu.Unlock()
+	return message, err
+}
+
+func (s *slowDynamicUpdateStore) maxConcurrentReads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxConcurrent
+}
 
 func validDynamicContentSegment() protocol.MessageSegment {
 	return protocol.DynamicContentSegment(map[string]interface{}{
@@ -142,6 +171,85 @@ func TestDynamicUpdateTargetsMatchingContentAmongSiblings(t *testing.T) {
 	}
 	if got := secondTree["props"].(map[string]interface{})["text"]; got != "After" {
 		t.Fatalf("second content was not updated: %#v", got)
+	}
+}
+
+func TestConcurrentDynamicUpdatesToOneMessageDoNotLosePatches(t *testing.T) {
+	database := store.NewMemoryStore()
+	conversationID := "private_alice_bob"
+	if err := database.SaveConversation(&store.Conversation{
+		ID: conversationID, Type: "private", Title: "Dynamic", Participants: []string{"alice", "bob"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	message, err := database.StoreMessage(conversationID, "alice", "Alice", []protocol.MessageSegment{
+		protocol.DynamicContentSegment(map[string]interface{}{
+			"id": "concurrent-card", "version": "1.0", "source": "ai",
+			"tree": map[string]interface{}{
+				"id": "root", "type": "column", "children": []interface{}{
+					map[string]interface{}{"id": "first", "type": "status", "props": map[string]interface{}{"text": "Before first"}},
+					map[string]interface{}{"id": "second", "type": "status", "props": map[string]interface{}{"text": "Before second"}},
+				},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slowStore := &slowDynamicUpdateStore{Store: database}
+	gateway := NewGateway(slowStore)
+	updates := []protocol.MessageSegment{
+		{Type: "dynamic_update", Data: map[string]interface{}{
+			"message_id": message.ID, "content_id": "concurrent-card", "patches": []interface{}{
+				map[string]interface{}{"operation": "update", "node_id": "first", "props": map[string]interface{}{"text": "After first"}},
+			},
+		}},
+		{Type: "dynamic_update", Data: map[string]interface{}{
+			"message_id": message.ID, "content_id": "concurrent-card", "patches": []interface{}{
+				map[string]interface{}{"operation": "update", "node_id": "second", "props": map[string]interface{}{"text": "After second"}},
+			},
+		}},
+	}
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	for index, update := range updates {
+		wait.Add(1)
+		go func(index int, update protocol.MessageSegment) {
+			defer wait.Done()
+			<-start
+			gateway.handleDynamicUpdate(
+				&Client{userID: "alice", send: make(chan []byte, 1)},
+				&protocol.Request{Echo: fmt.Sprintf("update-%d", index)},
+				conversationID,
+				"private",
+				fmt.Sprintf("concurrent-update-%d", index),
+				update,
+			)
+		}(index, update)
+	}
+	close(start)
+	wait.Wait()
+
+	if got := slowStore.maxConcurrentReads(); got != 1 {
+		t.Fatalf("same-message reads ran concurrently: %d", got)
+	}
+	gateway.dynamicUpdateMu.Lock()
+	activeLocks := len(gateway.dynamicUpdateLocks)
+	gateway.dynamicUpdateMu.Unlock()
+	if activeLocks != 0 {
+		t.Fatalf("dynamic update locks were not released: %d", activeLocks)
+	}
+	updated, err := database.GetMessage(message.ID)
+	if err != nil || updated == nil {
+		t.Fatalf("updated message = %#v err=%v", updated, err)
+	}
+	tree := updated.Segments[0].Data["tree"].(map[string]interface{})
+	children := tree["children"].([]interface{})
+	if got := children[0].(map[string]interface{})["props"].(map[string]interface{})["text"]; got != "After first" {
+		t.Fatalf("first patch was lost: %#v", got)
+	}
+	if got := children[1].(map[string]interface{})["props"].(map[string]interface{})["text"]; got != "After second" {
+		t.Fatalf("second patch was lost: %#v", got)
 	}
 }
 
