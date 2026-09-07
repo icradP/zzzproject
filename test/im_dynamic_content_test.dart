@@ -468,6 +468,167 @@ void main() {
     },
   );
 
+  testWidgets('dynamic node IDs preserve local state across tree patches', (
+    tester,
+  ) async {
+    const content = ImDynamicContent(
+      id: 'stateful-form',
+      version: '1.0',
+      source: ImDynamicContentSource.user,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'column',
+        children: [
+          ImDynamicNode(
+            id: 'confirm',
+            type: 'checkbox',
+            props: {'text': 'Confirm'},
+            events: {
+              'change': {'action': 'confirm'},
+            },
+          ),
+        ],
+      ),
+    );
+    final runtime = ImDynamicRuntime(content: content);
+    addTearDown(runtime.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImDynamicContentView(content: content, runtime: runtime),
+        ),
+      ),
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      true,
+    );
+
+    runtime.apply(
+      const ImDynamicPatchSet(
+        messageId: 'message-stateful',
+        contentId: 'stateful-form',
+        patches: [
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.create,
+            nodeId: 'status',
+            parentNodeId: 'root',
+            index: 0,
+            node: ImDynamicNode(id: 'status', type: 'status'),
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      true,
+    );
+  });
+
+  testWidgets(
+    'dynamic controls only emit declared events and sync patched props',
+    (tester) async {
+      const content = ImDynamicContent(
+        id: 'controlled-form',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'column',
+          children: [
+            ImDynamicNode(
+              id: 'reason',
+              type: 'input',
+              props: {'value': 'before'},
+            ),
+            ImDynamicNode(id: 'confirm', type: 'checkbox'),
+            ImDynamicNode(
+              id: 'choice',
+              type: 'select',
+              props: {
+                'options': ['One', 'Two'],
+                'value': 'One',
+              },
+            ),
+          ],
+        ),
+      );
+      final runtime = ImDynamicRuntime(content: content);
+      addTearDown(runtime.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ImDynamicContentView(content: content, runtime: runtime),
+          ),
+        ),
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).onSubmitted,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(find.byType(CheckboxListTile))
+            .onChanged,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<DropdownButtonFormField<String>>(
+              find.byType(DropdownButtonFormField<String>),
+            )
+            .onChanged,
+        isNull,
+      );
+
+      runtime.apply(
+        const ImDynamicPatchSet(
+          messageId: 'message-controlled',
+          contentId: 'controlled-form',
+          patches: [
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: 'reason',
+              props: {'value': 'after'},
+            ),
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: 'confirm',
+              props: {'value': true},
+            ),
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: 'choice',
+              props: {'value': 'Two'},
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'after',
+      );
+      expect(
+        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+        true,
+      );
+      expect(
+        tester
+            .widget<DropdownButtonFormField<String>>(
+              find.byType(DropdownButtonFormField<String>),
+            )
+            .initialValue,
+        'Two',
+      );
+    },
+  );
+
   testWidgets('closed dynamic content disables interactive components', (
     tester,
   ) async {

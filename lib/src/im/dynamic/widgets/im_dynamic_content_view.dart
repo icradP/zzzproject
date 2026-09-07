@@ -95,7 +95,16 @@ class ImDynamicContentView extends StatelessWidget {
         'Unsupported component: ${node.type}',
       );
     }
-    return renderer.build(context, node, renderContext);
+    // Node IDs are the stable identity across Dynamic Patch updates. Keeping
+    // that identity in the widget tree preserves local form state when a
+    // sibling is inserted or removed and replaces state when a node changes
+    // component type.
+    return KeyedSubtree(
+      key: ValueKey<String>(
+        '${renderContext.messageId}:${renderContext.contentId}:${node.id}:${node.type}',
+      ),
+      child: renderer.build(context, node, renderContext),
+    );
   }
 
   Widget _fallback(

@@ -439,6 +439,20 @@ class _DynamicInputState extends State<_DynamicInput> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.node.props['value']?.toString() ?? '',
   );
+
+  @override
+  void didUpdateWidget(covariant _DynamicInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldValue = oldWidget.node.props['value']?.toString() ?? '';
+    final nextValue = widget.node.props['value']?.toString() ?? '';
+    if (oldValue != nextValue && _controller.text != nextValue) {
+      _controller.value = TextEditingValue(
+        text: nextValue,
+        selection: TextSelection.collapsed(offset: nextValue.length),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -458,11 +472,13 @@ class _DynamicInputState extends State<_DynamicInput> {
         isDense: true,
       ),
       onSubmitted:
-          (_) => widget.renderContext.emit(
-            widget.node,
-            'submit',
-            payload: {'value': _controller.text},
-          ),
+          widget.node.events.containsKey('submit')
+              ? (_) => widget.renderContext.emit(
+                widget.node,
+                'submit',
+                payload: {'value': _controller.text},
+              )
+              : null,
     );
   }
 }
@@ -477,6 +493,16 @@ class _DynamicCheckbox extends StatefulWidget {
 
 class _DynamicCheckboxState extends State<_DynamicCheckbox> {
   late bool _value = widget.node.props['value'] == true;
+
+  @override
+  void didUpdateWidget(covariant _DynamicCheckbox oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.node.props['value'] != widget.node.props['value'] &&
+        widget.node.props['value'] is bool) {
+      _value = widget.node.props['value'] as bool;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return CheckboxListTile(
@@ -485,7 +511,8 @@ class _DynamicCheckboxState extends State<_DynamicCheckbox> {
       value: _value,
       title: Text(widget.node.props['text']?.toString() ?? ''),
       onChanged:
-          _isClosed(widget.renderContext)
+          _isClosed(widget.renderContext) ||
+                  !widget.node.events.containsKey('change')
               ? null
               : (value) {
                 setState(() => _value = value ?? false);
@@ -516,6 +543,23 @@ class _DynamicSelect extends StatefulWidget {
 
 class _DynamicSelectState extends State<_DynamicSelect> {
   late String _value = widget.initialValue;
+
+  @override
+  void didUpdateWidget(covariant _DynamicSelect oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final optionsChanged =
+        oldWidget.options.length != widget.options.length ||
+        oldWidget.options.asMap().entries.any(
+          (entry) => entry.value != widget.options[entry.key],
+        );
+    if (optionsChanged || !widget.options.contains(_value)) {
+      _value = widget.initialValue;
+    } else if (oldWidget.initialValue != widget.initialValue &&
+        widget.options.contains(widget.initialValue)) {
+      _value = widget.initialValue;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
@@ -532,7 +576,8 @@ class _DynamicSelectState extends State<_DynamicSelect> {
               )
               .toList(),
       onChanged:
-          _isClosed(widget.renderContext)
+          _isClosed(widget.renderContext) ||
+                  !widget.node.events.containsKey('change')
               ? null
               : (value) {
                 if (value == null) return;
