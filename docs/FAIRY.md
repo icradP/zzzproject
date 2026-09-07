@@ -1,6 +1,6 @@
 # Fairy Bot 服务
 
-Fairy 是独立于 ZZZ IM 服务端运行的 Bot 进程。它使用普通账号通过 ZZZ Server WebSocket 接入；IM 服务端继续只负责账号、关系、群组、消息和通知，不持有模型密钥，也不运行 AI 推理。
+Fairy 是独立于 ZZZ IM 服务端运行的可选远程 Bot 进程。它使用普通账号通过 ZZZ Server WebSocket 接入；IM 服务端只负责账号、关系、群组、消息存储和实时投递，不持有模型密钥，也不运行 AI 推理。ZZZTerm 的本地 Agent 是桌面端主路径，远程 Fairy 仅在用户明确选择时作为备用模型入口。
 
 Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全边界和实施顺序见 [FAIRY_AGENT_ARCHITECTURE.md](FAIRY_AGENT_ARCHITECTURE.md)。
 
@@ -17,7 +17,7 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 - 事实召回按“私聊用户 + 会话”或群聊范围隔离，以 `user` 角色的不可信 JSON 注入，不会成为 system 指令；单范围最多 30 条、6000 字，单条最多 300 字，疑似凭据拒绝保存。关闭只停止召回，不暗中删除已有事实。
 - 在调用外部模型前拦截高置信的私钥、Bearer、密码、API Key、Token 和 Cookie；被拦截内容不进入上下文、不消耗额度，也不会发送给模型供应商。
 - AI 支持 OpenAI-compatible Chat Completions 与 Anthropic-compatible Messages，可按供应商动态配置；模型未配置时，帮助、群管理和 ZZZ 插件仍可使用。
-- 管理后台通过回环地址代理 Fairy 自己的管理 API，可配置模型、人格、行为、上下文、额度和已注册插件。Fairy 页面按 Runtime、Models、Behavior、Plugins & Tools、Decisions 分类：运行态继续展示脱敏聚合，Decisions 则作为受管理鉴权保护的敏感数据面，按 Turn 展示 Provider 明文 thinking、Planner、Replyer、工具调用与结果。IM 核心不执行模型或插件代码。页面还提供固定合成 Agent 诊断，可验证 Planner -> Replyer 链路而不发送 IM 消息、不执行工具、不读取用户会话。
+- 管理后台不再提供 Fairy 模型、密钥、Prompt、插件或评测写入口；Fairy 运行态和决策链仅保留只读展示。模型厂商、API Key 和本地 Agent 行为统一在 ZZZTerm 的本地设置中管理，服务端不接触这些秘密。
 - AI 调用默认每天最多 200 次；全局总额度与各 Task 独立额度原子持久化并按 UTC 日期重置。
 - `/zzz <UID>` 通过 Enka.Network 查询游戏内公开展示资料，按上游 TTL 缓存；不需要也不接收米游社 Cookie。功能与交互基准为 [ZZZeroUID](https://github.com/ZZZure/ZZZeroUID)，公开资料查询与米游社账号能力彼此隔离。
 - `zzz-account` 第一版只支持国服米游社：私聊 `/zzz login` 由 Fairy 本地生成二维码并通过 ZZZ 媒体服务发送，后台轮询确认后绑定发送者自己的绝区零 UID；`/zzz gacha sync` 缓存抽卡记录，`/zzz gacha` 和 `/zzz abyss [previous]` 查询发送者本人的数据。群聊不能登录、查看账号或退出绑定。
@@ -30,7 +30,7 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 - `/fairy stop` 可抢占当前会话正在执行的 Turn。关闭或管理配置重启时先停止接纳，再按超时 drain/cancel。
 - `fairy.db` 保存入站去重、Turn / Model / Tool / Gate 事件、决策链和显式质量反馈并默认保留 30 天。会话标识仍使用部署随机密钥做 HMAC，Prompt 与用户原始消息正文不保存；决策链会保存 Provider 实际返回的明文 `thinking`、Planner/Replyer 输出以及不含高置信凭据的工具参数和投影结果，因此必须按敏感管理数据保护。Provider 的 `redacted_thinking` 只保存不可逆摘要式签名和“已隐藏”标记，不能恢复或伪造明文。反馈仍只保存消息与评价者的 HMAC 引用、随机 Turn ID、正负标签和时间。
 - 通用 `send_message` 协议支持可选 `client_message_id`。服务端按“发送者 + 客户端消息 ID”持久化去重；相同内容重试返回原消息且不再次广播/推送，不同内容复用同一 ID 会被拒绝。Fairy 的出站消息默认携带该键。
-- 普通闲聊继续只调用一次 `replyer`；配置 `planner` Task 后，明确的工具意图或 `/fairy agent <请求>` 会进入最多 4 Step 的 `planner -> tools -> replyer` Loop。Planner 只能提交原生 Tool Call 或严格 JSON Decision，不能直接发送消息或绕过 Tool Pipeline。
+- 普通闲聊继续只调用一次 `replyer`；配置 `planner` Task 后，明确的工具意图或 `/fairy agent <请求>` 会进入最多 4 Step 的 `planner -> tools -> replyer` Loop。Planner 只能提交原生 Tool Call 或严格 JSON Decision，不能直接发送消息或绕过 Tool Pipeline。终端桥接以 `terminal.run` Tool 注册：它只发送 `terminal_request` 并等待 `terminal_result`，结果回灌同一 Planner Loop 后可继续下一步；命令执行仍必须在 ZZZ Term 本地 Allow。
 - Fairy 插件宿主提供 Manifest、组件注册、Capability Context、Hook/Event、依赖和最低版本检查、生命周期 disposer、卸载与热重载。`context-memory`、`fact-memory`、`self-cognition` 和旧命令插件都通过同一宿主管理；Tool Runtime 每次从当前插件快照解析工具，卸载或重载不会留下旧实例。可信编译期插件使用进程内 Runner；外部工具继续使用 MCP 子进程，管理页不允许上传或执行任意插件代码。
 - Fairy 可启动显式配置的可信 MCP stdio Provider，并把获准的只读工具以 `provider-id.tool-name` 注册到同一 Tool Pipeline。存在外部工具时，自然语言请求统一先进入 Planner，避免用关键词猜测第三方工具意图；这会增加一次 Planner 调用，应计入模型额度和成本预算。
 - 配置 `vision` 后，Fairy 可理解最多 4 张已校验图片；配置 `transcriber` 后，可转写 1 条不超过 10 MB / 2 分钟的服务端语音。未配置对应 Task 时不下载附件、不调用模型，也不会把图片说明文字脱离图片交给 Replyer 猜测。
@@ -44,9 +44,11 @@ Fairy 演进为受控 AI Agent Bot 的分层架构、参考覆盖审计、安全
 
 ZZZ Term 客户端的完整 WebSocket、消息段、审批、结果和 terminal vault 对接协议见 [ZZZTERM.md](ZZZTERM.md)。
 
-Fairy 可通过普通私聊向同账号在线的 ZZZ Term 客户端发出受限终端请求。首版命令为 `/term hosts`、`/term info <主机ID>` 和 `/term run <主机ID> <命令>`；请求有效期为 2 分钟。ZZZ Server 只转发并校验 `terminal_request` / `terminal_result` 消息段，不执行命令，也不接触 SSH 凭据。
+Fairy 可通过普通私聊向同账号在线的 ZZZ Term 客户端发出受限终端请求。首版命令为 `/term hosts`、`/term info <主机ID>` 和 `/term run <主机ID> <命令>`；请求有效期为 2 分钟。主机列表和主机公开信息查询是只读操作，可由在线 ZZZ Term 自动响应；只有 `/term run` 触发命令执行审批。ZZZ Server 只保存并实时投递消息，终端段仅做结构和大小边界检查；它不理解 Agent 路由、不执行命令，也不接触 SSH 凭据。
 
-ZZZ Term 必须显示 Allow/Deny 审批卡，只有用户明确允许后才处理请求。`run_command` 只能使用当前客户端中已经连接且主机 ID 匹配的 SSH 会话；它不能让 Fairy 新建连接、选择凭据或跳过主机密钥校验。客户端会回传 `completed`、`failed`、`denied` 或 `expired` 状态以及有界输出。
+ZZZ Term 只对 `run_command` 显示 Allow/Deny 审批卡，只有用户明确允许后才执行命令。`run_command` 只能使用当前客户端中已经连接且主机 ID 匹配的 SSH 会话；它不能让 Fairy 新建连接、选择凭据或跳过主机密钥校验。客户端会回传 `completed`、`failed`、`denied` 或 `expired` 状态以及有界输出。
+
+ZZZ Term 内嵌的 Fairy 面板是本地 Agent 入口：用户在本地设置中选择 OpenAI-compatible 或 Anthropic-compatible 厂商并保存 API Key，Chat 进行普通对话，Plan 在本地完成需求理解、计划和工具调用。若本地模型可用，面板会在发送前询问是否改用远程 Fairy；远程入口只通过消息段请求在线 ZZZTerm。两条入口共享同一套 `terminal_request` / `terminal_result` 桥接协议，审批始终发生在实际执行命令的 ZZZ Term 客户端。
 
 主机与凭据云同步使用账号级 terminal vault。客户端在本地完成 AES-256-GCM 加密，服务端只保存不透明 envelope、更新时间和乐观锁 revision。该 vault 不会把凭据交给 Fairy、Planner、模型供应商或消息历史。
 
@@ -76,9 +78,9 @@ Fairy 的建群、邀请成员、设置公告和处理好友申请仍通过普�
 | `/fairy agent <请求>` | 显式使用 Planner 处理工具型或多步骤请求；需要配置 `planner` Task |
 | `/fairy on` | 群主或管理员开启群回复 |
 | `/fairy off` | 群主或管理员关闭群回复 |
-| `/term hosts` | 请求在线 ZZZ Term 返回主机列表；客户端仍需审批 |
-| `/term info <主机ID>` | 请求主机公开连接信息；客户端仍需审批 |
-| `/term run <主机ID> <命令>` | 请求在已连接 SSH 会话执行命令；客户端仍需审批 |
+| `/term hosts` | 请求在线 ZZZ Term 返回主机列表；只读自动响应 |
+| `/term info <主机ID>` | 请求主机公开连接信息；只读自动响应 |
+| `/term run <主机ID> <命令>` | 请求在已连接 SSH 会话执行命令；需要用户审批 |
 | `/zzz <UID>` | 查询绝区零公开展示资料 |
 | `/zzz login` | 私聊发起国服米游社扫码绑定 |
 | `/zzz account` | 私聊查看脱敏账号和绑定 UID |
@@ -195,7 +197,7 @@ MiMo `mimo-v2.5-pro` 已于 2026-09-03 多次通过该 Anthropic-compatible 质�
 | `FAIRY_MAX_CONCURRENT` | `4` | 同时活跃的会话数上限 |
 | `FAIRY_MAX_PENDING` | `256` | 全局待执行 Turn 上限 |
 | `FAIRY_MAX_CONVERSATION_PENDING` | `16` | 单会话待执行 Turn 上限 |
-| `FAIRY_TURN_TIMEOUT` | `60s` | 单个 Turn 硬超时 |
+| `FAIRY_TURN_TIMEOUT` | `180s` | 单个 Turn 硬超时；应覆盖一次本地终端审批等待 |
 | `FAIRY_DRAIN_TIMEOUT` | `10s` | 退出前等待已接纳 Turn 的时间 |
 | `FAIRY_AI_ROLLOUT_MODE` | 空，等效于 `off` | 生产 AI 模式：`off`、`allowlist` 或 `all` |
 | `FAIRY_AI_ALLOWED_USERS` | 空 | 灰度账号 ID，使用逗号或换行分隔，最多 128 个 |

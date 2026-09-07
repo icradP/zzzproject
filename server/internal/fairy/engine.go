@@ -436,6 +436,32 @@ func (e *Engine) pluginRunning(id string) bool {
 	return e != nil && e.pluginHost != nil && e.pluginHost.Running(id)
 }
 
+// attachTerminalMessenger binds the account's current IM connection to the
+// terminal bridge tool. The bridge is intentionally transport-only; command
+// execution remains inside an online ZZZTerm client after local approval.
+func (e *Engine) attachTerminalMessenger(messenger *reliableMessenger) {
+	if e == nil {
+		return
+	}
+	for _, plugin := range e.plugins {
+		if bridge, ok := plugin.(*TerminalBridgePlugin); ok {
+			bridge.attachMessenger(messenger)
+		}
+	}
+}
+
+func (e *Engine) handleTerminalResult(event messageEvent) bool {
+	if e == nil {
+		return false
+	}
+	for _, plugin := range e.plugins {
+		if bridge, ok := plugin.(*TerminalBridgePlugin); ok && bridge.handleTerminalResult(event, e.cfg.UserID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) activeCommandPlugins() []Plugin {
 	if e == nil || e.pluginHost == nil {
 		return nil
@@ -1341,6 +1367,13 @@ func messageText(segments []protocol.MessageSegment, fairyUserID string) (string
 	var text strings.Builder
 	mentioned := false
 	for _, segment := range segments {
+		// Local zzzterm Agent messages are persisted in the same IM history,
+		// but must not re-enter the server-side Fairy loop.
+		if segment.Type == "agent_route" {
+			if route, _ := segment.Data["route"].(string); route == "local" {
+				return "", false
+			}
+		}
 		switch segment.Type {
 		case "text":
 			value, _ := segment.Data["text"].(string)

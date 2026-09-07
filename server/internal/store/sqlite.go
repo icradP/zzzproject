@@ -87,6 +87,22 @@ func (s *SQLiteStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
+	CREATE TABLE IF NOT EXISTS terminal_sessions (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		device_id TEXT NOT NULL,
+		client_type TEXT NOT NULL DEFAULT 'desktop',
+		connected BOOLEAN NOT NULL DEFAULT FALSE,
+		login_at DATETIME NOT NULL,
+		last_seen_at DATETIME NOT NULL,
+		logout_at DATETIME
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_terminal_sessions_last_seen
+		ON terminal_sessions(last_seen_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_terminal_sessions_user
+		ON terminal_sessions(user_id, last_seen_at DESC);
+
 	CREATE TABLE IF NOT EXISTS terminal_vaults (
 		user_id TEXT PRIMARY KEY,
 		payload TEXT NOT NULL,

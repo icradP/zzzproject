@@ -89,6 +89,22 @@ func (s *PostgresStore) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
+	CREATE TABLE IF NOT EXISTS terminal_sessions (
+		id TEXT PRIMARY KEY,
+		user_id VARCHAR(32) NOT NULL,
+		device_id VARCHAR(128) NOT NULL,
+		client_type VARCHAR(32) NOT NULL DEFAULT 'desktop',
+		connected BOOLEAN NOT NULL DEFAULT FALSE,
+		login_at TIMESTAMP NOT NULL,
+		last_seen_at TIMESTAMP NOT NULL,
+		logout_at TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_terminal_sessions_last_seen
+		ON terminal_sessions(last_seen_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_terminal_sessions_user
+		ON terminal_sessions(user_id, last_seen_at DESC);
+
 	CREATE TABLE IF NOT EXISTS terminal_vaults (
 		user_id VARCHAR(32) PRIMARY KEY,
 		payload TEXT NOT NULL,

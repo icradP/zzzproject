@@ -182,7 +182,7 @@ func ConfigFromEnv() (Config, error) {
 	if cfg.MaxConversationPending, err = envInt("FAIRY_MAX_CONVERSATION_PENDING", 16); err != nil {
 		return Config{}, err
 	}
-	if cfg.TurnTimeout, err = envDuration("FAIRY_TURN_TIMEOUT", 60*time.Second); err != nil {
+	if cfg.TurnTimeout, err = envDuration("FAIRY_TURN_TIMEOUT", 3*time.Minute); err != nil {
 		return Config{}, err
 	}
 	if cfg.DrainTimeout, err = envDuration("FAIRY_DRAIN_TIMEOUT", 10*time.Second); err != nil {

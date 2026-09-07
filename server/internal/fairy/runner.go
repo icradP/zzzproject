@@ -107,6 +107,7 @@ func (r *Runner) runSession(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	r.messenger.Attach(client)
+	r.engine.attachTerminalMessenger(r.messenger)
 	r.connected.Store(true)
 	defer func() {
 		r.connected.Store(false)
@@ -233,6 +234,12 @@ func (r *Runner) dispatch(ctx context.Context, client *Client, payload json.RawM
 	case "message":
 		var event messageEvent
 		if json.Unmarshal(payload, &event) == nil {
+			// A terminal result belongs to the in-flight Planner tool call. Consume
+			// it before the normal message gate so it is never treated as a new
+			// user prompt or echoed back as a duplicate Fairy turn.
+			if r.engine.handleTerminalResult(event) {
+				return
+			}
 			decision := r.engine.PreviewGate(event)
 			if decision.Action != GateTrigger {
 				r.engine.TraceGateIngress(ctx, event, decision)

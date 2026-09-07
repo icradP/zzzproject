@@ -35,6 +35,10 @@ type Store interface {
 	GetSession(tokenHash string) (*Session, error)
 	DeleteSession(tokenHash string) error
 	DeleteSessionsForUser(userID string) error
+	UpsertTerminalSession(session *TerminalSession) error
+	TouchTerminalSession(id string, seenAt time.Time) error
+	EndTerminalSession(id string, endedAt time.Time) error
+	GetRecentTerminalSessions(limit int) ([]*TerminalSession, error)
 
 	// ---- Encrypted terminal vault operations ----
 	GetTerminalVault(userID string) (*TerminalVault, error)
@@ -256,6 +260,20 @@ type Session struct {
 	UserID    string    `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// TerminalSession is a non-secret audit record for a ZZZTerm client
+// connection. It intentionally stores a device identifier, not an account
+// session token or any credential material.
+type TerminalSession struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"user_id"`
+	DeviceID   string     `json:"device_id"`
+	ClientType string     `json:"client_type"`
+	Connected  bool       `json:"connected"`
+	LoginAt    time.Time  `json:"login_at"`
+	LastSeenAt time.Time  `json:"last_seen_at"`
+	LogoutAt   *time.Time `json:"logout_at,omitempty"`
 }
 
 // Group represents a group.

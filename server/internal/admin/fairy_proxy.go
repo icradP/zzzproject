@@ -7,6 +7,11 @@ import (
 )
 
 func (s *Server) handleFairy(response http.ResponseWriter, request *http.Request, resource string) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		s.writeError(response, http.StatusMethodNotAllowed, "Fairy management is read-only; configure local AI in ZZZTerm")
+		return
+	}
 	if s.fairy == nil {
 		s.writeError(response, http.StatusServiceUnavailable, "Fairy management is not configured")
 		return

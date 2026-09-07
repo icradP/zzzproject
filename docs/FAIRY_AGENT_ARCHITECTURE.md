@@ -81,11 +81,19 @@ Fairy 不是：
 - 不保存模型 API Key。
 - 不组装 Prompt，不执行模型或 Fairy 工具。
 - 不管理外部平台 Adapter。
-- 管理后台只通过回环管理 API 透明代理 Fairy 配置和脱敏状态。
+- 管理后台只读展示 ZZZTerm 登录审计、消息/终端活动和脱敏运行状态；不再提供 Fairy 模型、密钥、Prompt 或插件写入口。
 
-允许为所有客户端增加通用协议能力，例如 `send_message.client_message_id` 幂等键；这不是 Bot 专用控制面。
+允许为所有客户端增加通用协议能力，例如 `send_message.client_message_id` 幂等键；服务端只做消息访问控制、持久化、实时投递和结构边界检查，不参与 Agent 规划或工具路由。
 
-### 2. Fairy 进程
+### 2. ZZZTerm 本地 Agent
+
+ZZZTerm 是 Agent 的默认执行端：
+
+- 在本机保存模型厂商、Base URL、模型和 API Key；API Key 只进入系统安全存储。
+- 本地完成需求理解、Chat/Plan、工具调用和终端审批；服务端不代替它选择凭据或建立 SSH 连接。
+- 通过带 `agent_route=local` 的消息把用户输入、计划、审批请求和结果写入 IM 历史，供 ZZZ IM 查看；这些消息不会再次触发远程 Fairy。
+
+### 3. Fairy 进程
 
 Fairy 自己拥有：
 
@@ -95,7 +103,7 @@ Fairy 自己拥有：
 - Model Router、Planner、Replyer 和 Tool Pipeline。
 - Bot 配置、额度、脱敏 Trace、健康状态和管理 API。
 
-### 3. 客户端和外部平台
+### 4. 客户端和外部平台
 
 普通客户端继续自行配置和组合外部平台来源。未来 Fairy 若需要接入其他平台，使用独立 Adapter 或独立进程将事件规范化后提交给 Runtime，不要求 ZZZ IM Server 管理这些平台。
 
@@ -213,7 +221,7 @@ Idle
 - Planner 最多 4 个 Step。
 - 每 Turn 最多 6 个 Tool Call。
 - 单工具最长 15 秒。
-- 整个 Turn 最长 60 秒。
+- 整个 Turn 默认最长 180 秒；需要等待 ZZZTerm 本地审批的终端 Tool 受此上限约束。
 - 最终可见回复默认最多一次。
 - 模型和工具输出分别设置字节、字符和 Token 上限。
 
@@ -396,6 +404,8 @@ resolve tool
 ```
 
 工具策略只能逐步收紧，不能由下游重新放宽。
+
+终端桥接 Tool 只负责向在线 ZZZTerm 发送 `terminal_request` 并等待同一 `request_id` 的 `terminal_result`；结果回灌 Planner 后才允许继续下一步，实际命令执行始终由 ZZZTerm 本地 Allow 闸门控制。
 
 ### 3. 并发和副作用
 

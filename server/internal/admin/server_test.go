@@ -336,6 +336,12 @@ func TestAdminTerminalActivityDoesNotExposeVaultPayload(t *testing.T) {
 	if _, err := database.PutTerminalVault("alice", "client-secret-envelope", 0); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.UpsertTerminalSession(&store.TerminalSession{
+		ID: "term-session-1", UserID: "alice", DeviceID: "zzzterm-test-device",
+		ClientType: "desktop", Connected: true, LoginAt: time.Now(), LastSeenAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	handler := New(Config{Store: database, Registration: &registrationStub{}, AdminToken: "admin", PublicPath: "/admin"})
 	cookie := loginCookie(t, handler, "admin")
 	response := performRequest(handler, http.MethodGet, "/admin/api/terminal?limit=20", nil, cookie, false)
@@ -361,12 +367,20 @@ func TestAdminTerminalActivityDoesNotExposeVaultPayload(t *testing.T) {
 		Vaults []struct {
 			PayloadBytes int `json:"payload_bytes"`
 		} `json:"vaults"`
+		Sessions []struct {
+			UserID    string `json:"user_id"`
+			DeviceID  string `json:"device_id"`
+			Connected bool   `json:"connected"`
+		} `json:"sessions"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
 	if payload.Overview.Requests != 2 || payload.Overview.Results != 1 || payload.Overview.Completed != 1 || payload.Overview.Expired != 1 || payload.Overview.VaultsConfigured != 1 {
 		t.Fatalf("unexpected terminal overview: %#v", payload.Overview)
+	}
+	if len(payload.Sessions) != 1 || payload.Sessions[0].UserID != "alice" || payload.Sessions[0].DeviceID != "zzzterm-test-device" || !payload.Sessions[0].Connected {
+		t.Fatalf("unexpected terminal sessions: %#v", payload.Sessions)
 	}
 	if len(payload.Activities) != 3 || len(payload.Vaults) != 1 || payload.Vaults[0].PayloadBytes != len("client-secret-envelope") {
 		t.Fatalf("unexpected terminal payload: activities=%#v vaults=%#v", payload.Activities, payload.Vaults)

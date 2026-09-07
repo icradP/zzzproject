@@ -55,6 +55,8 @@ type terminalOverview struct {
 	Failed           int `json:"failed"`
 	Expired          int `json:"expired"`
 	VaultsConfigured int `json:"vaults_configured"`
+	Sessions         int `json:"sessions"`
+	ActiveSessions   int `json:"active_sessions"`
 }
 
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +159,17 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	overview.VaultsConfigured = len(vaults)
+	sessions, sessionsErr := s.store.GetRecentTerminalSessions(limit)
+	if sessionsErr != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not load terminal sessions")
+		return
+	}
+	for _, session := range sessions {
+		if session != nil && session.Connected {
+			overview.ActiveSessions++
+		}
+	}
+	overview.Sessions = len(sessions)
 	sort.Slice(activities, func(i, j int) bool {
 		return activities[i].Timestamp.After(activities[j].Timestamp)
 	})
@@ -166,6 +179,7 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		"overview":     overview,
 		"activities":   activities,
 		"vaults":       vaults,
+		"sessions":     sessions,
 		"limits": map[string]int{
 			"activity_limit": maxTerminalActivityLimit,
 			"command_bytes":  maxTerminalCommandBytes,

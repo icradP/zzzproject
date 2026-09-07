@@ -11,6 +11,7 @@ const state = {
   media: [],
   terminalActivities: [],
   terminalVaults: [],
+  terminalSessions: [],
   terminalOverview: null,
   terminalPollTimer: null,
   fairy: null,
@@ -510,6 +511,7 @@ function terminalStatusLabel(activity) {
 function renderTerminal(payload) {
   state.terminalActivities = payload.activities || [];
   state.terminalVaults = payload.vaults || [];
+  state.terminalSessions = payload.sessions || [];
   state.terminalOverview = payload.overview || {};
   const overview = state.terminalOverview;
   const stats = [
@@ -517,6 +519,7 @@ function renderTerminal(payload) {
     ["Results", overview.results || 0, "messages"],
     ["Pending", overview.pending || 0, overview.pending ? "warning" : ""],
     ["Vaults", overview.vaults_configured || 0, "storage"],
+    ["Active clients", overview.active_sessions || 0, overview.active_sessions ? "enabled" : ""],
   ];
   document.querySelector("#terminal-stat-grid").replaceChildren(...stats.map(([label, value, className]) => {
     const item = element("div", `stat-item ${className}`.trim());
@@ -536,6 +539,17 @@ function renderTerminal(payload) {
   });
   document.querySelector("#terminal-vaults-body").replaceChildren(...vaultRows);
   document.querySelector("#terminal-vaults-empty").hidden = vaultRows.length > 0;
+  const sessionRows = state.terminalSessions.map((session) => {
+    const row = document.createElement("tr");
+    const account = document.createElement("td");
+    account.append(element("span", "cell-title", session.user_id), element("span", "cell-subtitle", session.client_type || "desktop"));
+    const stateCell = element("td");
+    stateCell.append(element("span", `status-badge ${session.connected ? "enabled" : "offline"}`, session.connected ? "connected" : "offline"));
+    row.append(account, element("td", "mono", session.device_id || "-"), stateCell, element("td", "", formatDate(session.login_at)), element("td", "", formatDate(session.last_seen_at)), element("td", "", formatDate(session.logout_at)));
+    return row;
+  });
+  document.querySelector("#terminal-sessions-body").replaceChildren(...sessionRows);
+  document.querySelector("#terminal-sessions-empty").hidden = sessionRows.length > 0;
 }
 
 function renderTerminalActivities() {
@@ -2013,6 +2027,7 @@ async function loadFairy() {
     renderFairy(payload);
     renderFairyModelEvaluation(evaluation);
     renderFairyDecisionChains(decisions);
+    setFairyReadOnly();
     setFairySection(state.fairySection);
     const configState = payload.config_status?.state;
     const saveNote = document.querySelector("#fairy-save-note");
@@ -2030,6 +2045,20 @@ async function loadFairy() {
     badge.className = "status-badge offline";
     throw error;
   }
+}
+
+function setFairyReadOnly() {
+  const form = document.querySelector("#fairy-config-form");
+  if (!form) return;
+  form.querySelectorAll("input, select, textarea").forEach((control) => {
+    control.disabled = true;
+  });
+  form.querySelectorAll("button:not(.fairy-section-button)").forEach((button) => {
+    if (button.id !== "fairy-refresh-decisions") button.disabled = true;
+  });
+  const saveActions = document.querySelector("[data-fairy-save-actions]");
+  if (saveActions) saveActions.hidden = true;
+  setFairyDirty(false);
 }
 
 async function setActiveView(view) {

@@ -12,11 +12,12 @@ import (
 const terminalRequestTTL = 2 * time.Minute
 
 type TerminalBridgePlugin struct {
-	now func() time.Time
+	now    func() time.Time
+	broker *TerminalRequestBroker
 }
 
 func NewTerminalBridgePlugin() *TerminalBridgePlugin {
-	return &TerminalBridgePlugin{now: time.Now}
+	return &TerminalBridgePlugin{now: time.Now, broker: NewTerminalRequestBroker()}
 }
 
 func (p *TerminalBridgePlugin) Name() string { return TerminalBridgePluginID }
@@ -28,6 +29,43 @@ func (p *TerminalBridgePlugin) Match(request PluginRequest) bool {
 
 func (p *TerminalBridgePlugin) Handle(context.Context, PluginRequest) (string, error) {
 	return "", nil
+}
+
+// Tools exposes the same bridge through the Planner. The legacy command path
+// below remains available for deterministic explicit /term requests.
+func (p *TerminalBridgePlugin) Tools() []Tool {
+	if p == nil || p.broker == nil {
+		return nil
+	}
+	return []Tool{&terminalBridgeTool{broker: p.broker}}
+}
+
+func (p *TerminalBridgePlugin) MatchToolIntent(request PluginRequest) bool {
+	value := strings.ToLower(strings.TrimSpace(request.Text))
+	if value == "" {
+		return false
+	}
+	for _, hint := range []string{
+		"terminal", "ssh", "shell", "command", "run ", "execute", "主机", "服务器", "终端", "命令", "执行", "运行",
+	} {
+		if strings.Contains(value, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *TerminalBridgePlugin) attachMessenger(messenger *reliableMessenger) {
+	if p != nil && p.broker != nil {
+		p.broker.Attach(messenger)
+	}
+}
+
+func (p *TerminalBridgePlugin) handleTerminalResult(event messageEvent, fairyUserID string) bool {
+	if p == nil || p.broker == nil {
+		return false
+	}
+	return p.broker.Complete(event, fairyUserID)
 }
 
 func (p *TerminalBridgePlugin) HandleInteractive(ctx context.Context, messenger interactiveMessenger, request PluginRequest) (bool, error) {

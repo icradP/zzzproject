@@ -21,12 +21,14 @@ class ZzzServerConfig {
     required this.serverUrl,
     this.authToken = '',
     this.selfId = '',
+    this.deviceId = '',
     this.presetBotIds = const ['fairy'],
   });
 
   final String serverUrl;
   final String authToken;
   final String selfId;
+  final String deviceId;
   final List<String> presetBotIds;
 }
 
@@ -1593,7 +1595,7 @@ class ZzzServerSource implements ImMessageSource {
         final message = _parseMessage(json);
         if (message != null) _addMessageToStream(message);
         final terminalRequest = _parseTerminalRequest(json);
-        if (terminalRequest != null && !terminalRequest.isExpired) {
+        if (terminalRequest != null) {
           _terminalRequestsController.add(terminalRequest);
         }
         break;
@@ -1607,6 +1609,7 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   ZzzTerminalRequest? _parseTerminalRequest(Map<String, dynamic> json) {
+    if (json['message_type'] != 'private') return null;
     final segments = json['message'];
     if (segments is! List) return null;
     for (final raw in segments.whereType<Map>()) {
@@ -1620,12 +1623,23 @@ class ZzzServerSource implements ImMessageSource {
       final conversationId = '${json['conversation_id'] ?? ''}';
       final senderId = '${sender['user_id'] ?? ''}';
       final expiresAt = (data['expires_at'] as num?)?.toInt() ?? 0;
+      const supportedOperations = {'list_hosts', 'get_host', 'run_command'};
+      final command = data['command'] as String?;
+      final hostId = data['host_id'] as String?;
       if (requestId.isEmpty ||
+          utf8.encode(requestId).length > 128 ||
+          !RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(requestId) ||
           operation.isEmpty ||
+          !supportedOperations.contains(operation) ||
           conversationId.isEmpty ||
           senderId.isEmpty ||
           !config.presetBotIds.contains(senderId) ||
-          expiresAt <= 0) {
+          expiresAt <= 0 ||
+          (command != null && utf8.encode(command).length > 8192) ||
+          ((operation == 'get_host' || operation == 'run_command') &&
+              (hostId == null || hostId.trim().isEmpty)) ||
+          (operation == 'run_command' &&
+              (command == null || command.trim().isEmpty))) {
         return null;
       }
       return ZzzTerminalRequest(
@@ -1633,8 +1647,8 @@ class ZzzServerSource implements ImMessageSource {
         operation: operation,
         conversationId: conversationId,
         senderId: senderId,
-        hostId: data['host_id'] as String?,
-        command: data['command'] as String?,
+        hostId: hostId,
+        command: command,
         expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAt),
       );
     }
@@ -1681,11 +1695,94 @@ class ZzzServerSource implements ImMessageSource {
       'data': {
         'request_id': requestId,
         'status': status,
-        if (output.isNotEmpty) 'output': output,
+        if (output.isNotEmpty) 'output': _truncateUtf8(output, 64 * 1024),
         if (exitCode != null) 'exit_code': exitCode,
       },
     },
-  ]);
+  ], clientMessageId: 'zzzterm-$requestId-result');
+
+  /// Sends a local-Agent message that is persisted and visible to other IM
+  /// clients, while preventing the server-side Fairy from treating it as a
+  /// new user prompt.
+  Future<ImMessage> sendLocalAgentText({
+    required String conversationId,
+    required String text,
+    String role = 'assistant',
+    String? clientMessageId,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'agent_route',
+      'data': {'route': 'local', 'role': role},
+    },
+    {
+      'type': 'text',
+      'data': {'text': text.trim()},
+    },
+  ], clientMessageId: clientMessageId);
+
+  Future<ImMessage> sendLocalAgentTerminalRequest({
+    required String conversationId,
+    required String requestId,
+    required String operation,
+    required String hostId,
+    required String command,
+    required int expiresAt,
+    required String summary,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'agent_route',
+      'data': {'route': 'local', 'role': 'assistant'},
+    },
+    {
+      'type': 'text',
+      'data': {'text': summary},
+    },
+    {
+      'type': 'terminal_request',
+      'data': {
+        'request_id': requestId,
+        'operation': operation,
+        if (hostId.isNotEmpty) 'host_id': hostId,
+        if (command.isNotEmpty) 'command': command,
+        'expires_at': expiresAt,
+      },
+    },
+  ], clientMessageId: 'zzzterm-local-$requestId-request');
+
+  /// Sends a local-Agent terminal result to the shared conversation history.
+  /// The route marker keeps it out of the server Fairy ingress path.
+  Future<ImMessage> sendLocalAgentTerminalResult({
+    required String conversationId,
+    required String requestId,
+    required String status,
+    required String summary,
+    String output = '',
+    int? exitCode,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'agent_route',
+      'data': {'route': 'local', 'role': 'assistant'},
+    },
+    {
+      'type': 'text',
+      'data': {'text': summary},
+    },
+    {
+      'type': 'terminal_result',
+      'data': {
+        'request_id': requestId,
+        'status': status,
+        if (output.isNotEmpty) 'output': _truncateUtf8(output, 64 * 1024),
+        if (exitCode != null) 'exit_code': exitCode,
+      },
+    },
+  ], clientMessageId: 'zzzterm-local-$requestId-result');
+
+  static String _truncateUtf8(String value, int maxBytes) {
+    final bytes = utf8.encode(value);
+    if (bytes.length <= maxBytes) return value;
+    return utf8.decode(bytes.sublist(0, maxBytes), allowMalformed: true);
+  }
 
   ZzzTerminalVault _terminalVaultFromResponse(Map<String, dynamic> response) {
     final data = Map<String, dynamic>.from(
@@ -2083,6 +2180,7 @@ class ZzzServerSource implements ImMessageSource {
       'forward' => '[聊天记录]',
       'poke' => '[戳一戳]',
       'system' => '${data['text'] ?? '[系统消息]'}',
+      'agent_route' => '',
       'terminal_request' => '[终端授权请求]',
       'terminal_result' => '[终端执行结果]',
       'at' => '@${data['qq'] ?? ''}',
@@ -2179,13 +2277,16 @@ class ZzzServerSource implements ImMessageSource {
 
   Future<ImMessage> _sendMessage(
     String conversationId,
-    List<Map<String, dynamic>> segments,
-  ) async {
+    List<Map<String, dynamic>> segments, {
+    String? clientMessageId,
+  }) async {
     final conversation = _conversations[conversationId];
     if (conversation != null) await _ensureRemoteConversation(conversation);
     final response = await _request('send_message', {
       'conversation_id': conversationId,
       'message': segments,
+      if (clientMessageId != null && clientMessageId.isNotEmpty)
+        'client_message_id': clientMessageId,
     });
     _requireOk(response, 'Send message');
     final responseData = Map<String, dynamic>.from(
@@ -2334,6 +2435,7 @@ class ZzzServerSource implements ImMessageSource {
       'token': config.authToken,
       'session_token': config.authToken,
       'user_id': config.selfId,
+      if (config.deviceId.isNotEmpty) 'device_id': config.deviceId,
     });
     if (response['status'] != 'ok' && _onAuthenticationFailed != null) {
       unawaited(_onAuthenticationFailed());
@@ -2476,11 +2578,15 @@ class ZzzServerSource implements ImMessageSource {
     required String serverUrl,
     required String userId,
     required String password,
+    String? deviceId,
   }) async {
     final response = await _accountRequest(serverUrl, 'auth', {
       'user_id': userId,
       'password': password,
-      'device_id': 'pwa-${DateTime.now().millisecondsSinceEpoch}',
+      'device_id':
+          deviceId == null || deviceId.trim().isEmpty
+              ? 'pwa-${DateTime.now().millisecondsSinceEpoch}'
+              : deviceId.trim(),
     });
     return _accountResult(response);
   }

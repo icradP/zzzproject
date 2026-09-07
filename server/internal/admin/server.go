@@ -768,15 +768,9 @@ func (s *Server) allowedMethods(path string) string {
 	switch path {
 	case "/session":
 		return "GET, POST, DELETE"
-	case "/users", "/settings/registration", "/fairy/config":
+	case "/users", "/settings/registration":
 		return "GET, PATCH"
-	case "/fairy/model-probe":
-		return "POST"
-	case "/fairy/model-eval":
-		return "GET, POST"
-	case "/fairy/agent-diagnostic":
-		return "POST"
-	case "/fairy/decision-chains":
+	case "/fairy/config", "/fairy/model-eval", "/fairy/decision-chains":
 		return "GET"
 	case "/users/password":
 		return "PATCH"

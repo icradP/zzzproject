@@ -1,5 +1,8 @@
 library;
 
+// Expose the segment type used by ImMessage.segments to embedding clients.
+export 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
+
 // Public surface for embedding the production ZZZ IM conversation component
 // in sibling applications such as ZZZ Term.
 export 'src/im/data/im_interaction_handler.dart';

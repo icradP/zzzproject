@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	defaultToolMaxCalls       = 6
-	defaultToolTimeout        = 15 * time.Second
+	defaultToolMaxCalls = 6
+	// Tool calls may wait for a local ZZZTerm approval. Keep this aligned with
+	// the terminal request TTL while still allowing shorter per-tool limits.
+	defaultToolTimeout        = 2 * time.Minute
 	defaultToolInputBytes     = 32 * 1024
 	defaultToolOutputBytes    = 64 * 1024
 	defaultToolProjectionRune = 4000

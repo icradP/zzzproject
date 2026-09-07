@@ -36,7 +36,7 @@ func TestFairyHTTPControllerRequiresLoopbackAndProtectsToken(t *testing.T) {
 	var upstreamMethod string
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		upstreamMethod = request.Method
-		if request.URL.Path != "/admin/config" || request.Header.Get("Authorization") != "Bearer local-secret" {
+		if request.URL.Path != "/admin/config" || request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer local-secret" {
 			t.Fatalf("unexpected upstream request path=%q auth=%q", request.URL.Path, request.Header.Get("Authorization"))
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -47,9 +47,12 @@ func TestFairyHTTPControllerRequiresLoopbackAndProtectsToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, payload, err := controller.Request(context.Background(), "config", http.MethodPatch, []byte(`{}`))
-	if err != nil || status != http.StatusOK || upstreamMethod != http.MethodPatch || string(payload) != `{"ok":true}` {
+	status, payload, err := controller.Request(context.Background(), "config", http.MethodGet, nil)
+	if err != nil || status != http.StatusOK || upstreamMethod != http.MethodGet || string(payload) != `{"ok":true}` {
 		t.Fatalf("proxy status=%d method=%q payload=%s err=%v", status, upstreamMethod, payload, err)
+	}
+	if _, _, err := controller.Request(context.Background(), "config", http.MethodPatch, []byte(`{}`)); err == nil {
+		t.Fatal("Fairy write method was accepted")
 	}
 }
 
@@ -71,21 +74,19 @@ func TestAdminConsoleProxiesFairyConfiguration(t *testing.T) {
 	patched := performRequest(handler, http.MethodPatch, "/admin/api/fairy/config", map[string]interface{}{
 		"model_name": "test-model",
 	}, cookie, true)
-	if patched.Code != http.StatusOK || fairy.method != http.MethodPatch || !strings.Contains(fairy.body, "test-model") {
+	if patched.Code != http.StatusMethodNotAllowed || fairy.method != http.MethodGet {
 		t.Fatalf("Fairy PATCH status=%d method=%q body=%q", patched.Code, fairy.method, fairy.body)
 	}
 	probed := performRequest(handler, http.MethodPost, "/admin/api/fairy/model-probe", map[string]interface{}{
 		"model_id": "test-model",
 	}, cookie, true)
-	if probed.Code != http.StatusOK || fairy.resource != "model-probe" || fairy.method != http.MethodPost ||
-		!strings.Contains(fairy.body, "test-model") {
+	if probed.Code != http.StatusMethodNotAllowed || fairy.resource != "config" || fairy.method != http.MethodGet {
 		t.Fatalf("Fairy probe status=%d resource=%q method=%q body=%q", probed.Code, fairy.resource, fairy.method, fairy.body)
 	}
 	evaluation := performRequest(handler, http.MethodPost, "/admin/api/fairy/model-eval", map[string]interface{}{
 		"model_id": "test-model",
 	}, cookie, true)
-	if evaluation.Code != http.StatusOK || fairy.resource != "model-eval" || fairy.method != http.MethodPost ||
-		!strings.Contains(fairy.body, "test-model") {
+	if evaluation.Code != http.StatusMethodNotAllowed || fairy.resource != "config" || fairy.method != http.MethodGet {
 		t.Fatalf("Fairy evaluation status=%d resource=%q method=%q body=%q", evaluation.Code, fairy.resource, fairy.method, fairy.body)
 	}
 	loadedEvaluation := performRequest(handler, http.MethodGet, "/admin/api/fairy/model-eval", nil, cookie, false)
@@ -95,8 +96,7 @@ func TestAdminConsoleProxiesFairyConfiguration(t *testing.T) {
 	diagnostic := performRequest(handler, http.MethodPost, "/admin/api/fairy/agent-diagnostic", map[string]interface{}{
 		"case_id": "pipeline-basic",
 	}, cookie, true)
-	if diagnostic.Code != http.StatusOK || fairy.resource != "agent-diagnostic" || fairy.method != http.MethodPost ||
-		!strings.Contains(fairy.body, "pipeline-basic") {
+	if diagnostic.Code != http.StatusMethodNotAllowed || fairy.resource != "model-eval" || fairy.method != http.MethodGet {
 		t.Fatalf("Fairy agent diagnostic status=%d resource=%q method=%q body=%q", diagnostic.Code, fairy.resource, fairy.method, fairy.body)
 	}
 	decisionChains := performRequest(handler, http.MethodGet, "/admin/api/fairy/decision-chains", nil, cookie, false)
@@ -108,14 +108,14 @@ func TestAdminConsoleProxiesFairyConfiguration(t *testing.T) {
 	busyEvaluation := performRequest(handler, http.MethodPost, "/admin/api/fairy/model-eval", map[string]interface{}{
 		"model_id": "test-model",
 	}, cookie, true)
-	if busyEvaluation.Code != http.StatusTooManyRequests || busyEvaluation.Header().Get("Retry-After") != "1" {
+	if busyEvaluation.Code != http.StatusMethodNotAllowed || busyEvaluation.Header().Get("Retry-After") != "" {
 		t.Fatalf("Fairy busy evaluation status=%d retry=%q", busyEvaluation.Code, busyEvaluation.Header().Get("Retry-After"))
 	}
 }
 
 func TestFairyHTTPControllerAllowsOnlyDeclaredModelEvaluationMethods(t *testing.T) {
 	controller := &FairyHTTPController{}
-	for _, method := range []string{http.MethodPatch, http.MethodDelete, http.MethodPut} {
+	for _, method := range []string{http.MethodPatch, http.MethodPost, http.MethodDelete, http.MethodPut} {
 		if _, _, err := controller.Request(context.Background(), "model-eval", method, nil); err == nil {
 			t.Fatalf("model evaluation method %s was accepted", method)
 		}

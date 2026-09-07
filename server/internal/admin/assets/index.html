@@ -220,6 +220,10 @@
       </section>
 
       <section id="view-fairy" class="view" data-section="fairy" hidden>
+        <div class="runtime-note terminal-boundary-note fairy-read-only-note">
+          <strong>Read-only runtime view</strong>
+          <span>AI provider keys, prompts, and Agent settings are managed on the ZZZTerm client. This console only shows service status and recorded decisions.</span>
+        </div>
         <form id="fairy-config-form" class="fairy-layout">
           <nav class="fairy-section-nav" aria-label="Fairy configuration sections">
             <button class="fairy-section-button active" type="button" data-fairy-section="runtime">Runtime</button>
@@ -542,6 +546,22 @@
             </table>
           </div>
           <p id="terminal-vaults-empty" class="empty-state" hidden>No client vaults configured.</p>
+        </section>
+        <section class="surface terminal-sessions-surface">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CLIENT PRESENCE</p>
+              <h3>ZZZ Term login history</h3>
+            </div>
+          </div>
+          <p class="form-note terminal-vault-note">Read-only connection audit. Device identifiers are shown for support and contain no session token.</p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Account</th><th>Device</th><th>State</th><th>Logged in</th><th>Last seen</th><th>Logged out</th></tr></thead>
+              <tbody id="terminal-sessions-body"></tbody>
+            </table>
+          </div>
+          <p id="terminal-sessions-empty" class="empty-state" hidden>No ZZZ Term logins recorded.</p>
         </section>
       </section>
 

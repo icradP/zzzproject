@@ -1,6 +1,6 @@
 # ZZZ Term 客户端对接说明
 
-本文是 ZZZ Term 桌面客户端接入 ZZZ IM Server 的协议约定。ZZZ Term 是“执行端”，Fairy 或其他账号是“请求端”。IM Server 只负责认证、转发、持久化消息和校验边界，不连接 SSH、不选择凭据、不执行命令。
+本文是 ZZZ Term 桌面客户端接入 ZZZ IM Server 的协议约定。ZZZ Term 是“执行端”，本地 Agent 是默认请求编排端，Fairy 或其他账号是可选的远程请求端。IM Server 只负责认证、消息持久化、实时投递和校验协议边界，不连接 SSH、不选择凭据、不执行命令，也不参与 Agent 路由。
 
 ## 1. 连接与认证
 
@@ -26,7 +26,7 @@ ZZZ Term 使用普通 ZZZ IM 账号登录。第一次登录使用账号密码，
 }
 ```
 
-认证成功的 `response.data` 至少包含 `user_id`、`nickname`、`avatar_url`；使用密码登录时会额外返回新的 `session_token`。登录、注册和退出也可以使用短连接执行同样的 `auth`、`register`、`logout` action。收到 `post_type=notice` 且 `notice_type=friend_presence` 时，可更新 Fairy 或联系人在线状态。
+认证成功的 `response.data` 至少包含 `user_id`、`nickname`、`avatar_url`；使用密码登录时会额外返回新的 `session_token`。登录、注册和退出也可以使用短连接执行同样的 `auth`、`register`、`logout` action。账号密码短连接使用临时 `pwa-*` 设备标识，不计入 ZZZTerm 在线审计；只有随后带 `zzzterm-*` 稳定设备标识的长连接才创建终端登录记录。收到 `post_type=notice` 且 `notice_type=friend_presence` 时，可更新 Fairy 或联系人在线状态。
 
 连接建立后每 30 秒发送：
 
@@ -35,6 +35,8 @@ ZZZ Term 使用普通 ZZZ IM 账号登录。第一次登录使用账号密码，
 ```
 
 收到相同 `echo` 的 `status=ok` 后保活。断线时指数退避重连；所有 action 都应使用唯一 `echo`，并为未完成请求设置超时。
+
+ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatible 或 Anthropic-compatible，Base URL、模型 ID 和 API Key 由用户在 ZZZTerm 设置中管理。API Key 只能进入系统安全存储，不写入 IM 消息、terminal vault、日志或服务端配置。
 
 ## 2. 消息接收与发送
 
@@ -76,6 +78,14 @@ ZZZ Term 使用普通 ZZZ IM 账号登录。第一次登录使用账号密码，
 
 服务端会按“发送者 + `client_message_id`”去重。网络超时重试时必须复用相同的 `client_message_id`，不要生成第二条结果。`terminal_result` 只允许私聊。
 
+本地 Agent 写入共享历史时会在消息段前添加：
+
+```json
+{"type":"agent_route","data":{"route":"local","role":"assistant"}}
+```
+
+`role` 可为 `user` 或 `assistant`。该标记只用于历史归属和防止服务端 Fairy 重复处理，不是服务端命令路由；消息仍按普通 IM 消息保存和投递。
+
 ## 3. `terminal_request` 请求段
 
 Fairy 当前支持三种操作：
@@ -106,9 +116,10 @@ Fairy 当前支持三种操作：
 客户端收到请求后必须：
 
 1. 检查 `message_type=private`、请求来源是否为本账号授权的 Fairy、`request_id` 是否已处理以及 `expires_at` 是否仍有效。
-2. 显示明确的 Allow / Deny 审批卡。未得到用户明确 Allow 前，不读取主机、不执行命令。
-3. `run_command` 只能匹配当前客户端已经连接的 SSH 会话和完全相同的 `host_id`；不得因为请求自动新建连接、选择凭据或跳过主机密钥校验。
-4. 无论拒绝、过期、执行失败还是成功，都回传一个对应的 `terminal_result`，并复用 `request_id`。
+2. `list_hosts` 和 `get_host` 是只读的主机发现操作，可由客户端自动回传公开摘要；不要因为 Fairy 在 ZZZ IM 中发起普通对话或主机查询而要求用户点击确认。
+3. 只有 `run_command` 需要显示明确的 Allow / Deny 审批卡。未得到用户明确 Allow 前，不执行命令。
+4. `run_command` 只能匹配当前客户端已经连接的 SSH 会话和完全相同的 `host_id`；不得因为请求自动新建连接、选择凭据或跳过主机密钥校验。
+5. 无论拒绝、过期、执行失败还是成功，都回传一个对应的 `terminal_result`，并复用 `request_id`。
 
 ## 4. `terminal_result` 结果段
 
@@ -197,4 +208,4 @@ Vault 用来同步 ZZZ Term 的主机配置。它是账号级、客户端加密�
 
 ## 7. 管理面板
 
-服务端 `/admin/` 新增 **ZZZ Term** 页面，接口为 `GET /admin/api/terminal?limit=200`。它显示最近请求/结果、状态、主机 ID、账号和有限输出，以及 vault 的 revision、更新时间和大小。该接口需要管理员 session；不会返回 vault payload，也不代表当前在线主机清单。真正的主机列表和 Allow/Deny 操作始终属于 ZZZ Term 客户端。
+服务端 `/admin/` 新增 **ZZZ Term** 页面，接口为 `GET /admin/api/terminal?limit=200`。它只读显示最近 ZZZTerm 登录连接、请求/结果、状态、主机 ID、账号和有限输出，以及 vault 的 revision、更新时间和大小。该接口需要管理员 session；不会返回 vault payload，也不代表当前在线主机清单。真正的主机列表和 Allow/Deny 操作始终属于 ZZZ Term 客户端。

@@ -53,13 +53,9 @@ func NewFairyHTTPController(rawURL, token string) (*FairyHTTPController, error) 
 }
 
 func (c *FairyHTTPController) Request(ctx context.Context, resource, method string, body []byte) (int, []byte, error) {
-	if resource != "config" && resource != "model-probe" && resource != "model-eval" && resource != "agent-diagnostic" && resource != "decision-chains" ||
-		resource == "config" && method != http.MethodGet && method != http.MethodPatch ||
-		resource == "model-probe" && method != http.MethodPost ||
-		resource == "model-eval" && method != http.MethodGet && method != http.MethodPost ||
-		resource == "agent-diagnostic" && method != http.MethodPost ||
-		resource == "decision-chains" && method != http.MethodGet {
-		return 0, nil, fmt.Errorf("unsupported Fairy admin method")
+	if method != http.MethodGet ||
+		(resource != "config" && resource != "model-eval" && resource != "decision-chains") {
+		return 0, nil, fmt.Errorf("Fairy management is read-only")
 	}
 	request, err := http.NewRequestWithContext(ctx, method, c.endpoint+"/"+resource, bytes.NewReader(body))
 	if err != nil {

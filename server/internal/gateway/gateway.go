@@ -28,11 +28,13 @@ import (
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	conn     *websocket.Conn
-	userID   string
-	send     chan []byte
-	sendMu   sync.RWMutex
-	sendDone bool
+	conn              *websocket.Conn
+	userID            string
+	deviceID          string
+	terminalSessionID string
+	send              chan []byte
+	sendMu            sync.RWMutex
+	sendDone          bool
 }
 
 func (c *Client) enqueue(data []byte) bool {
@@ -200,6 +202,11 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 	case protocol.ActionLogout:
 		g.handleLogout(client, req)
 	case protocol.ActionPing:
+		if client.terminalSessionID != "" {
+			if err := g.store.TouchTerminalSession(client.terminalSessionID, time.Now()); err != nil {
+				log.Printf("[gateway] terminal session heartbeat failed: %v", err)
+			}
+		}
 		g.sendJSON(client, protocol.Response{
 			Status:  "ok",
 			RetCode: 0,
@@ -399,6 +406,7 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 }
 
 func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
+	wasAuthenticated := client.userID != ""
 	params, ok := req.Params.(map[string]interface{})
 	if !ok {
 		g.sendError(client, req.Echo, "invalid auth params")
@@ -410,6 +418,11 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	userID, _ := params["user_id"].(string)
 	password, _ := params["password"].(string)
 	deviceID, _ := params["device_id"].(string)
+	deviceID = strings.TrimSpace(deviceID)
+	if len(deviceID) > 128 {
+		g.sendError(client, req.Echo, "device_id must not exceed 128 bytes")
+		return
+	}
 	if sessionToken == "" {
 		sessionToken = token
 	}
@@ -483,6 +496,17 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 	}
 	if firstConnection {
 		user.Online = true
+	}
+	if !wasAuthenticated && isZZZTermDevice(deviceID) {
+		client.deviceID = deviceID
+		client.terminalSessionID = fmt.Sprintf("term-session-%d", time.Now().UnixNano())
+		now := time.Now()
+		if err := g.store.UpsertTerminalSession(&store.TerminalSession{
+			ID: client.terminalSessionID, UserID: userID, DeviceID: deviceID,
+			ClientType: "desktop", Connected: true, LoginAt: now, LastSeenAt: now,
+		}); err != nil {
+			log.Printf("[gateway] terminal login audit failed: %v", err)
+		}
 	}
 
 	// Send success response.
@@ -3157,11 +3181,21 @@ func (g *Gateway) addClient(client *Client, userID string) (bool, error) {
 
 func (g *Gateway) removeClient(client *Client) {
 	userID, lastConnection := g.detachClient(client)
+	if client.terminalSessionID != "" {
+		if err := g.store.EndTerminalSession(client.terminalSessionID, time.Now()); err != nil {
+			log.Printf("[gateway] terminal logout audit failed: %v", err)
+		}
+		client.terminalSessionID = ""
+	}
 	client.closeSend()
 	if !lastConnection {
 		return
 	}
 	g.notifyFriendPresence(userID, false)
+}
+
+func isZZZTermDevice(deviceID string) bool {
+	return strings.HasPrefix(deviceID, "zzzterm-") && len(deviceID) > len("zzzterm-")
 }
 
 func (g *Gateway) detachClient(client *Client) (string, bool) {

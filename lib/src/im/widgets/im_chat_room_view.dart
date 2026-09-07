@@ -20,6 +20,19 @@ import '../data/im_sticker_catalog.dart';
 import '../models/im_models.dart';
 import 'im_chat_widgets.dart';
 
+typedef ImMessageWidgetBuilder =
+    Widget Function(
+      BuildContext context, {
+      required ImMessage message,
+      required String senderName,
+      required ImageProvider avatar,
+      required bool showSenderName,
+      required bool hideAvatar,
+      required bool compact,
+      required bool hideTimestamp,
+      required bool showMessageStatus,
+    });
+
 /// Main chat room view with message list, composer, and attachments.
 class ImChatRoomView extends StatefulWidget {
   const ImChatRoomView({
@@ -42,6 +55,7 @@ class ImChatRoomView extends StatefulWidget {
     this.onLoadOlder,
     this.onManageGroup,
     this.onBack,
+    this.messageBuilder,
     this.composerEnabled = true,
     this.composerHintText = 'Message something...',
     this.attachmentsEnabled = true,
@@ -72,6 +86,13 @@ class ImChatRoomView extends StatefulWidget {
   final Future<bool> Function()? onLoadOlder;
   final VoidCallback? onManageGroup;
   final VoidCallback? onBack;
+
+  /// Optional per-message renderer for product-specific conversation views.
+  ///
+  /// The common list still owns scrolling, lazy loading, message gestures, and
+  /// sender resolution. A custom renderer only replaces the visual message
+  /// body, which keeps richer Agent cards compatible with normal IM behavior.
+  final ImMessageWidgetBuilder? messageBuilder;
   final bool composerEnabled;
   final String composerHintText;
   final bool attachmentsEnabled;
@@ -1185,35 +1206,50 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   onSecondaryTapDown:
                       (details) =>
                           _showMessageActions(message, details.globalPosition),
-                  child: ImMessageBubble(
-                    message: message,
-                    assetPackage: widget.assetPackage,
-                    senderName: senderName,
-                    avatar: avatar,
-                    showSenderName: showName,
-                    hideAvatar: hideAvatar,
-                    compact: compact,
-                    hideTimestamp: hideTimestamp,
-                    showMessageStatus: _showMessageStatus,
-                    resolveQuote: widget.resolveMessage,
-                    onQuoteTap:
-                        message.isReply
-                            ? () => _scrollToMessage(message.replyToMessageId!)
-                            : null,
-                    highlighted:
-                        _highlightMessageId != null &&
-                        (message.id == _highlightMessageId ||
-                            message.id.startsWith('${_highlightMessageId}_')),
-                    resolveUserName: widget.resolveUserName,
-                    onReactionTap:
-                        widget.onReact == null
-                            ? null
-                            : (reaction) => _applyReaction(
-                              message,
-                              reaction.emojiId,
-                              remove: reaction.reactedByMe,
-                            ),
-                  ),
+                  child:
+                      widget.messageBuilder?.call(
+                        context,
+                        message: message,
+                        senderName: senderName,
+                        avatar: avatar,
+                        showSenderName: showName,
+                        hideAvatar: hideAvatar,
+                        compact: compact,
+                        hideTimestamp: hideTimestamp,
+                        showMessageStatus: _showMessageStatus,
+                      ) ??
+                      ImMessageBubble(
+                        message: message,
+                        assetPackage: widget.assetPackage,
+                        senderName: senderName,
+                        avatar: avatar,
+                        showSenderName: showName,
+                        hideAvatar: hideAvatar,
+                        compact: compact,
+                        hideTimestamp: hideTimestamp,
+                        showMessageStatus: _showMessageStatus,
+                        resolveQuote: widget.resolveMessage,
+                        onQuoteTap:
+                            message.isReply
+                                ? () =>
+                                    _scrollToMessage(message.replyToMessageId!)
+                                : null,
+                        highlighted:
+                            _highlightMessageId != null &&
+                            (message.id == _highlightMessageId ||
+                                message.id.startsWith(
+                                  '${_highlightMessageId}_',
+                                )),
+                        resolveUserName: widget.resolveUserName,
+                        onReactionTap:
+                            widget.onReact == null
+                                ? null
+                                : (reaction) => _applyReaction(
+                                  message,
+                                  reaction.emojiId,
+                                  remove: reaction.reactedByMe,
+                                ),
+                      ),
                 );
               },
             );
