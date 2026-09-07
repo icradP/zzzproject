@@ -29,18 +29,21 @@ class ImDynamicSchemaValidator {
     this.maxDepth = 10,
     this.maxChildren = 50,
     this.maxTextLength = 10000,
+    this.maxImages = 20,
   });
 
   final int maxNodes;
   final int maxDepth;
   final int maxChildren;
   final int maxTextLength;
+  final int maxImages;
 
   ImDynamicValidationResult validate(ImDynamicContent content) {
     final errors = <ImDynamicValidationIssue>[];
     final warnings = <ImDynamicValidationIssue>[];
     final ids = <String>{};
     var nodeCount = 0;
+    var imageCount = 0;
 
     void visit(ImDynamicNode node, int depth, String path) {
       nodeCount++;
@@ -81,6 +84,17 @@ class ImDynamicSchemaValidator {
             message: 'unknown component ${node.type}',
           ),
         );
+      }
+      if (node.type == 'image') {
+        imageCount++;
+        if (imageCount > maxImages) {
+          errors.add(
+            ImDynamicValidationIssue(
+              path: path,
+              message: 'image limit exceeded',
+            ),
+          );
+        }
       }
       if (node.children.length > maxChildren) {
         errors.add(

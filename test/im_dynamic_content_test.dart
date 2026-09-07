@@ -102,6 +102,165 @@ void main() {
         result.warnings.any((issue) => issue.message.contains('unknown')),
         isTrue,
       );
+
+      final imageHeavy = ImDynamicContent(
+        id: 'too-many-images',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'column',
+          children: List.generate(
+            2,
+            (index) => ImDynamicNode(
+              id: 'image-$index',
+              type: 'image',
+              props: {'url': 'https://example.test/$index.png'},
+            ),
+          ),
+        ),
+      );
+      final imageResult = const ImDynamicSchemaValidator(
+        maxImages: 1,
+      ).validate(imageHeavy);
+      expect(
+        imageResult.errors.any(
+          (issue) => issue.message.contains('image limit'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('node-id patches update, create, replace, and remove atomically', () {
+    const content = ImDynamicContent(
+      id: 'patchable',
+      version: '1.0',
+      source: ImDynamicContentSource.system,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'column',
+        children: [
+          ImDynamicNode(
+            id: 'progress',
+            type: 'progress',
+            props: {'value': 0.2, 'text': '20%'},
+          ),
+        ],
+      ),
+    );
+    const applier = ImDynamicPatchApplier();
+    final updated = applier.apply(
+      content,
+      const ImDynamicPatchSet(
+        messageId: 'message-1',
+        contentId: 'patchable',
+        patches: [
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.update,
+            nodeId: 'progress',
+            props: {'value': 0.8, 'text': '80%'},
+          ),
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.create,
+            nodeId: 'status',
+            parentNodeId: 'root',
+            node: ImDynamicNode(
+              id: 'status',
+              type: 'status',
+              props: {'text': 'Ready'},
+            ),
+          ),
+        ],
+      ),
+    );
+    expect(updated.tree.findById('progress')?.props['value'], 0.8);
+    expect(updated.tree.findById('status')?.props['text'], 'Ready');
+
+    final replaced = applier.apply(
+      updated,
+      const ImDynamicPatchSet(
+        messageId: 'message-1',
+        contentId: 'patchable',
+        patches: [
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.replace,
+            nodeId: 'status',
+            node: ImDynamicNode(
+              id: 'status',
+              type: 'badge',
+              props: {'text': 'Done'},
+            ),
+          ),
+        ],
+      ),
+    );
+    expect(replaced.tree.findById('status')?.type, 'badge');
+    final removed = applier.apply(
+      replaced,
+      const ImDynamicPatchSet(
+        messageId: 'message-1',
+        contentId: 'patchable',
+        patches: [
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.remove,
+            nodeId: 'status',
+          ),
+        ],
+      ),
+    );
+    expect(removed.tree.findById('status'), isNull);
+    expect(
+      () => applier.apply(
+        content,
+        const ImDynamicPatchSet(
+          messageId: 'message-1',
+          contentId: 'other',
+          patches: [],
+        ),
+      ),
+      throwsA(isA<ImDynamicPatchException>()),
+    );
+  });
+
+  test(
+    'runtime keeps lifecycle state separate and notifies on patch updates',
+    () {
+      const content = ImDynamicContent(
+        id: 'runtime-1',
+        version: '1.0',
+        source: ImDynamicContentSource.ai,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'text',
+          props: {'text': 'Working'},
+        ),
+      );
+      final runtime = ImDynamicRuntime(content: content);
+      var notifications = 0;
+      runtime.addListener(() => notifications++);
+      runtime.updateState(
+        lifecycle: ImDynamicLifecycle.processing,
+        values: {'progress': 0.4},
+      );
+      runtime.apply(
+        const ImDynamicPatchSet(
+          messageId: 'message-1',
+          contentId: 'runtime-1',
+          patches: [
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: 'root',
+              props: {'text': 'Done'},
+            ),
+          ],
+        ),
+      );
+      expect(runtime.state.lifecycle, ImDynamicLifecycle.processing);
+      expect(runtime.state.values['progress'], 0.4);
+      expect(runtime.content.tree.props['text'], 'Done');
+      expect(notifications, 2);
+      runtime.dispose();
     },
   );
 
@@ -173,4 +332,282 @@ void main() {
       expect(event?.action, 'run_plan');
     },
   );
+
+  testWidgets('dynamic content preserves sibling text in the same bubble', (
+    tester,
+  ) async {
+    final message = ImMessage(
+      id: 'message-2',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: 'Summary',
+      sentAt: DateTime(2026),
+      segments: [
+        OneBotMessageSegment(type: 'text', data: {'text': 'Summary'}),
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: {
+            'id': 'content-2',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'root',
+              'type': 'status',
+              'props': {'text': 'Ready'},
+            },
+          },
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImMessageBubble(
+            message: message,
+            senderName: 'Fairy',
+            avatar: MemoryImage(
+              base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+            ),
+            showSenderName: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Summary'), findsOneWidget);
+    expect(find.text('Ready'), findsOneWidget);
+  });
+
+  testWidgets(
+    'standard layout, input, select, and progress components emit events',
+    (tester) async {
+      final events = <ImDynamicEvent>[];
+      const content = ImDynamicContent(
+        id: 'form-1',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'column',
+          children: [
+            ImDynamicNode(
+              id: 'markdown',
+              type: 'markdown',
+              props: {'content': 'Formatted summary'},
+            ),
+            ImDynamicNode(
+              id: 'row',
+              type: 'row',
+              children: [
+                ImDynamicNode(
+                  id: 'row-text',
+                  type: 'text',
+                  props: {'text': 'Row item'},
+                ),
+              ],
+            ),
+            ImDynamicNode(
+              id: 'reason',
+              type: 'input',
+              props: {'label': 'Reason'},
+              events: {
+                'submit': {'action': 'submit_reason'},
+              },
+            ),
+            ImDynamicNode(
+              id: 'choice',
+              type: 'select',
+              props: {
+                'label': 'Choice',
+                'value': 'One',
+                'options': ['One', 'Two'],
+              },
+              events: {
+                'change': {'action': 'change_choice'},
+              },
+            ),
+            ImDynamicNode(
+              id: 'progress',
+              type: 'progress',
+              props: {'value': 0.4, 'text': '40%'},
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ImDynamicContentView(
+              content: content,
+              messageId: 'message-form',
+              onEvent: events.add,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Formatted summary'), findsOneWidget);
+      expect(find.text('Row item'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'Need more detail');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(events.single.nodeId, 'reason');
+      expect(events.single.action, 'submit_reason');
+      expect(events.single.payload['value'], 'Need more detail');
+
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Two').last);
+      await tester.pumpAndSettle();
+      expect(events.last.nodeId, 'choice');
+      expect(events.last.action, 'change_choice');
+      expect(events.last.payload['value'], 'Two');
+    },
+  );
+
+  testWidgets('closed dynamic content disables interactive components', (
+    tester,
+  ) async {
+    const content = ImDynamicContent(
+      id: 'closed-1',
+      version: '1.0',
+      source: ImDynamicContentSource.system,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'column',
+        children: [
+          ImDynamicNode(
+            id: 'input',
+            type: 'input',
+            events: {
+              'submit': {'action': 'submit'},
+            },
+          ),
+          ImDynamicNode(
+            id: 'checkbox',
+            type: 'checkbox',
+            props: {'text': 'Confirm'},
+            events: {
+              'change': {'action': 'confirm'},
+            },
+          ),
+          ImDynamicNode(
+            id: 'select',
+            type: 'select',
+            props: {
+              'options': ['One'],
+            },
+            events: {
+              'change': {'action': 'select'},
+            },
+          ),
+          ImDynamicNode(
+            id: 'button',
+            type: 'button',
+            props: {'text': 'Run'},
+            events: {
+              'click': {'action': 'run'},
+            },
+          ),
+        ],
+      ),
+    );
+    final runtime = ImDynamicRuntime(
+      content: content,
+      state: const ImDynamicState(lifecycle: ImDynamicLifecycle.closed),
+    );
+    addTearDown(runtime.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImDynamicContentView(content: content, runtime: runtime),
+        ),
+      ),
+    );
+
+    expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).onChanged,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<DropdownButtonFormField<String>>(
+            find.byType(DropdownButtonFormField<String>),
+          )
+          .onChanged,
+      isNull,
+    );
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('multiple dynamic contents render their own trees', (
+    tester,
+  ) async {
+    final message = ImMessage(
+      id: 'message-multiple',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: 'Between',
+      sentAt: DateTime(2026),
+      segments: [
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: {
+            'id': 'first-content',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'first-root',
+              'type': 'text',
+              'props': {'text': 'First dynamic'},
+            },
+          },
+        ),
+        OneBotMessageSegment(type: 'text', data: {'text': 'Between'}),
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: {
+            'id': 'second-content',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'second-root',
+              'type': 'text',
+              'props': {'text': 'Second dynamic'},
+            },
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImMessageBubble(
+            message: message,
+            senderName: 'Fairy',
+            avatar: MemoryImage(
+              base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+            ),
+            showSenderName: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('First dynamic'), findsOneWidget);
+    expect(find.text('Between'), findsOneWidget);
+    expect(find.text('Second dynamic'), findsOneWidget);
+  });
 }

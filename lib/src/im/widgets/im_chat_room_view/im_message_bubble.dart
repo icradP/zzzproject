@@ -290,12 +290,7 @@ class ImMessageBubble extends StatelessWidget {
         );
       }
       if (dynamicContent != null) {
-        return ImDynamicContentView(
-          messageId: message.id,
-          content: dynamicContent,
-          registry: dynamicContentRegistry,
-          onEvent: onDynamicEvent,
-        );
+        return _buildDynamicContentWithCompanions(context);
       }
       if (sticker != null) {
         return Semantics(
@@ -690,6 +685,113 @@ class ImMessageBubble extends StatelessWidget {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Unable to open this attachment.')),
+    );
+  }
+
+  Widget _buildDynamicContentWithCompanions(BuildContext context) {
+    final children = <Widget>[];
+    for (final segment in message.segments ?? const []) {
+      final data = segment.data;
+      switch (segment.type) {
+        case 'dynamic_content':
+          final content = ImDynamicContent.tryFromSegmentData(data);
+          if (content == null) break;
+          children.add(
+            ImDynamicContentView(
+              messageId: message.id,
+              content: content,
+              registry: dynamicContentRegistry,
+              onEvent: onDynamicEvent,
+            ),
+          );
+        case 'text':
+          final text = data['text']?.toString() ?? '';
+          if (text.trim().isNotEmpty) {
+            children.add(
+              Text(
+                text,
+                style: TextStyle(
+                  color: message.isMine ? Colors.white : Colors.black87,
+                  fontSize: 15,
+                  height: 1.35,
+                ),
+              ),
+            );
+          }
+        case 'image':
+          final location = data['url']?.toString() ?? data['file']?.toString();
+          if (location == null || location.trim().isEmpty) break;
+          children.add(
+            ImNsfwGuard(
+              messageId: '${message.id}-${children.length}',
+              mediaPath: location,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: 250,
+                    maxHeight: 400,
+                  ),
+                  child: platformImageWidget(
+                    location,
+                    fit: BoxFit.scaleDown,
+                    errorBuilder:
+                        (context, error, stack) => const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            ),
+          );
+        case 'file':
+        case 'video':
+          final location = data['url']?.toString() ?? data['file']?.toString();
+          final uri =
+              location == null || location.trim().isEmpty
+                  ? null
+                  : (Uri.tryParse(location)?.hasScheme == true
+                      ? Uri.tryParse(location)
+                      : Uri.file(location));
+          children.add(
+            ImFileCard(
+              fileName:
+                  data['name']?.toString() ??
+                  data['file']?.toString() ??
+                  (segment.type == 'video' ? 'Video' : 'File'),
+              fileSize: (data['size'] as num?)?.toInt(),
+              isMine: message.isMine,
+              isVideo: segment.type == 'video',
+              onOpen: uri == null ? null : () => _openMedia(context, uri),
+            ),
+          );
+        case 'share':
+          children.add(ImLinkBubble(message: message));
+        case 'location':
+          children.add(ImLocationBubble(message: message));
+        case 'reply':
+        case 'agent_route':
+          break;
+        default:
+          children.add(
+            Text(
+              '[${segment.type}]',
+              style: TextStyle(
+                color: message.isMine ? Colors.white : Colors.black87,
+                fontSize: 13,
+              ),
+            ),
+          );
+      }
+    }
+    if (children.length == 1) return children.single;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < children.length; index++) ...[
+          if (index > 0) const SizedBox(height: 8),
+          children[index],
+        ],
+      ],
     );
   }
 

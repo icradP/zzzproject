@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../models/im_dynamic_models.dart';
 import '../runtime/im_dynamic_registry.dart';
+import '../runtime/im_dynamic_runtime.dart';
 import '../runtime/im_dynamic_validator.dart';
 
 /// Safely renders a validated dynamic content tree.
 class ImDynamicContentView extends StatelessWidget {
   const ImDynamicContentView({
     required this.content,
+    this.runtime,
     this.messageId = '',
     this.registry,
     this.validator = const ImDynamicSchemaValidator(),
@@ -16,6 +18,7 @@ class ImDynamicContentView extends StatelessWidget {
   });
 
   final ImDynamicContent content;
+  final ImDynamicRuntime? runtime;
   final String messageId;
   final ImDynamicComponentRegistry? registry;
   final ImDynamicSchemaValidator validator;
@@ -23,6 +26,23 @@ class ImDynamicContentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final runtime = this.runtime;
+    if (runtime != null) {
+      return ListenableBuilder(
+        listenable: runtime,
+        builder:
+            (context, _) =>
+                _buildContent(context, runtime.content, runtime.state),
+      );
+    }
+    return _buildContent(context, content, const ImDynamicState());
+  }
+
+  Widget _buildContent(
+    BuildContext context,
+    ImDynamicContent content,
+    ImDynamicState state,
+  ) {
     final validation = validator.validate(content);
     if (!validation.isValid) {
       return _fallback(
@@ -38,11 +58,26 @@ class ImDynamicContentView extends StatelessWidget {
       messageId: messageId,
       contentId: content.id,
       onEvent: onEvent,
+      state: <String, dynamic>{
+        'lifecycle': state.lifecycle.name,
+        ...state.values,
+      },
       renderNode:
-          (buildContext, node) =>
-              _buildNode(buildContext, node, components, renderContext),
+          (buildContext, node) => _buildNode(
+            buildContext,
+            node,
+            components,
+            renderContext,
+            content.fallback,
+          ),
     );
-    return _buildNode(context, content.tree, components, renderContext);
+    return _buildNode(
+      context,
+      content.tree,
+      components,
+      renderContext,
+      content.fallback,
+    );
   }
 
   Widget _buildNode(
@@ -50,12 +85,13 @@ class ImDynamicContentView extends StatelessWidget {
     ImDynamicNode node,
     ImDynamicComponentRegistry registry,
     ImDynamicRenderContext renderContext,
+    ImDynamicFallback? fallback,
   ) {
     final renderer = registry.find(node.type);
     if (renderer == null) {
       return _fallback(
         context,
-        content.fallback,
+        fallback,
         'Unsupported component: ${node.type}',
       );
     }

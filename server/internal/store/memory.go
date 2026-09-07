@@ -252,6 +252,23 @@ func (s *MemoryStore) StoreMessageIdempotent(convID, senderID, senderNickname, c
 	return msg, false, nil
 }
 
+func (s *MemoryStore) UpdateMessageSegments(msgID string, segments []protocol.MessageSegment) (*Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, messages := range s.messages {
+		for _, message := range messages {
+			if message.ID != msgID {
+				continue
+			}
+			message.Segments = append([]protocol.MessageSegment(nil), segments...)
+			copy := *message
+			copy.Reactions = s.reactionCountsLocked(msgID)
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *MemoryStore) GetMessage(msgID string) (*Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

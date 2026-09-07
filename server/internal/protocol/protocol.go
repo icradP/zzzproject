@@ -71,6 +71,63 @@ func FaceSegment(faceID string) MessageSegment {
 	}
 }
 
+// DynamicContentSegment wraps a controlled JSON content tree. The server
+// validates the tree before persisting it; clients resolve the component type
+// through their local registry and never execute code from this payload.
+func DynamicContentSegment(schema map[string]interface{}) MessageSegment {
+	data := make(map[string]interface{}, len(schema))
+	for key, value := range schema {
+		if key == "type" {
+			continue
+		}
+		data[key] = value
+	}
+	return MessageSegment{Type: "dynamic_content", Data: data}
+}
+
+// DynamicPatch is the wire representation of a node-id patch.
+type DynamicPatch struct {
+	Operation    string                 `json:"operation"`
+	NodeID       string                 `json:"node_id"`
+	ParentNodeID string                 `json:"parent_node_id,omitempty"`
+	Index        *int                   `json:"index,omitempty"`
+	Props        map[string]interface{} `json:"props,omitempty"`
+	Node         map[string]interface{} `json:"node,omitempty"`
+}
+
+// DynamicUpdateSegment updates an existing dynamic_content segment in place.
+// It is intentionally a message segment so the same transport works for
+// realtime events and history replay, while the gateway keeps it out of the
+// message store as a new message.
+func DynamicUpdateSegment(messageID, contentID string, patches []DynamicPatch) MessageSegment {
+	return MessageSegment{
+		Type: "dynamic_update",
+		Data: map[string]interface{}{
+			"message_id": messageID,
+			"content_id": contentID,
+			"patches":    patches,
+		},
+	}
+}
+
+// DynamicEventSegment carries a UI event back through the normal message
+// transport when an application chooses to persist an interaction audit.
+func DynamicEventSegment(messageID, contentID, nodeID, event, action string, payload map[string]interface{}) MessageSegment {
+	data := map[string]interface{}{
+		"message_id": messageID,
+		"content_id": contentID,
+		"node_id":    nodeID,
+		"event":      event,
+	}
+	if action != "" {
+		data["action"] = action
+	}
+	if payload != nil {
+		data["payload"] = payload
+	}
+	return MessageSegment{Type: "dynamic_event", Data: data}
+}
+
 // TerminalRequestSegment asks an online ZZZ Term client to present a
 // short-lived, locally approved operation. It is transported as an IM message
 // so the requester and result remain visible in the conversation audit trail.

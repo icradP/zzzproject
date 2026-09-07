@@ -72,6 +72,8 @@ String oneBotSegmentsToDisplayText(
         buf.write(_parseJsonCard(seg.data['data'] as String?).text);
       case 'dynamic_content':
         buf.write('[动态内容]');
+      case 'dynamic_update':
+        break;
       case 'file':
         buf.write(seg.data['name'] ?? seg.data['file'] ?? '[文件]');
       default:
@@ -111,6 +113,8 @@ ImMessageKind oneBotSegmentToMessageKind(OneBotMessageSegment seg) {
     case 'json':
       return ImMessageKind.json;
     case 'dynamic_content':
+      return ImMessageKind.dynamicContent;
+    case 'dynamic_update':
       return ImMessageKind.dynamicContent;
     default:
       return ImMessageKind.text;

@@ -86,6 +86,48 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 
 `role` 可为 `user` 或 `assistant`。该标记只用于历史归属和防止服务端 Fairy 重复处理，不是服务端命令路由；消息仍按普通 IM 消息保存和投递。
 
+### 2.1 Dynamic Content 气泡
+
+聊天消息可以包含一个受控的 `dynamic_content` 段。它不是新的消息系统，而是现有气泡中的一种内容：
+
+```json
+{
+  "type": "dynamic_content",
+  "data": {
+    "id": "diagnosis-1",
+    "version": "1.0",
+    "source": "ai",
+    "tree": {
+      "id": "root",
+      "type": "column",
+      "children": [
+        {"id": "state", "type": "status", "props": {"text": "检测中"}},
+        {"id": "retry", "type": "button", "props": {"text": "重新检测"}, "events": {"click": {"action": "retry"}}}
+      ]
+    }
+  }
+}
+```
+
+`tree` 只能描述 JSON/DSL 组件，客户端通过本地 Component Registry 渲染；服务端和客户端都会限制节点数、树深、文本长度、事件类型及图片 URL（仅 HTTPS）。任何未知组件都会降级显示，不执行 Dart、Flutter 或脚本代码。
+
+动态内容的局部变化使用 `dynamic_update` 段。它通过稳定的 `message_id`、`content_id` 和节点 ID patch 更新原消息，不会新增历史消息：
+
+```json
+{
+  "type": "dynamic_update",
+  "data": {
+    "message_id": "msg_123",
+    "content_id": "diagnosis-1",
+    "patches": [
+      {"operation": "update", "node_id": "state", "props": {"text": "完成"}}
+    ]
+  }
+}
+```
+
+服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，业务层决定是否将其作为审计消息保存。
+
 ## 3. `terminal_request` 请求段
 
 Fairy 当前支持三种操作：

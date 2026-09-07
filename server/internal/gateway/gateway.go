@@ -1050,6 +1050,36 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			return
 		}
 	}
+	var dynamicUpdate *protocol.MessageSegment
+	for index := range segments {
+		segment := segments[index]
+		switch segment.Type {
+		case "dynamic_content":
+			if err := validateDynamicContentSegment(segment); err != nil {
+				g.sendError(client, req.Echo, err.Error())
+				return
+			}
+		case "dynamic_update":
+			if dynamicUpdate != nil || len(segments) != 1 {
+				g.sendError(client, req.Echo, "dynamic_update must be the only message segment")
+				return
+			}
+			if err := validateDynamicUpdateSegment(segment); err != nil {
+				g.sendError(client, req.Echo, err.Error())
+				return
+			}
+			dynamicUpdate = &segments[index]
+		case "dynamic_event":
+			if err := validateDynamicEventSegment(segment); err != nil {
+				g.sendError(client, req.Echo, err.Error())
+				return
+			}
+		}
+	}
+	if dynamicUpdate != nil {
+		g.handleDynamicUpdate(client, req, convID, convType, *dynamicUpdate)
+		return
+	}
 	replyCount := 0
 	for _, segment := range segments {
 		if err := validateImageSegmentURL(segment); err != nil {
@@ -1166,6 +1196,73 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	g.pushToConversation(convID, msg, client.userID, false)
 
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
+}
+
+func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, conversationID, conversationType string, segment protocol.MessageSegment) {
+	messageID, _, _, err := parseDynamicUpdateData(segment.Data)
+	if err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
+	}
+	target, err := g.store.GetMessage(messageID)
+	if err != nil || target == nil {
+		g.sendError(client, req.Echo, "dynamic update target message not found")
+		return
+	}
+	if target.ConversationID != conversationID {
+		g.sendError(client, req.Echo, "dynamic update target belongs to another conversation")
+		return
+	}
+	if target.Recalled {
+		g.sendError(client, req.Echo, "cannot update a recalled message")
+		return
+	}
+	updatedSegments, _, err := applyDynamicUpdateToSegments(target.Segments, segment.Data)
+	if err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
+	}
+	updated, err := g.store.UpdateMessageSegments(target.ID, updatedSegments)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to update dynamic content")
+		return
+	}
+	if updated == nil {
+		g.sendError(client, req.Echo, "dynamic update target message not found")
+		return
+	}
+	g.sendJSON(client, protocol.Response{
+		Status:  "ok",
+		RetCode: 0,
+		Data: map[string]interface{}{
+			"message_id":   updated.ID,
+			"updated":      true,
+			"timestamp_ms": updated.Timestamp.UnixMilli(),
+		},
+		Echo: req.Echo,
+	})
+
+	user, _ := g.store.GetUser(client.userID)
+	nickname := client.userID
+	avatar := ""
+	if user != nil {
+		nickname = user.Nickname
+		avatar = user.Avatar
+	}
+	// An update is an event about the existing message, not a new message. It
+	// is sent to every device in the conversation, including the sender, so a
+	// second ZZZTerm device converges without creating a duplicate bubble.
+	g.broadcastToConversation(conversationID, protocol.MessageEvent{
+		PostType:       "message",
+		MessageType:    conversationType,
+		MessageID:      updated.ID,
+		ConversationID: conversationID,
+		Sender:         protocol.Sender{UserID: client.userID, Nickname: nickname, Avatar: avatar},
+		Message:        []protocol.MessageSegment{segment},
+		Reactions:      updated.Reactions,
+		Timestamp:      updated.Timestamp.Unix(),
+		TimestampMS:    updated.Timestamp.UnixMilli(),
+	}, "")
 }
 
 func validClientMessageID(value string) bool {
@@ -3468,6 +3565,10 @@ func pushBody(segments []protocol.MessageSegment) string {
 			text.WriteString("[Terminal approval request]")
 		case "terminal_result":
 			text.WriteString("[Terminal operation result]")
+		case "dynamic_content":
+			text.WriteString("[Interactive content]")
+		case "dynamic_event", "dynamic_update":
+			// UI events and in-place updates are not new notifications.
 		}
 	}
 	result := strings.TrimSpace(text.String())

@@ -667,6 +667,28 @@ func (s *PostgresStore) StoreMessageIdempotent(convID, senderID, senderNickname,
 	return msg, false, nil
 }
 
+func (s *PostgresStore) UpdateMessageSegments(msgID string, segments []protocol.MessageSegment) (*Message, error) {
+	segmentsJSON, err := json.Marshal(segments)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.db.Exec(
+		"UPDATE messages SET segments = $1 WHERE id = $2",
+		string(segmentsJSON), msgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if updated == 0 {
+		return nil, nil
+	}
+	return s.GetMessage(msgID)
+}
+
 func (s *PostgresStore) idempotentMessage(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
 	var messageID string
 	var existingFingerprint string

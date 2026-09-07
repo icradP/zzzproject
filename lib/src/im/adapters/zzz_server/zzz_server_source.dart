@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:onebot_flutter/onebot_flutter.dart' show oneBotChainFromJson;
+import 'package:onebot_flutter/onebot_flutter.dart'
+    show OneBotMessageSegment, oneBotChainFromJson;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../models/im_models.dart';
 import '../../models/im_source_address.dart';
+import '../../dynamic/im_dynamic.dart';
 import '../../data/im_image_hosting_uploader.dart';
 import '../../data/im_profile_background.dart';
 import '../im_message_source.dart';
@@ -1492,14 +1494,23 @@ class ZzzServerSource implements ImMessageSource {
       for (final message in _messages[conversationId] ?? const <ImMessage>[])
         message.id: message,
     };
+    final updates = <Map<String, dynamic>>[];
     for (final raw in data) {
       if (raw is! Map) continue;
-      final message = _parseMessage(Map<String, dynamic>.from(raw));
+      final rawJson = Map<String, dynamic>.from(raw);
+      if (_dynamicUpdateData(rawJson) != null) {
+        updates.add(rawJson);
+        continue;
+      }
+      final message = _parseMessage(rawJson);
       if (message != null) merged[message.id] = message;
     }
     final sorted =
         merged.values.toList()..sort(_compareMessagesChronologically);
     _messages[conversationId] = sorted;
+    for (final update in updates) {
+      _applyDynamicUpdate(update, emit: false);
+    }
     _emitMessages(conversationId);
   }
 
@@ -1592,6 +1603,10 @@ class ZzzServerSource implements ImMessageSource {
   void _handleEvent(Map<String, dynamic> json) {
     switch (json['post_type']) {
       case 'message':
+        if (_dynamicUpdateData(json) != null) {
+          _applyDynamicUpdate(json);
+          break;
+        }
         final message = _parseMessage(json);
         if (message != null) _addMessageToStream(message);
         final terminalRequest = _parseTerminalRequest(json);
@@ -1606,6 +1621,62 @@ class ZzzServerSource implements ImMessageSource {
         _handleRequestEvent(json);
         break;
     }
+  }
+
+  Map<String, dynamic>? _dynamicUpdateData(Map<String, dynamic> json) {
+    final segments = json['message'];
+    if (segments is! List) return null;
+    for (final raw in segments.whereType<Map>()) {
+      if (raw['type'] != 'dynamic_update' || raw['data'] is! Map) continue;
+      return Map<String, dynamic>.from(raw['data'] as Map);
+    }
+    return null;
+  }
+
+  bool _applyDynamicUpdate(Map<String, dynamic> json, {bool emit = true}) {
+    final data = _dynamicUpdateData(json);
+    if (data == null) return false;
+    final update = ImDynamicPatchSet.tryFromSegmentData(data);
+    if (update == null || update.messageId.isEmpty) return true;
+    final conversationId =
+        '${json['conversation_id'] ?? data['conversation_id'] ?? ''}';
+    if (conversationId.isEmpty) return true;
+    final messages = _messages[conversationId];
+    if (messages == null) return true;
+    final messageIndex = messages.indexWhere(
+      (message) => message.id == update.messageId,
+    );
+    if (messageIndex < 0) return true;
+    final message = messages[messageIndex];
+    final segments = message.segments;
+    if (segments == null) return true;
+    var dynamicIndex = -1;
+    ImDynamicContent? content;
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      if (segment.type != 'dynamic_content') continue;
+      final candidate = ImDynamicContent.tryFromSegmentData(segment.data);
+      if (candidate?.id != update.contentId) continue;
+      dynamicIndex = index;
+      content = candidate;
+      break;
+    }
+    if (dynamicIndex < 0 || content == null) return true;
+    try {
+      final patched = const ImDynamicPatchApplier().apply(content, update);
+      final updatedSegments = List<OneBotMessageSegment>.from(segments);
+      final segmentData = Map<String, dynamic>.from(patched.toJson())
+        ..remove('type');
+      updatedSegments[dynamicIndex] = OneBotMessageSegment(
+        type: 'dynamic_content',
+        data: segmentData,
+      );
+      messages[messageIndex] = message.copyWith(segments: updatedSegments);
+      if (emit) _emitMessages(conversationId);
+    } on ImDynamicPatchException {
+      // Ignore a stale or invalid update; the original message remains usable.
+    }
+    return true;
   }
 
   ZzzTerminalRequest? _parseTerminalRequest(Map<String, dynamic> json) {
@@ -1700,6 +1771,28 @@ class ZzzServerSource implements ImMessageSource {
       },
     },
   ], clientMessageId: 'zzzterm-$requestId-result');
+
+  /// Applies a node-id patch to an existing dynamic content message. The
+  /// server persists the resulting segments and broadcasts only the patch, so
+  /// every client keeps the same message bubble and history entry.
+  Future<ImMessage> sendDynamicUpdate({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required List<ImDynamicPatch> patches,
+    String? clientMessageId,
+  }) {
+    final update =
+        ImDynamicPatchSet(
+            messageId: messageId,
+            contentId: contentId,
+            patches: patches,
+          ).toJson()
+          ..remove('type');
+    return _sendMessage(conversationId, [
+      {'type': 'dynamic_update', 'data': update},
+    ], clientMessageId: clientMessageId);
+  }
 
   /// Sends a local-Agent message that is persisted and visible to other IM
   /// clients, while preventing the server-side Fairy from treating it as a
@@ -2184,6 +2277,8 @@ class ZzzServerSource implements ImMessageSource {
       'terminal_request' => '[终端授权请求]',
       'terminal_result' => '[终端执行结果]',
       'dynamic_content' => '[动态内容]',
+      'dynamic_update' => '',
+      'dynamic_event' => '',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',
@@ -2203,6 +2298,7 @@ class ZzzServerSource implements ImMessageSource {
     'system' => ImMessageKind.system,
     'json' => ImMessageKind.json,
     'dynamic_content' => ImMessageKind.dynamicContent,
+    'dynamic_update' => ImMessageKind.dynamicContent,
     _ => ImMessageKind.text,
   };
 
@@ -2294,6 +2390,33 @@ class ZzzServerSource implements ImMessageSource {
     final responseData = Map<String, dynamic>.from(
       response['data'] as Map? ?? const {},
     );
+    final dynamicUpdate = _dynamicUpdateData({'message': segments});
+    if (dynamicUpdate != null) {
+      // The server persists the target message and broadcasts only the patch.
+      // Apply it locally too, so the initiating device never creates a new
+      // bubble for an in-place update.
+      _applyDynamicUpdate({
+        'conversation_id': conversationId,
+        'message': segments,
+      });
+      final targetId = '${dynamicUpdate['message_id'] ?? ''}';
+      final existing =
+          _messages[conversationId]
+              ?.where((message) => message.id == targetId)
+              .firstOrNull;
+      if (existing != null) return existing;
+      return ImMessage(
+        id: targetId.isEmpty ? '${responseData['message_id'] ?? ''}' : targetId,
+        conversationId: conversationId,
+        senderId: _selfId,
+        text: _segmentDisplayText(segments.first),
+        sentAt: _timestampFromJson(responseData) ?? DateTime.now(),
+        kind: ImMessageKind.dynamicContent,
+        status: ImMessageStatus.sent,
+        isMine: true,
+        segments: oneBotChainFromJson(segments),
+      );
+    }
     final first = segments.firstWhere(
       (segment) => segment['type'] != 'reply',
       orElse: () => segments.first,

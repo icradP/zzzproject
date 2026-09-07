@@ -57,6 +57,55 @@ func TestMessageIdempotencyStores(t *testing.T) {
 	}
 }
 
+func TestDynamicContentUpdatePersistsWithoutCreatingMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(*testing.T) Store
+	}{
+		{name: "memory", open: func(*testing.T) Store { return NewMemoryStore() }},
+		{name: "sqlite", open: func(t *testing.T) Store {
+			database, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dynamic.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return database
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			database := test.open(t)
+			t.Cleanup(func() { _ = database.Close() })
+			conversationID := "private_alice_bob"
+			if err := database.SaveConversation(&Conversation{ID: conversationID, Type: "private", Title: "Dynamic", Participants: []string{"alice", "bob"}}); err != nil {
+				t.Fatal(err)
+			}
+			original := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "status", "props": map[string]interface{}{"text": "Running"}},
+			})}
+			message, err := database.StoreMessage(conversationID, "alice", "Alice", original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updatedSegments := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "status", "props": map[string]interface{}{"text": "Complete"}},
+			})}
+			updated, err := database.UpdateMessageSegments(message.ID, updatedSegments)
+			if err != nil || updated == nil {
+				t.Fatalf("update message = %#v, err=%v", updated, err)
+			}
+			history, err := database.GetMessages(conversationID, 100)
+			if err != nil || len(history) != 1 {
+				t.Fatalf("history after update = %d, err=%v", len(history), err)
+			}
+			if got := history[0].Segments[0].Data["tree"].(map[string]interface{})["props"].(map[string]interface{})["text"]; got != "Complete" {
+				t.Fatalf("updated text = %#v", got)
+			}
+		})
+	}
+}
+
 func TestPostgresMessageIdempotency(t *testing.T) {
 	dsn := os.Getenv("ZZZ_TEST_POSTGRES_DSN")
 	if dsn == "" {

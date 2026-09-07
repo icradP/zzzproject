@@ -58,6 +58,7 @@ type Store interface {
 	// ---- Message operations ----
 	StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error)
 	StoreMessageIdempotent(convID, senderID, senderNickname, clientMessageID string, segments []protocol.MessageSegment) (*Message, bool, error)
+	UpdateMessageSegments(msgID string, segments []protocol.MessageSegment) (*Message, error)
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
 	GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error)

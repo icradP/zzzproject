@@ -294,7 +294,10 @@ class _ButtonRenderer extends ImDynamicComponentRenderer {
         'Action';
     return FilledButton(
       onPressed:
-          node.events.containsKey('click') || node.events.containsKey('tap')
+          _isClosed(renderContext)
+              ? null
+              : node.events.containsKey('click') ||
+                  node.events.containsKey('tap')
               ? () => renderContext.emit(
                 node,
                 node.events.containsKey('click') ? 'click' : 'tap',
@@ -446,6 +449,7 @@ class _DynamicInputState extends State<_DynamicInput> {
   Widget build(BuildContext context) {
     return TextField(
       controller: _controller,
+      enabled: !_isClosed(widget.renderContext),
       obscureText: widget.node.props['obscure'] == true,
       maxLines: widget.node.props['multiline'] == true ? 4 : 1,
       decoration: InputDecoration(
@@ -480,14 +484,17 @@ class _DynamicCheckboxState extends State<_DynamicCheckbox> {
       dense: true,
       value: _value,
       title: Text(widget.node.props['text']?.toString() ?? ''),
-      onChanged: (value) {
-        setState(() => _value = value ?? false);
-        widget.renderContext.emit(
-          widget.node,
-          'change',
-          payload: {'value': _value},
-        );
-      },
+      onChanged:
+          _isClosed(widget.renderContext)
+              ? null
+              : (value) {
+                setState(() => _value = value ?? false);
+                widget.renderContext.emit(
+                  widget.node,
+                  'change',
+                  payload: {'value': _value},
+                );
+              },
     );
   }
 }
@@ -524,15 +531,18 @@ class _DynamicSelectState extends State<_DynamicSelect> {
                     DropdownMenuItem(value: option, child: Text(option)),
               )
               .toList(),
-      onChanged: (value) {
-        if (value == null) return;
-        setState(() => _value = value);
-        widget.renderContext.emit(
-          widget.node,
-          'change',
-          payload: {'value': value},
-        );
-      },
+      onChanged:
+          _isClosed(widget.renderContext)
+              ? null
+              : (value) {
+                if (value == null) return;
+                setState(() => _value = value);
+                widget.renderContext.emit(
+                  widget.node,
+                  'change',
+                  payload: {'value': value},
+                );
+              },
     );
   }
 }
@@ -563,6 +573,9 @@ double _number(Object? value, double fallback) =>
     value is num ? value.toDouble().clamp(0, 1000) : fallback;
 double? _optionalNumber(Object? value) =>
     value is num ? value.toDouble().clamp(0, 2000) : null;
+
+bool _isClosed(ImDynamicRenderContext context) =>
+    context.state['lifecycle'] == ImDynamicLifecycle.closed.name;
 
 const _icons = <String, IconData>{
   'check': Icons.check,
