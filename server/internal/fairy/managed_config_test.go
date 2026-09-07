@@ -757,9 +757,10 @@ func TestManagedConfigAIRolloutAllowlistPersistsAndRequiresRestart(t *testing.T)
 func TestManagedConfigVersionTenRejectsContradictoryAIRolloutState(t *testing.T) {
 	cfg := modelRouterTestConfig(t, "https://model.example.test/v1", 0)
 	cfg.ConfigFile = filepath.Join(t.TempDir(), "managed-v10.json")
+	nowMS := time.Now().UnixMilli()
 	stored := managedConfigFile{
-		Version: 10, Revision: 1, UpdatedAtMS: time.Now().UnixMilli(),
-		Audit:     []managedConfigAuditEntry{{Revision: 1, UpdatedAtMS: time.Now().UnixMilli(), Sections: []string{"ai_rollout"}}},
+		Version: 10, Revision: 1, UpdatedAtMS: nowMS,
+		Audit:     []managedConfigAuditEntry{{Revision: 1, UpdatedAtMS: nowMS, Sections: []string{"ai_rollout"}}},
 		Providers: storedProviders(cfg.ModelProviders), Models: managedModelDefinitions(cfg.ModelDefinitions),
 		Tasks: managedModelTasks(cfg.ModelTasks), AIEnabled: false, AIRolloutMode: string(AIRolloutAll),
 		ModelDailyLimit: cfg.ModelDailyLimit, ModelMaxTokens: cfg.ModelMaxTokens,
