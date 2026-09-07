@@ -126,6 +126,18 @@ func (s *SQLiteStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp);
 	CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 
+	CREATE TABLE IF NOT EXISTS dynamic_update_idempotency (
+		sender_id TEXT NOT NULL,
+		client_message_id TEXT NOT NULL,
+		request_fingerprint TEXT NOT NULL,
+		message_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (sender_id, client_message_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_dynamic_update_idempotency_message
+		ON dynamic_update_idempotency(message_id);
+
 	CREATE TABLE IF NOT EXISTS message_reactions (
 		message_id TEXT NOT NULL,
 		emoji_id TEXT NOT NULL,
@@ -614,6 +626,9 @@ func (s *SQLiteStore) DeleteConversation(id string) error {
 	if _, err := s.db.Exec("DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)", id); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec("DELETE FROM dynamic_update_idempotency WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)", id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec("DELETE FROM messages WHERE conversation_id = ?", id)
 	if err != nil {
 		return err
@@ -698,6 +713,99 @@ func (s *SQLiteStore) UpdateMessageSegments(msgID string, segments []protocol.Me
 		return nil, nil
 	}
 	return s.GetMessage(msgID)
+}
+
+func (s *SQLiteStore) LookupDynamicUpdateIdempotency(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
+	if clientMessageID == "" {
+		return nil, false, nil
+	}
+	var messageID, existingFingerprint string
+	err := s.db.QueryRow(
+		"SELECT message_id, request_fingerprint FROM dynamic_update_idempotency WHERE sender_id = ? AND client_message_id = ?",
+		senderID, clientMessageID,
+	).Scan(&messageID, &existingFingerprint)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if existingFingerprint != fingerprint {
+		return nil, false, ErrDynamicUpdateIdempotencyConflict
+	}
+	message, err := s.GetMessage(messageID)
+	return message, true, err
+}
+
+func (s *SQLiteStore) StoreDynamicUpdateIdempotent(senderID, clientMessageID, fingerprint, msgID string, segments []protocol.MessageSegment) (*Message, bool, error) {
+	if clientMessageID == "" {
+		message, err := s.UpdateMessageSegments(msgID, segments)
+		return message, false, err
+	}
+	segmentsJSON, err := json.Marshal(segments)
+	if err != nil {
+		return nil, false, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	var existingMessageID, existingFingerprint string
+	err = tx.QueryRow(
+		"SELECT message_id, request_fingerprint FROM dynamic_update_idempotency WHERE sender_id = ? AND client_message_id = ?",
+		senderID, clientMessageID,
+	).Scan(&existingMessageID, &existingFingerprint)
+	if err == nil {
+		if existingFingerprint != fingerprint {
+			return nil, false, ErrDynamicUpdateIdempotencyConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, false, err
+		}
+		message, err := s.GetMessage(existingMessageID)
+		return message, true, err
+	}
+	if err != sql.ErrNoRows {
+		return nil, false, err
+	}
+	result, err := tx.Exec("UPDATE messages SET segments = ? WHERE id = ?", string(segmentsJSON), msgID)
+	if err != nil {
+		return nil, false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if updated == 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
+	result, err = tx.Exec(
+		`INSERT INTO dynamic_update_idempotency (sender_id, client_message_id, request_fingerprint, message_id)
+		 VALUES (?, ?, ?, ?) ON CONFLICT(sender_id, client_message_id) DO NOTHING`,
+		senderID, clientMessageID, fingerprint, msgID,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	if inserted == 0 {
+		if err := tx.Rollback(); err != nil {
+			return nil, false, err
+		}
+		return s.LookupDynamicUpdateIdempotency(senderID, clientMessageID, fingerprint)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	message, err := s.GetMessage(msgID)
+	return message, false, err
 }
 
 func (s *SQLiteStore) idempotentMessage(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
@@ -817,6 +925,9 @@ func (s *SQLiteStore) DeleteMessage(msgID string) (bool, error) {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec("DELETE FROM message_reactions WHERE message_id = ?", msgID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec("DELETE FROM dynamic_update_idempotency WHERE message_id = ?", msgID); err != nil {
 		return false, err
 	}
 	result, err := tx.Exec("DELETE FROM messages WHERE id = ?", msgID)

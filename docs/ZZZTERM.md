@@ -128,6 +128,16 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 
 服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，业务层决定是否将其作为审计消息保存。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
 
+需要支持网络重试的动态更新应额外携带 `client_message_id`（沿用发送者维度的 1-128 位客户端请求 ID）：
+
+```json
+{
+  "client_message_id": "zzzterm-update-<operation-id>"
+}
+```
+
+服务端会按“发送账号 + `client_message_id` + 更新请求指纹”做幂等处理。相同 ID 和相同 patch 的重试只返回原更新结果，不会再次应用 `create/remove` 或重复广播；相同 ID 对应不同 patch 会返回冲突错误。客户端重试时必须复用原 ID，新的独立更新必须生成新的 ID。
+
 ### 2.2 旧业务消息段兼容层
 
 客户端可以通过 `ImMessageContentAdapterRegistry` 将既有业务消息段映射为 `ImDynamicContent`，再交给同一套 Component Registry 和 Runtime 渲染。该转换只发生在显示层，不修改服务端保存的原消息段，也不改变旧客户端的协议行为。

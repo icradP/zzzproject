@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"fmt"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/icradp/zzz-im-server/internal/protocol"
@@ -212,6 +214,80 @@ func TestDynamicUpdateKeepsOneHistoryMessageAndBroadcastsPatch(t *testing.T) {
 	status := children[0].(map[string]interface{})["props"].(map[string]interface{})
 	if status["text"] != "Complete" {
 		t.Fatalf("history did not persist patch: %#v", status)
+	}
+}
+
+func TestDynamicUpdateClientIDIsIdempotentForCreatePatch(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+	first := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{validDynamicContentSegment()},
+	})
+	assertOK(t, first)
+	messageID := responseData(t, first)["message_id"].(string)
+	_ = readJSON(t, bob)
+	update := protocol.DynamicUpdateSegment(messageID, "diagnosis-1", []protocol.DynamicPatch{{
+		Operation:    "create",
+		NodeID:       "result",
+		ParentNodeID: "root",
+		Node:         map[string]interface{}{"id": "result", "type": "status"},
+	}})
+	params := map[string]interface{}{
+		"conversation_id":   conversationID,
+		"client_message_id": "dynamic-update-create-1",
+		"message":           []protocol.MessageSegment{update},
+	}
+	firstUpdate := request(t, alice, "send_message", params)
+	assertOK(t, firstUpdate)
+	if responseData(t, firstUpdate)["duplicate"] != false {
+		t.Fatalf("first update was marked duplicate: %#v", firstUpdate)
+	}
+	_ = readJSON(t, alice)
+	_ = readJSON(t, bob)
+
+	secondUpdate := request(t, alice, "send_message", params)
+	assertOK(t, secondUpdate)
+	if responseData(t, secondUpdate)["duplicate"] != true {
+		t.Fatalf("retry was not marked duplicate: %#v", secondUpdate)
+	}
+	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	if len(history) != 1 {
+		t.Fatalf("dynamic retry created %d history messages", len(history))
+	}
+	children := history[0].(map[string]interface{})["message"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})["tree"].(map[string]interface{})["children"].([]interface{})
+	if len(children) != 2 || children[1].(map[string]interface{})["id"] != "result" {
+		t.Fatalf("create patch was applied more than once: %#v", children)
+	}
+	if err := bob.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var unexpected map[string]interface{}
+	if err := bob.ReadJSON(&unexpected); err == nil {
+		t.Fatalf("duplicate update was broadcast: %#v", unexpected)
+	} else if networkError, ok := err.(net.Error); !ok || !networkError.Timeout() {
+		t.Fatalf("wait for duplicate update broadcast: %v", err)
 	}
 }
 

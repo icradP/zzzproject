@@ -1083,7 +1083,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		}
 	}
 	if dynamicUpdate != nil {
-		g.handleDynamicUpdate(client, req, convID, convType, *dynamicUpdate)
+		g.handleDynamicUpdate(client, req, convID, convType, clientMessageID, *dynamicUpdate)
 		return
 	}
 	if dynamicEvent != nil {
@@ -1208,11 +1208,47 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
 }
 
-func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, conversationID, conversationType string, segment protocol.MessageSegment) {
+func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, conversationID, conversationType, clientMessageID string, segment protocol.MessageSegment) {
 	messageID, _, _, err := parseDynamicUpdateData(segment.Data)
 	if err != nil {
 		g.sendError(client, req.Echo, err.Error())
 		return
+	}
+	fingerprint := ""
+	if clientMessageID != "" {
+		fingerprint, err = dynamicUpdateRequestFingerprint(conversationID, segment)
+		if err != nil {
+			g.sendError(client, req.Echo, "invalid dynamic update fingerprint")
+			return
+		}
+		cached, found, lookupErr := g.store.LookupDynamicUpdateIdempotency(client.userID, clientMessageID, fingerprint)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, store.ErrDynamicUpdateIdempotencyConflict) {
+				g.sendError(client, req.Echo, "client_message_id was already used for a different dynamic update")
+			} else {
+				g.sendError(client, req.Echo, "failed to check dynamic update idempotency")
+			}
+			return
+		}
+		if found {
+			if cached == nil {
+				g.sendError(client, req.Echo, "dynamic update target message not found")
+				return
+			}
+			g.sendJSON(client, protocol.Response{
+				Status:  "ok",
+				RetCode: 0,
+				Data: map[string]interface{}{
+					"message_id":        cached.ID,
+					"updated":           true,
+					"duplicate":         true,
+					"client_message_id": clientMessageID,
+					"timestamp_ms":      cached.Timestamp.UnixMilli(),
+				},
+				Echo: req.Echo,
+			})
+			return
+		}
 	}
 	target, err := g.store.GetMessage(messageID)
 	if err != nil || target == nil {
@@ -1232,8 +1268,12 @@ func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, con
 		g.sendError(client, req.Echo, err.Error())
 		return
 	}
-	updated, err := g.store.UpdateMessageSegments(target.ID, updatedSegments)
+	updated, duplicate, err := g.store.StoreDynamicUpdateIdempotent(client.userID, clientMessageID, fingerprint, target.ID, updatedSegments)
 	if err != nil {
+		if errors.Is(err, store.ErrDynamicUpdateIdempotencyConflict) {
+			g.sendError(client, req.Echo, "client_message_id was already used for a different dynamic update")
+			return
+		}
 		g.sendError(client, req.Echo, "failed to update dynamic content")
 		return
 	}
@@ -1245,12 +1285,17 @@ func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, con
 		Status:  "ok",
 		RetCode: 0,
 		Data: map[string]interface{}{
-			"message_id":   updated.ID,
-			"updated":      true,
-			"timestamp_ms": updated.Timestamp.UnixMilli(),
+			"message_id":        updated.ID,
+			"updated":           true,
+			"duplicate":         duplicate,
+			"client_message_id": clientMessageID,
+			"timestamp_ms":      updated.Timestamp.UnixMilli(),
 		},
 		Echo: req.Echo,
 	})
+	if duplicate {
+		return
+	}
 
 	user, _ := g.store.GetUser(client.userID)
 	nickname := client.userID
@@ -1339,6 +1384,18 @@ func validClientMessageID(value string) bool {
 		return false
 	}
 	return true
+}
+
+func dynamicUpdateRequestFingerprint(conversationID string, segment protocol.MessageSegment) (string, error) {
+	encoded, err := json.Marshal(struct {
+		ConversationID string                  `json:"conversation_id"`
+		Segment        protocol.MessageSegment `json:"segment"`
+	}{ConversationID: conversationID, Segment: segment})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func validateTerminalSegment(segment protocol.MessageSegment, conversationType string) error {

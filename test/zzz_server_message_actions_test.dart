@@ -435,6 +435,122 @@ void main() {
       expect(envelope.event.action, 'retry');
     },
   );
+
+  test(
+    'ZZZ server source reuses dynamic update client IDs for retries',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      final sendRequests = <Map<String, dynamic>>[];
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((raw) {
+          final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
+          final action = requestJson['action'];
+          if (action == 'send_message') sendRequests.add(requestJson);
+          final data = switch (action) {
+            'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+            'get_friends' => [
+              {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
+            ],
+            'get_conversations' => [
+              {
+                'conversation_id': 'private_me_bob',
+                'type': 'private',
+                'title': 'Bob',
+                'participants': ['me', 'bob'],
+                'unread_count': 0,
+                'last_timestamp': 200,
+              },
+            ],
+            'get_messages' => [
+              {
+                'message_id': 'message-1',
+                'conversation_id': 'private_me_bob',
+                'sender': {'user_id': 'bob', 'nickname': 'Bob'},
+                'message': [
+                  {
+                    'type': 'dynamic_content',
+                    'data': {
+                      'id': 'card-1',
+                      'version': '1.0',
+                      'source': 'ai',
+                      'tree': {
+                        'id': 'root',
+                        'type': 'column',
+                        'children': [
+                          {
+                            'id': 'status',
+                            'type': 'status',
+                            'props': {'text': 'Checking'},
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+                'timestamp_ms': 100,
+              },
+            ],
+            'send_message' => {'message_id': 'message-1', 'timestamp_ms': 200},
+            _ => <String, Object?>{},
+          };
+          socket.add(
+            jsonEncode({
+              'status': 'ok',
+              'retcode': 0,
+              'data': data,
+              'echo': requestJson['echo'],
+            }),
+          );
+        });
+      });
+
+      final source = ZzzServerSource(
+        config: ZzzServerConfig(
+          serverUrl: 'ws://127.0.0.1:${server.port}',
+          selfId: 'me',
+        ),
+        allowReconnect: false,
+      );
+      addTearDown(() async {
+        source.disconnect();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+      });
+
+      await source.connect();
+      await source.watchMessages('private_me_bob').first;
+      const patch = ImDynamicPatch(
+        operation: ImDynamicPatchOperation.update,
+        nodeId: 'status',
+        props: {'text': 'Complete'},
+      );
+      await source.sendDynamicUpdate(
+        conversationId: 'private_me_bob',
+        messageId: 'message-1',
+        contentId: 'card-1',
+        patches: [patch],
+        clientMessageId: 'zzzterm-update-1',
+      );
+      await source.sendDynamicUpdate(
+        conversationId: 'private_me_bob',
+        messageId: 'message-1',
+        contentId: 'card-1',
+        patches: [patch],
+        clientMessageId: 'zzzterm-update-1',
+      );
+      expect(sendRequests, hasLength(2));
+      for (final request in sendRequests) {
+        final params = request['params'] as Map<String, dynamic>;
+        expect(params['client_message_id'], 'zzzterm-update-1');
+        expect((params['message'] as List).single['type'], 'dynamic_update');
+      }
+    },
+  );
 }
 
 List<dynamic> _sentSegments(Map<String, dynamic> request) {

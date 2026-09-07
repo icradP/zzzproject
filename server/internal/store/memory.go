@@ -13,30 +13,31 @@ import (
 type MemoryStore struct {
 	mu sync.RWMutex
 
-	users               map[string]*User
-	sessions            map[string]*Session // SHA-256 token hash -> session
-	groups              map[string]*Group
-	conversations       map[string]*Conversation
-	preferences         map[string]map[string]*ConversationPreference // conversationID -> userID -> preference
-	groupAnnouncements  map[string][]*GroupAnnouncement               // groupID -> announcements
-	announcementReads   map[string]map[string]bool                    // announcementID -> userID -> read
-	messages            map[string][]*Message                         // conversationID -> messages
-	messageIdempotency  map[string]memoryMessageIdempotency           // senderID + clientMessageID -> request
-	messageReactions    map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
-	readStates          map[string]map[string]*ReadState              // conversationID -> userID -> cursor
-	friendRequests      map[string]*FriendRequest
-	friendships         map[string]map[string]time.Time
-	userTitles          map[string]*UserTitle
-	userBlocks          map[string]map[string]time.Time
-	userReports         []*UserReport
-	forwards            map[string]*ForwardMessage
-	mediaFiles          map[string]*MediaFile
-	pushSubscriptions   map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
-	terminalVaults      map[string]*TerminalVault
-	terminalSessions    map[string]*TerminalSession
-	msgCounter          int64
-	announcementCounter int64
-	friendReqCounter    int64
+	users                    map[string]*User
+	sessions                 map[string]*Session // SHA-256 token hash -> session
+	groups                   map[string]*Group
+	conversations            map[string]*Conversation
+	preferences              map[string]map[string]*ConversationPreference // conversationID -> userID -> preference
+	groupAnnouncements       map[string][]*GroupAnnouncement               // groupID -> announcements
+	announcementReads        map[string]map[string]bool                    // announcementID -> userID -> read
+	messages                 map[string][]*Message                         // conversationID -> messages
+	messageIdempotency       map[string]memoryMessageIdempotency           // senderID + clientMessageID -> request
+	dynamicUpdateIdempotency map[string]memoryDynamicUpdateIdempotency     // senderID + clientMessageID -> update request
+	messageReactions         map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
+	readStates               map[string]map[string]*ReadState              // conversationID -> userID -> cursor
+	friendRequests           map[string]*FriendRequest
+	friendships              map[string]map[string]time.Time
+	userTitles               map[string]*UserTitle
+	userBlocks               map[string]map[string]time.Time
+	userReports              []*UserReport
+	forwards                 map[string]*ForwardMessage
+	mediaFiles               map[string]*MediaFile
+	pushSubscriptions        map[string]map[string]*PushSubscription // userID -> endpoint -> subscription
+	terminalVaults           map[string]*TerminalVault
+	terminalSessions         map[string]*TerminalSession
+	msgCounter               int64
+	announcementCounter      int64
+	friendReqCounter         int64
 }
 
 type memoryMessageIdempotency struct {
@@ -44,29 +45,35 @@ type memoryMessageIdempotency struct {
 	message     *Message
 }
 
+type memoryDynamicUpdateIdempotency struct {
+	fingerprint string
+	messageID   string
+}
+
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:              make(map[string]*User),
-		sessions:           make(map[string]*Session),
-		groups:             make(map[string]*Group),
-		conversations:      make(map[string]*Conversation),
-		preferences:        make(map[string]map[string]*ConversationPreference),
-		groupAnnouncements: make(map[string][]*GroupAnnouncement),
-		announcementReads:  make(map[string]map[string]bool),
-		messages:           make(map[string][]*Message),
-		messageIdempotency: make(map[string]memoryMessageIdempotency),
-		messageReactions:   make(map[string]map[string]map[string]struct{}),
-		readStates:         make(map[string]map[string]*ReadState),
-		friendRequests:     make(map[string]*FriendRequest),
-		friendships:        make(map[string]map[string]time.Time),
-		userTitles:         make(map[string]*UserTitle),
-		userBlocks:         make(map[string]map[string]time.Time),
-		userReports:        make([]*UserReport, 0),
-		forwards:           make(map[string]*ForwardMessage),
-		mediaFiles:         make(map[string]*MediaFile),
-		pushSubscriptions:  make(map[string]map[string]*PushSubscription),
-		terminalVaults:     make(map[string]*TerminalVault),
-		terminalSessions:   make(map[string]*TerminalSession),
+		users:                    make(map[string]*User),
+		sessions:                 make(map[string]*Session),
+		groups:                   make(map[string]*Group),
+		conversations:            make(map[string]*Conversation),
+		preferences:              make(map[string]map[string]*ConversationPreference),
+		groupAnnouncements:       make(map[string][]*GroupAnnouncement),
+		announcementReads:        make(map[string]map[string]bool),
+		messages:                 make(map[string][]*Message),
+		messageIdempotency:       make(map[string]memoryMessageIdempotency),
+		dynamicUpdateIdempotency: make(map[string]memoryDynamicUpdateIdempotency),
+		messageReactions:         make(map[string]map[string]map[string]struct{}),
+		readStates:               make(map[string]map[string]*ReadState),
+		friendRequests:           make(map[string]*FriendRequest),
+		friendships:              make(map[string]map[string]time.Time),
+		userTitles:               make(map[string]*UserTitle),
+		userBlocks:               make(map[string]map[string]time.Time),
+		userReports:              make([]*UserReport, 0),
+		forwards:                 make(map[string]*ForwardMessage),
+		mediaFiles:               make(map[string]*MediaFile),
+		pushSubscriptions:        make(map[string]map[string]*PushSubscription),
+		terminalVaults:           make(map[string]*TerminalVault),
+		terminalSessions:         make(map[string]*TerminalSession),
 	}
 }
 
@@ -255,18 +262,83 @@ func (s *MemoryStore) StoreMessageIdempotent(convID, senderID, senderNickname, c
 func (s *MemoryStore) UpdateMessageSegments(msgID string, segments []protocol.MessageSegment) (*Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateMessageSegmentsLocked(msgID, segments)
+}
+
+func (s *MemoryStore) LookupDynamicUpdateIdempotency(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
+	if clientMessageID == "" {
+		return nil, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	record, ok := s.dynamicUpdateIdempotency[senderID+"\x00"+clientMessageID]
+	if !ok {
+		return nil, false, nil
+	}
+	if record.fingerprint != fingerprint {
+		return nil, false, ErrDynamicUpdateIdempotencyConflict
+	}
+	message := s.findMessageLocked(record.messageID)
+	if message == nil {
+		return nil, true, nil
+	}
+	copy := *message
+	copy.Reactions = s.reactionCountsLocked(message.ID)
+	return &copy, true, nil
+}
+
+func (s *MemoryStore) StoreDynamicUpdateIdempotent(senderID, clientMessageID, fingerprint, msgID string, segments []protocol.MessageSegment) (*Message, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if clientMessageID != "" {
+		key := senderID + "\x00" + clientMessageID
+		if record, ok := s.dynamicUpdateIdempotency[key]; ok {
+			if record.fingerprint != fingerprint {
+				return nil, false, ErrDynamicUpdateIdempotencyConflict
+			}
+			message := s.findMessageLocked(record.messageID)
+			if message == nil {
+				return nil, true, nil
+			}
+			copy := *message
+			copy.Reactions = s.reactionCountsLocked(message.ID)
+			return &copy, true, nil
+		}
+	}
+	message, err := s.updateMessageSegmentsLocked(msgID, segments)
+	if err != nil || message == nil {
+		return message, false, err
+	}
+	if clientMessageID != "" {
+		s.dynamicUpdateIdempotency[senderID+"\x00"+clientMessageID] = memoryDynamicUpdateIdempotency{
+			fingerprint: fingerprint,
+			messageID:   msgID,
+		}
+	}
+	return message, false, nil
+}
+
+func (s *MemoryStore) updateMessageSegmentsLocked(msgID string, segments []protocol.MessageSegment) (*Message, error) {
+	message := s.findMessageLocked(msgID)
+	if message == nil {
+		return nil, nil
+	}
+	message.Segments = append([]protocol.MessageSegment(nil), segments...)
+	copy := *message
+	copy.Reactions = s.reactionCountsLocked(msgID)
+	return &copy, nil
+}
+
+func (s *MemoryStore) findMessageLocked(msgID string) *Message {
 	for _, messages := range s.messages {
 		for _, message := range messages {
 			if message.ID != msgID {
 				continue
 			}
-			message.Segments = append([]protocol.MessageSegment(nil), segments...)
-			copy := *message
-			copy.Reactions = s.reactionCountsLocked(msgID)
-			return &copy, nil
+			return message
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 func (s *MemoryStore) GetMessage(msgID string) (*Message, error) {
@@ -361,6 +433,11 @@ func (s *MemoryStore) deleteMessageIdempotencyLocked(messageID string) {
 	for key, record := range s.messageIdempotency {
 		if record.message.ID == messageID {
 			delete(s.messageIdempotency, key)
+		}
+	}
+	for key, record := range s.dynamicUpdateIdempotency {
+		if record.messageID == messageID {
+			delete(s.dynamicUpdateIdempotency, key)
 		}
 	}
 }

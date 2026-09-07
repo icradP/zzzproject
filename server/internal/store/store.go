@@ -11,6 +11,7 @@ import (
 )
 
 var ErrMessageIdempotencyConflict = errors.New("client_message_id was already used for a different message")
+var ErrDynamicUpdateIdempotencyConflict = errors.New("dynamic update client_message_id was already used for a different request")
 var ErrTerminalVaultConflict = errors.New("terminal vault revision conflict")
 
 // Store defines the storage interface for the IM server.
@@ -59,6 +60,8 @@ type Store interface {
 	StoreMessage(convID, senderID, senderNickname string, segments []protocol.MessageSegment) (*Message, error)
 	StoreMessageIdempotent(convID, senderID, senderNickname, clientMessageID string, segments []protocol.MessageSegment) (*Message, bool, error)
 	UpdateMessageSegments(msgID string, segments []protocol.MessageSegment) (*Message, error)
+	LookupDynamicUpdateIdempotency(senderID, clientMessageID, fingerprint string) (*Message, bool, error)
+	StoreDynamicUpdateIdempotent(senderID, clientMessageID, fingerprint, msgID string, segments []protocol.MessageSegment) (*Message, bool, error)
 	GetMessage(msgID string) (*Message, error)
 	GetMessages(convID string, limit int) ([]*Message, error)
 	GetMessagesBefore(convID, beforeMessageID string, limit int) ([]*Message, error)

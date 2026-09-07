@@ -106,6 +106,71 @@ func TestDynamicContentUpdatePersistsWithoutCreatingMessage(t *testing.T) {
 	}
 }
 
+func TestDynamicContentUpdateIdempotencyDoesNotReapplyPatch(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(*testing.T) Store
+	}{
+		{name: "memory", open: func(*testing.T) Store { return NewMemoryStore() }},
+		{name: "sqlite", open: func(t *testing.T) Store {
+			database, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dynamic-idempotency.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return database
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			database := test.open(t)
+			t.Cleanup(func() { _ = database.Close() })
+			conversationID := "private_alice_bob"
+			if err := database.SaveConversation(&Conversation{ID: conversationID, Type: "private", Title: "Dynamic", Participants: []string{"alice", "bob"}}); err != nil {
+				t.Fatal(err)
+			}
+			original := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "column", "children": []interface{}{}},
+			})}
+			message, err := database.StoreMessage(conversationID, "alice", "Alice", original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updatedSegments := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "column", "children": []interface{}{
+					map[string]interface{}{"id": "result", "type": "status"},
+				}},
+			})}
+			first, duplicate, err := database.StoreDynamicUpdateIdempotent("alice", "dynamic-update-1", "fingerprint-1", message.ID, updatedSegments)
+			if err != nil || duplicate || first == nil {
+				t.Fatalf("first update = %#v duplicate=%v err=%v", first, duplicate, err)
+			}
+			unchangedSegments := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "column", "children": []interface{}{
+					map[string]interface{}{"id": "different", "type": "status"},
+				}},
+			})}
+			second, duplicate, err := database.StoreDynamicUpdateIdempotent("alice", "dynamic-update-1", "fingerprint-1", message.ID, unchangedSegments)
+			if err != nil || !duplicate || second == nil {
+				t.Fatalf("duplicate update = %#v duplicate=%v err=%v", second, duplicate, err)
+			}
+			history, err := database.GetMessages(conversationID, 100)
+			if err != nil || len(history) != 1 {
+				t.Fatalf("history = %d err=%v", len(history), err)
+			}
+			children := history[0].Segments[0].Data["tree"].(map[string]interface{})["children"].([]interface{})
+			if children[0].(map[string]interface{})["id"] != "result" {
+				t.Fatalf("duplicate re-applied patch: %#v", children)
+			}
+			if _, _, err := database.StoreDynamicUpdateIdempotent("alice", "dynamic-update-1", "fingerprint-2", message.ID, updatedSegments); !errors.Is(err, ErrDynamicUpdateIdempotencyConflict) {
+				t.Fatalf("conflicting update error = %v", err)
+			}
+		})
+	}
+}
+
 func TestPostgresMessageIdempotency(t *testing.T) {
 	dsn := os.Getenv("ZZZ_TEST_POSTGRES_DSN")
 	if dsn == "" {
