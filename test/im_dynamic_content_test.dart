@@ -554,6 +554,62 @@ void main() {
     expect(find.text('Ready'), findsOneWidget);
   });
 
+  testWidgets('dynamic content preserves the existing sibling voice renderer', (
+    tester,
+  ) async {
+    final message = ImMessage(
+      id: 'message-with-voice',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: '[Dynamic content][Voice]',
+      sentAt: DateTime(2026),
+      kind: ImMessageKind.dynamicContent,
+      segments: [
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: {
+            'id': 'voice-content',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'root',
+              'type': 'status',
+              'props': {'text': 'Voice reply'},
+            },
+          },
+        ),
+        OneBotMessageSegment(
+          type: 'record',
+          data: {'file': 'voice-file-1', 'size': 4000, 'duration_ms': 2000},
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImMessageBubble(
+            message: message,
+            senderName: 'Fairy',
+            avatar: MemoryImage(
+              base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+            ),
+            showSenderName: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Voice reply'), findsOneWidget);
+    expect(find.byType(ImVoiceBubble), findsOneWidget);
+    final voice = tester.widget<ImVoiceBubble>(find.byType(ImVoiceBubble));
+    expect(voice.fileId, 'voice-file-1');
+    expect(voice.declaredDuration, const Duration(seconds: 2));
+    expect(find.text('[record]'), findsNothing);
+  });
+
   testWidgets('malformed dynamic content preserves its fallback and siblings', (
     tester,
   ) async {

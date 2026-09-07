@@ -729,6 +729,24 @@ class ImMessageBubble extends StatelessWidget {
               ),
             ),
           );
+        case 'record':
+          final rawDuration = data['duration_ms'];
+          children.add(
+            ImVoiceBubble(
+              fileId: data['file']?.toString(),
+              url: data['url']?.toString(),
+              localPath:
+                  message.kind == ImMessageKind.record
+                      ? message.mediaPath
+                      : null,
+              isMine: message.isMine,
+              fileSize: (data['size'] as num?)?.toInt() ?? message.mediaSize,
+              declaredDuration:
+                  rawDuration is num
+                      ? Duration(milliseconds: rawDuration.toInt())
+                      : message.mediaDuration,
+            ),
+          );
         case 'file':
         case 'video':
           final location = data['url']?.toString() ?? data['file']?.toString();
