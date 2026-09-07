@@ -955,6 +955,16 @@ class _ImHomePageState extends State<ImHomePage>
                       remove: remove,
                     );
                   },
+                  onDynamicEvent: (event) {
+                    unawaited(
+                      repository
+                          .sendDynamicEvent(
+                            conversationId: conv.id,
+                            event: event,
+                          )
+                          .catchError((_) {}),
+                    );
+                  },
                 ),
               );
             },

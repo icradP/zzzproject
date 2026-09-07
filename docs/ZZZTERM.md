@@ -126,7 +126,7 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 }
 ```
 
-服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，业务层决定是否将其作为审计消息保存。
+服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，业务层决定是否将其作为审计消息保存。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
 
 ### 2.2 旧业务消息段兼容层
 
@@ -140,6 +140,8 @@ ZZZTerm 当前注册了以下适配：
 | `terminal_result` | `zzzterm_terminal_result` | 状态、退出码和折叠的终端输出 |
 
 普通文本仍使用现有文本 Renderer。`text + terminal_request`、`text + terminal_result` 以及原生 `dynamic_content` 都由同一个 `ImMessageBubble` 组合，统一保留头像、方向、回复引用、反应、时间和发送状态。业务组件只负责气泡内部内容，不允许绕过本地命令审批或执行脚本代码。
+
+旧 `terminal_request` 段经过 Adapter 后使用稳定的显示身份：`content_id = legacy:<message_id>:<segment_index>`，节点 ID 为 `terminal-request-<request_id>`。远端交互可用 `click/approve`、`tap/deny` 或 `change/modify` 事件组合；ZZZTerm 只接受当前账号在同一会话中的事件，并仍通过本地审批状态机执行命令。
 
 ## 3. `terminal_request` 请求段
 

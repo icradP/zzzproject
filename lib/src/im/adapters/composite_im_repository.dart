@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 
 import '../data/im_repository.dart';
+import '../dynamic/models/im_dynamic_models.dart';
 import '../models/im_models.dart';
 import '../models/im_source_address.dart';
 import 'im_message_source.dart';
@@ -55,6 +56,14 @@ class CompositeImRepository implements ImRepository {
           }, onError: _friendRequestsController.addError),
         );
       }
+      _dynamicEventSubscriptions.add(
+        registration.repository.dynamicEvents.listen(
+          (envelope) => _dynamicEventsController.add(
+            _scopeDynamicEvent(registration, envelope),
+          ),
+          onError: _dynamicEventsController.addError,
+        ),
+      );
       final status = registration.connectionStatus;
       if (status != null) {
         _statusSubscriptions.add(
@@ -76,12 +85,15 @@ class CompositeImRepository implements ImRepository {
   final List<StreamSubscription<dynamic>> _userSubscriptions = [];
   final List<StreamSubscription<dynamic>> _conversationSubscriptions = [];
   final List<StreamSubscription<dynamic>> _friendRequestSubscriptions = [];
+  final List<StreamSubscription<dynamic>> _dynamicEventSubscriptions = [];
   final List<StreamSubscription<dynamic>> _statusSubscriptions = [];
   final _usersController = StreamController<List<ImUser>>.broadcast();
   final _conversationController =
       StreamController<List<ImConversation>>.broadcast();
   final _friendRequestsController =
       StreamController<List<ImFriendRequest>>.broadcast();
+  final _dynamicEventsController =
+      StreamController<ImDynamicEventEnvelope>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
 
   Stream<ConnectionStatus> get connectionStatus {
@@ -164,6 +176,11 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Stream<ImDynamicEventEnvelope> get dynamicEvents {
+    return _dynamicEventsController.stream;
+  }
+
+  @override
   Future<bool> loadOlderMessages(String conversationId) {
     final registration = _registrationForValue(conversationId);
     return registration.repository.loadOlderMessages(
@@ -201,6 +218,27 @@ class CompositeImRepository implements ImRepository {
               : ImSourceAddress.localIdOf(replyToMessageId),
     );
     return _scopeMessage(registration, message);
+  }
+
+  @override
+  Future<void> sendDynamicEvent({
+    required String conversationId,
+    required ImDynamicEvent event,
+  }) {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, event.messageId, 'Dynamic event');
+    final localEvent = ImDynamicEvent(
+      messageId: ImSourceAddress.localIdOf(event.messageId),
+      contentId: event.contentId,
+      nodeId: event.nodeId,
+      event: event.event,
+      action: event.action,
+      payload: event.payload,
+    );
+    return registration.repository.sendDynamicEvent(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      event: localEvent,
+    );
   }
 
   @override
@@ -1098,6 +1136,29 @@ class CompositeImRepository implements ImRepository {
     );
   }
 
+  ImDynamicEventEnvelope _scopeDynamicEvent(
+    ImRepositoryRegistration registration,
+    ImDynamicEventEnvelope envelope,
+  ) {
+    final event = envelope.event;
+    return ImDynamicEventEnvelope(
+      conversationId: ImSourceAddress.scope(
+        registration.id,
+        envelope.conversationId,
+      ),
+      senderId: ImSourceAddress.scope(registration.id, envelope.senderId),
+      event: ImDynamicEvent(
+        messageId: ImSourceAddress.scope(registration.id, event.messageId),
+        contentId: event.contentId,
+        nodeId: event.nodeId,
+        event: event.event,
+        action: event.action,
+        payload: event.payload,
+      ),
+      sentAt: envelope.sentAt,
+    );
+  }
+
   List<OneBotMessageSegment>? _scopeSegments(
     String sourceId,
     List<OneBotMessageSegment>? segments,
@@ -1209,6 +1270,9 @@ class CompositeImRepository implements ImRepository {
     for (final subscription in _friendRequestSubscriptions) {
       unawaited(subscription.cancel());
     }
+    for (final subscription in _dynamicEventSubscriptions) {
+      unawaited(subscription.cancel());
+    }
     for (final subscription in _statusSubscriptions) {
       unawaited(subscription.cancel());
     }
@@ -1218,6 +1282,7 @@ class CompositeImRepository implements ImRepository {
     unawaited(_usersController.close());
     unawaited(_conversationController.close());
     unawaited(_friendRequestsController.close());
+    unawaited(_dynamicEventsController.close());
     unawaited(_statusController.close());
   }
 }

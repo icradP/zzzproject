@@ -1051,6 +1051,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		}
 	}
 	var dynamicUpdate *protocol.MessageSegment
+	var dynamicEvent *protocol.MessageSegment
 	for index := range segments {
 		segment := segments[index]
 		switch segment.Type {
@@ -1070,14 +1071,23 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			}
 			dynamicUpdate = &segments[index]
 		case "dynamic_event":
+			if dynamicEvent != nil || len(segments) != 1 {
+				g.sendError(client, req.Echo, "dynamic_event must be the only message segment")
+				return
+			}
 			if err := validateDynamicEventSegment(segment); err != nil {
 				g.sendError(client, req.Echo, err.Error())
 				return
 			}
+			dynamicEvent = &segments[index]
 		}
 	}
 	if dynamicUpdate != nil {
 		g.handleDynamicUpdate(client, req, convID, convType, *dynamicUpdate)
+		return
+	}
+	if dynamicEvent != nil {
+		g.handleDynamicEvent(client, req, convID, convType, *dynamicEvent)
 		return
 	}
 	replyCount := 0
@@ -1263,6 +1273,57 @@ func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, con
 		Timestamp:      updated.Timestamp.Unix(),
 		TimestampMS:    updated.Timestamp.UnixMilli(),
 	}, "")
+}
+
+func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conversationID, conversationType string, segment protocol.MessageSegment) {
+	messageID, _ := segment.Data["message_id"].(string)
+	target, err := g.store.GetMessage(messageID)
+	if err != nil || target == nil {
+		g.sendError(client, req.Echo, "dynamic event target message not found")
+		return
+	}
+	if target.ConversationID != conversationID {
+		g.sendError(client, req.Echo, "dynamic event target belongs to another conversation")
+		return
+	}
+	if target.Recalled {
+		g.sendError(client, req.Echo, "cannot interact with a recalled message")
+		return
+	}
+	if err := validateDynamicEventTarget(target.Segments, segment.Data); err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
+	}
+
+	g.sendJSON(client, protocol.Response{
+		Status:  "ok",
+		RetCode: 0,
+		Data: map[string]interface{}{
+			"message_id": messageID,
+			"dispatched": true,
+		},
+		Echo: req.Echo,
+	})
+
+	user, _ := g.store.GetUser(client.userID)
+	nickname := client.userID
+	avatar := ""
+	if user != nil {
+		nickname = user.Nickname
+		avatar = user.Avatar
+	}
+	// Dynamic events are transient interactions. They are delivered to the
+	// other participants but deliberately do not create an empty history row.
+	g.broadcastToConversationExceptClient(conversationID, protocol.MessageEvent{
+		PostType:       "message",
+		MessageType:    conversationType,
+		MessageID:      messageID,
+		ConversationID: conversationID,
+		Sender:         protocol.Sender{UserID: client.userID, Nickname: nickname, Avatar: avatar},
+		Message:        []protocol.MessageSegment{segment},
+		Timestamp:      time.Now().Unix(),
+		TimestampMS:    time.Now().UnixMilli(),
+	}, client)
 }
 
 func validClientMessageID(value string) bool {
@@ -3350,6 +3411,38 @@ func (g *Gateway) broadcastToConversation(convID string, event interface{}, excl
 	}
 	for _, client := range clients {
 		client.enqueue(data)
+	}
+}
+
+// broadcastToConversationExceptClient is used for transient device-scoped
+// events. The sender's socket is skipped, but other devices belonging to the
+// same account still receive the event for remote-control workflows.
+func (g *Gateway) broadcastToConversationExceptClient(convID string, event interface{}, excluded *Client) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+
+	conv, _ := g.store.GetConversation(convID)
+	if conv == nil {
+		return
+	}
+	clients := make([]*Client, 0)
+	if conv.Type == "private" {
+		for _, userID := range conv.Participants {
+			clients = append(clients, g.clientsForUser(userID)...)
+		}
+	} else {
+		members, _ := g.store.GetGroupMembers(convID)
+		for _, member := range members {
+			clients = append(clients, g.clientsForUser(member.UserID)...)
+		}
+	}
+	for _, current := range clients {
+		if current == excluded {
+			continue
+		}
+		current.enqueue(data)
 	}
 }
 

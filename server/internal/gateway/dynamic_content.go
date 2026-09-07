@@ -73,6 +73,92 @@ func validateDynamicEventSegment(segment protocol.MessageSegment) error {
 	return nil
 }
 
+func validateDynamicEventTarget(segments []protocol.MessageSegment, data map[string]interface{}) error {
+	contentID, _ := data["content_id"].(string)
+	nodeID, _ := data["node_id"].(string)
+	eventName, _ := data["event"].(string)
+	messageID, _ := data["message_id"].(string)
+	matched := false
+	legacyMatched := false
+	var targetNode map[string]interface{}
+	for index, segment := range segments {
+		if segment.Type != "dynamic_content" {
+			if segment.Type != "terminal_request" {
+				continue
+			}
+			requestID, _ := segment.Data["request_id"].(string)
+			legacyContentID := fmt.Sprintf("legacy:%s:%d", messageID, index)
+			legacyNodeID := "terminal-request-" + requestID
+			if contentID != legacyContentID || nodeID != legacyNodeID {
+				continue
+			}
+			if matched {
+				return fmt.Errorf("dynamic event content_id is ambiguous")
+			}
+			matched = true
+			legacyMatched = true
+			action, _ := data["action"].(string)
+			switch eventName {
+			case "click":
+				if action != "approve" && action != "allow" {
+					return fmt.Errorf("legacy terminal event action does not match click")
+				}
+			case "tap":
+				if action != "deny" && action != "reject" {
+					return fmt.Errorf("legacy terminal event action does not match tap")
+				}
+			case "change":
+				if action != "modify" {
+					return fmt.Errorf("legacy terminal event action does not match change")
+				}
+			default:
+				return fmt.Errorf("legacy terminal event type is not allowed")
+			}
+			continue
+		}
+		schema, err := dynamicSchemaFromData(segment.Data)
+		if err != nil {
+			return err
+		}
+		if schema["id"] != contentID {
+			continue
+		}
+		if matched {
+			return fmt.Errorf("dynamic event content_id is ambiguous")
+		}
+		matched = true
+		tree, ok := schema["tree"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("dynamic event target tree is missing")
+		}
+		node, _, _, found := findDynamicNode(tree, nodeID)
+		if !found {
+			return fmt.Errorf("dynamic event target node was not found")
+		}
+		targetNode = node
+	}
+	if legacyMatched {
+		return nil
+	}
+	if !matched || targetNode == nil {
+		return fmt.Errorf("dynamic event target content was not found")
+	}
+	events, ok := targetNode["events"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("dynamic event is not declared by the target node")
+	}
+	definition, ok := events[eventName].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("dynamic event is not declared by the target node")
+	}
+	expectedAction, _ := definition["action"].(string)
+	actualAction, _ := data["action"].(string)
+	if expectedAction != actualAction {
+		return fmt.Errorf("dynamic event action does not match the target schema")
+	}
+	return nil
+}
+
 func validateDynamicUpdateSegment(segment protocol.MessageSegment) error {
 	if segment.Type != "dynamic_update" {
 		return nil

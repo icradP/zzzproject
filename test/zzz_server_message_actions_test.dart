@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
+import 'package:zzzproject/src/im/dynamic/models/im_dynamic_models.dart';
 import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
@@ -318,6 +319,122 @@ void main() {
       'message_ids': ['source-message-1'],
     });
   });
+
+  test(
+    'ZZZ server source sends and receives transient dynamic events',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      Map<String, dynamic>? dynamicEventRequest;
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((raw) {
+          final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (requestJson['action'] == 'send_message') {
+            final params = requestJson['params'] as Map<String, dynamic>;
+            final message = params['message'] as List<dynamic>;
+            if (message.single['type'] == 'dynamic_event') {
+              dynamicEventRequest = requestJson;
+            }
+          }
+          final action = requestJson['action'];
+          final data = switch (action) {
+            'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+            'get_friends' => [
+              {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
+            ],
+            'get_conversations' => [
+              {
+                'conversation_id': 'private_me_bob',
+                'type': 'private',
+                'title': 'Bob',
+                'participants': ['me', 'bob'],
+                'unread_count': 0,
+                'last_timestamp': 200,
+              },
+            ],
+            'get_messages' => <Object?>[],
+            'send_message' => {'message_id': 'dynamic-event-ack'},
+            _ => <String, Object?>{},
+          };
+          socket.add(
+            jsonEncode({
+              'status': 'ok',
+              'retcode': 0,
+              'data': data,
+              'echo': requestJson['echo'],
+            }),
+          );
+        });
+      });
+
+      final source = ZzzServerSource(
+        config: ZzzServerConfig(
+          serverUrl: 'ws://127.0.0.1:${server.port}',
+          selfId: 'me',
+        ),
+        allowReconnect: false,
+      );
+      addTearDown(() async {
+        source.disconnect();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+      });
+
+      await source.connect();
+      final incoming = source.dynamicEvents.first.timeout(
+        const Duration(seconds: 2),
+      );
+      final event = const ImDynamicEvent(
+        messageId: 'message-1',
+        contentId: 'event-card-1',
+        nodeId: 'retry',
+        event: 'click',
+        action: 'retry',
+        payload: {'source': 'test'},
+      );
+      await source.sendDynamicEvent(
+        conversationId: 'private_me_bob',
+        event: event,
+      );
+      final sentSegments =
+          ((dynamicEventRequest!['params'] as Map<String, dynamic>)['message']
+              as List<dynamic>);
+      expect(sentSegments, [
+        {
+          'type': 'dynamic_event',
+          'data': {
+            'message_id': 'message-1',
+            'content_id': 'event-card-1',
+            'node_id': 'retry',
+            'event': 'click',
+            'action': 'retry',
+            'payload': {'source': 'test'},
+          },
+        },
+      ]);
+
+      sockets.single.add(
+        jsonEncode({
+          'post_type': 'message',
+          'message_type': 'private',
+          'message_id': 'message-1',
+          'conversation_id': 'private_me_bob',
+          'sender': {'user_id': 'bob', 'nickname': 'Bob'},
+          'message': sentSegments,
+          'timestamp_ms': 1700000000000,
+        }),
+      );
+      final envelope = await incoming;
+      expect(envelope.conversationId, 'private_me_bob');
+      expect(envelope.senderId, 'bob');
+      expect(envelope.event.nodeId, 'retry');
+      expect(envelope.event.action, 'retry');
+    },
+  );
 }
 
 List<dynamic> _sentSegments(Map<String, dynamic> request) {

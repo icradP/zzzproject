@@ -130,6 +130,8 @@ class ZzzServerSource implements ImMessageSource {
       StreamController<List<ImFriendRequest>>.broadcast();
   final _terminalRequestsController =
       StreamController<ZzzTerminalRequest>.broadcast();
+  final _dynamicEventsController =
+      StreamController<ImDynamicEventEnvelope>.broadcast();
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
 
   final _conversations = <String, ImConversation>{};
@@ -145,6 +147,10 @@ class ZzzServerSource implements ImMessageSource {
 
   Stream<ZzzTerminalRequest> get terminalRequests =>
       _terminalRequestsController.stream;
+
+  @override
+  Stream<ImDynamicEventEnvelope> get dynamicEvents =>
+      _dynamicEventsController.stream;
 
   @override
   String get platformName => 'ZZZ Server';
@@ -208,6 +214,7 @@ class ZzzServerSource implements ImMessageSource {
     unawaited(_conversationsController.close());
     unawaited(_friendRequestsController.close());
     unawaited(_terminalRequestsController.close());
+    unawaited(_dynamicEventsController.close());
     for (final controller in _messageControllers.values) {
       unawaited(controller.close());
     }
@@ -1603,6 +1610,10 @@ class ZzzServerSource implements ImMessageSource {
   void _handleEvent(Map<String, dynamic> json) {
     switch (json['post_type']) {
       case 'message':
+        if (_dynamicEventData(json) != null) {
+          _emitDynamicEvent(json);
+          break;
+        }
         if (_dynamicUpdateData(json) != null) {
           _applyDynamicUpdate(json);
           break;
@@ -1631,6 +1642,35 @@ class ZzzServerSource implements ImMessageSource {
       return Map<String, dynamic>.from(raw['data'] as Map);
     }
     return null;
+  }
+
+  Map<String, dynamic>? _dynamicEventData(Map<String, dynamic> json) {
+    final segments = json['message'];
+    if (segments is! List) return null;
+    for (final raw in segments.whereType<Map>()) {
+      if (raw['type'] != 'dynamic_event' || raw['data'] is! Map) continue;
+      return Map<String, dynamic>.from(raw['data'] as Map);
+    }
+    return null;
+  }
+
+  void _emitDynamicEvent(Map<String, dynamic> json) {
+    final data = _dynamicEventData(json);
+    if (data == null) return;
+    final event = ImDynamicEvent.tryFromSegmentData(data);
+    if (event == null || event.messageId.isEmpty) return;
+    final conversationId = '${json['conversation_id'] ?? ''}';
+    final sender = json['sender'];
+    final senderId = sender is Map ? '${sender['user_id'] ?? ''}' : '';
+    if (conversationId.isEmpty || senderId.isEmpty) return;
+    _dynamicEventsController.add(
+      ImDynamicEventEnvelope(
+        conversationId: conversationId,
+        senderId: senderId,
+        event: event,
+        sentAt: _timestampFromJson(json) ?? DateTime.now(),
+      ),
+    );
   }
 
   bool _applyDynamicUpdate(Map<String, dynamic> json, {bool emit = true}) {
@@ -1771,6 +1811,20 @@ class ZzzServerSource implements ImMessageSource {
       },
     },
   ], clientMessageId: 'zzzterm-$requestId-result');
+
+  @override
+  Future<void> sendDynamicEvent({
+    required String conversationId,
+    required ImDynamicEvent event,
+  }) async {
+    final response = await _request('send_message', {
+      'conversation_id': conversationId,
+      'message': [
+        {'type': 'dynamic_event', 'data': event.toJson()..remove('type')},
+      ],
+    });
+    _requireOk(response, 'Send dynamic event');
+  }
 
   /// Applies a node-id patch to an existing dynamic content message. The
   /// server persists the resulting segments and broadcasts only the patch, so

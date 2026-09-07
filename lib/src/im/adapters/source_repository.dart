@@ -1,4 +1,5 @@
 import '../data/im_repository.dart';
+import '../dynamic/models/im_dynamic_models.dart';
 import '../models/im_models.dart';
 import 'im_message_source.dart';
 
@@ -49,6 +50,9 @@ class SourceBackedRepository implements ImRepository {
       _source.watchMessages(conversationId);
 
   @override
+  Stream<ImDynamicEventEnvelope> get dynamicEvents => _source.dynamicEvents;
+
+  @override
   Future<bool> loadOlderMessages(String conversationId) =>
       _source.loadOlderMessages(conversationId);
 
@@ -66,6 +70,12 @@ class SourceBackedRepository implements ImRepository {
     text: text,
     replyToMessageId: replyToMessageId,
   );
+
+  @override
+  Future<void> sendDynamicEvent({
+    required String conversationId,
+    required ImDynamicEvent event,
+  }) => _source.sendDynamicEvent(conversationId: conversationId, event: event);
 
   @override
   Future<ImMessage> sendComposedTextMessage({

@@ -110,8 +110,9 @@ func DynamicUpdateSegment(messageID, contentID string, patches []DynamicPatch) M
 	}
 }
 
-// DynamicEventSegment carries a UI event back through the normal message
-// transport when an application chooses to persist an interaction audit.
+// DynamicEventSegment carries a UI event through the normal message transport.
+// The gateway validates and broadcasts it as a transient event; it is not a
+// persisted chat message unless an application separately records an audit.
 func DynamicEventSegment(messageID, contentID, nodeID, event, action string, payload map[string]interface{}) MessageSegment {
 	data := map[string]interface{}{
 		"message_id": messageID,

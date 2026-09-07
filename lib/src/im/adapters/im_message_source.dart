@@ -1,4 +1,5 @@
 import '../models/im_models.dart';
+import '../dynamic/models/im_dynamic_models.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, failed }
 
@@ -30,6 +31,9 @@ abstract class ImMessageSource {
 
   Stream<List<ImMessage>> watchMessages(String conversationId);
 
+  /// Realtime component interactions, kept separate from persisted messages.
+  Stream<ImDynamicEventEnvelope> get dynamicEvents => const Stream.empty();
+
   Future<bool> loadOlderMessages(String conversationId) async => false;
 
   Future<ImConversation?> getConversation(String conversationId);
@@ -39,6 +43,15 @@ abstract class ImMessageSource {
     required String text,
     String? replyToMessageId,
   });
+
+  Future<void> sendDynamicEvent({
+    required String conversationId,
+    required ImDynamicEvent event,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic content events are not supported by this source.',
+    );
+  }
 
   Future<ImMessage> sendComposedTextMessage({
     required String conversationId,

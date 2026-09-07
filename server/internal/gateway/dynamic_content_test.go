@@ -75,6 +75,27 @@ func TestDynamicContentValidationRejectsUnsafeAndMalformedTrees(t *testing.T) {
 	}
 }
 
+func TestDynamicEventTargetAcceptsLegacyTerminalAdapterIdentity(t *testing.T) {
+	segments := []protocol.MessageSegment{{
+		Type: "terminal_request",
+		Data: map[string]interface{}{"request_id": "request-1"},
+	}}
+	valid := map[string]interface{}{
+		"message_id": "message-1",
+		"content_id": "legacy:message-1:0",
+		"node_id":    "terminal-request-request-1",
+		"event":      "click",
+		"action":     "approve",
+	}
+	if err := validateDynamicEventTarget(segments, valid); err != nil {
+		t.Fatalf("legacy adapter event rejected: %v", err)
+	}
+	valid["action"] = "delete_everything"
+	if err := validateDynamicEventTarget(segments, valid); err == nil {
+		t.Fatal("unsupported legacy terminal action was accepted")
+	}
+}
+
 func TestDynamicUpdateTargetsMatchingContentAmongSiblings(t *testing.T) {
 	segments := []protocol.MessageSegment{
 		protocol.DynamicContentSegment(map[string]interface{}{
@@ -191,5 +212,106 @@ func TestDynamicUpdateKeepsOneHistoryMessageAndBroadcastsPatch(t *testing.T) {
 	status := children[0].(map[string]interface{})["props"].(map[string]interface{})
 	if status["text"] != "Complete" {
 		t.Fatalf("history did not persist patch: %#v", status)
+	}
+}
+
+func TestDynamicEventDispatchesTransientlyAndValidatesSchema(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	aliceSecondDevice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = aliceSecondDevice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, aliceSecondDevice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+
+	content := protocol.DynamicContentSegment(map[string]interface{}{
+		"id": "event-card-1", "version": "1.0", "source": "user",
+		"tree": map[string]interface{}{
+			"id": "root", "type": "column",
+			"children": []interface{}{map[string]interface{}{
+				"id": "retry", "type": "button",
+				"props": map[string]interface{}{"text": "Retry"},
+				"events": map[string]interface{}{
+					"click": map[string]interface{}{"action": "retry"},
+				},
+			}},
+		},
+	})
+	initial := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{content},
+	})
+	assertOK(t, initial)
+	messageID := responseData(t, initial)["message_id"].(string)
+	if event := readJSON(t, bob); event["message_id"] != messageID {
+		t.Fatalf("initial event = %#v", event)
+	}
+
+	dynamicEvent := protocol.DynamicEventSegment(
+		messageID,
+		"event-card-1",
+		"retry",
+		"click",
+		"retry",
+		map[string]interface{}{"source": "test"},
+	)
+	dispatched := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{dynamicEvent},
+	})
+	assertOK(t, dispatched)
+	if responseData(t, dispatched)["dispatched"] != true {
+		t.Fatalf("unexpected dispatch response: %#v", dispatched)
+	}
+	transient := readJSON(t, alice)
+	if transient["message_id"] != messageID {
+		t.Fatalf("transient event message id = %#v", transient)
+	}
+	transientSegments := transient["message"].([]interface{})
+	if transientSegments[0].(map[string]interface{})["type"] != "dynamic_event" {
+		t.Fatalf("transient event segments = %#v", transientSegments)
+	}
+	if secondDeviceEvent := readJSON(t, aliceSecondDevice); secondDeviceEvent["message_id"] != messageID {
+		t.Fatalf("same-account device did not receive transient event: %#v", secondDeviceEvent)
+	}
+
+	invalid := protocol.DynamicEventSegment(
+		messageID,
+		"event-card-1",
+		"retry",
+		"click",
+		"delete_everything",
+		nil,
+	)
+	rejected := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{invalid},
+	})
+	if rejected["status"] != "error" {
+		t.Fatalf("invalid event was accepted: %#v", rejected)
+	}
+
+	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	if len(history) != 1 {
+		t.Fatalf("dynamic event created %d history messages", len(history))
 	}
 }

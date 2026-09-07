@@ -1,4 +1,5 @@
 import '../models/im_models.dart';
+import '../dynamic/models/im_dynamic_models.dart';
 
 /// Data source for IM conversations and messages.
 ///
@@ -25,6 +26,10 @@ abstract class ImRepository {
   /// Live messages for a single conversation.
   Stream<List<ImMessage>> watchMessages(String conversationId);
 
+  /// Validated component interactions received in realtime. These are
+  /// transient application events and never appear in message history.
+  Stream<ImDynamicEventEnvelope> get dynamicEvents => const Stream.empty();
+
   /// Loads the page immediately before the oldest emitted message. Returns
   /// whether another older page may still exist.
   Future<bool> loadOlderMessages(String conversationId) async => false;
@@ -38,6 +43,16 @@ abstract class ImRepository {
     required String text,
     String? replyToMessageId,
   });
+
+  /// Dispatches one component interaction without creating a chat message.
+  Future<void> sendDynamicEvent({
+    required String conversationId,
+    required ImDynamicEvent event,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic content events are not supported by this repository.',
+    );
+  }
 
   /// Sends semantic mentions when the source supports message segments.
   Future<ImMessage> sendComposedTextMessage({

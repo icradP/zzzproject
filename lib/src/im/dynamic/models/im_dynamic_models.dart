@@ -433,6 +433,35 @@ class ImDynamicEvent {
   final String? action;
   final Map<String, dynamic> payload;
 
+  factory ImDynamicEvent.fromJson(Map<String, dynamic> json) => ImDynamicEvent(
+    messageId: _stringValue(json['message_id']) ?? '',
+    contentId: _stringValue(json['content_id']) ?? '',
+    nodeId: _stringValue(json['node_id']) ?? '',
+    event: _stringValue(json['event']) ?? '',
+    action: _stringValue(json['action']),
+    payload:
+        json['payload'] is Map
+            ? Map.unmodifiable(
+              Map<String, dynamic>.from(json['payload'] as Map),
+            )
+            : const <String, dynamic>{},
+  );
+
+  factory ImDynamicEvent.fromSegmentData(Map<String, dynamic> data) {
+    final nested = data['event'];
+    return ImDynamicEvent.fromJson(
+      nested is Map ? Map<String, dynamic>.from(nested) : data,
+    );
+  }
+
+  static ImDynamicEvent? tryFromSegmentData(Map<String, dynamic> data) {
+    try {
+      return ImDynamicEvent.fromSegmentData(data);
+    } on Object {
+      return null;
+    }
+  }
+
   Map<String, dynamic> toJson() => {
     'type': 'dynamic_event',
     'message_id': messageId,
@@ -442,6 +471,23 @@ class ImDynamicEvent {
     if (action != null && action!.isNotEmpty) 'action': action,
     'payload': payload,
   };
+}
+
+/// Transport context for a validated dynamic interaction received from an IM
+/// source. It remains outside [ImDynamicEvent] so the component event schema
+/// stays independent from conversations and platform adapters.
+class ImDynamicEventEnvelope {
+  const ImDynamicEventEnvelope({
+    required this.conversationId,
+    required this.senderId,
+    required this.event,
+    required this.sentAt,
+  });
+
+  final String conversationId;
+  final String senderId;
+  final ImDynamicEvent event;
+  final DateTime sentAt;
 }
 
 String? _stringValue(Object? value) =>
