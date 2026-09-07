@@ -45,6 +45,7 @@ void main() {
     final content = ImDynamicContent.fromSegmentData({
       'id': 'nested-1',
       'source': 'server',
+      'metadata': {'template': 'diagnosis'},
       'schema': {
         'version': '1.1',
         'tree': {
@@ -57,6 +58,7 @@ void main() {
     expect(content.id, 'nested-1');
     expect(content.version, '1.1');
     expect(content.source, ImDynamicContentSource.server);
+    expect(content.metadata['template'], 'diagnosis');
   });
 
   test(
@@ -128,6 +130,60 @@ void main() {
         ),
         isTrue,
       );
+    },
+  );
+
+  test(
+    'validator aligns transport identifiers, values, and image URL policy',
+    () {
+      final invalid = ImDynamicContent(
+        id: List.filled(129, 'i').join(),
+        version: List.filled(33, 'v').join(),
+        source: ImDynamicContentSource.unknown,
+        metadata: {'values': List.generate(51, (index) => index)},
+        fallback: ImDynamicFallback(
+          type: 'text',
+          content: List.filled(10001, 'x').join(),
+        ),
+        tree: const ImDynamicNode(
+          id: 'root',
+          type: 'image',
+          props: {'url': 'http://example.test/image.png'},
+          events: {
+            'click': {'action': 1},
+          },
+        ),
+      );
+
+      final result = const ImDynamicSchemaValidator().validate(invalid);
+      expect(result.isValid, isFalse);
+      for (final expectedPath in const [
+        'id',
+        'version',
+        'source',
+        'metadata.values',
+        'fallback.content',
+        'tree.props.url',
+        'tree.events.click',
+      ]) {
+        expect(
+          result.errors.any((issue) => issue.path == expectedPath),
+          isTrue,
+          reason: 'missing validation issue for $expectedPath',
+        );
+      }
+
+      const valid = ImDynamicContent(
+        id: 'valid',
+        version: '1.0',
+        source: ImDynamicContentSource.plugin,
+        tree: ImDynamicNode(
+          id: 'image',
+          type: 'image',
+          props: {'url': 'https://example.test/image.png'},
+        ),
+      );
+      expect(const ImDynamicSchemaValidator().validate(valid).isValid, isTrue);
     },
   );
 

@@ -85,7 +85,14 @@ class ImDynamicContent {
     }
 
     // Permit transport metadata to live beside the schema for compact events.
-    for (final key in const ['id', 'version', 'source', 'tree', 'fallback']) {
+    for (final key in const [
+      'id',
+      'version',
+      'source',
+      'tree',
+      'fallback',
+      'metadata',
+    ]) {
       if (!schema.containsKey(key) && data.containsKey(key)) {
         schema[key] = data[key];
       }
