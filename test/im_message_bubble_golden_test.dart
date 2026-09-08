@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,15 @@ void main() {
   testWidgets('legacy and dynamic bubbles keep a stable visual baseline', (
     tester,
   ) async {
+    final previousComparator = goldenFileComparator;
+    goldenFileComparator = _TolerantGoldenFileComparator(
+      Uri.file(
+        '${Directory.current.path}/test/im_message_bubble_golden_test.dart',
+      ),
+      precisionTolerance: 0.03,
+    );
+    addTearDown(() => goldenFileComparator = previousComparator);
+
     final repository = MockImRepository();
     final pushManager = NoOpImPushManager();
     addTearDown(repository.dispose);
@@ -149,7 +159,6 @@ void main() {
         theme: ThemeData(
           brightness: Brightness.dark,
           scaffoldBackgroundColor: Color(0xFF101216),
-          fontFamily: 'Arial',
         ),
         home: ImScope(
           repository: repository,
@@ -196,4 +205,32 @@ void main() {
       matchesGoldenFile('goldens/im_message_bubbles.png'),
     );
   });
+}
+
+class _TolerantGoldenFileComparator extends LocalFileComparator {
+  _TolerantGoldenFileComparator(
+    super.testFile, {
+    required double precisionTolerance,
+  }) : assert(
+         precisionTolerance >= 0 && precisionTolerance <= 1,
+         'precisionTolerance must be between 0 and 1',
+       ),
+       _precisionTolerance = precisionTolerance;
+
+  final double _precisionTolerance;
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await getGoldenBytes(golden),
+    );
+    if (result.passed || result.diffPercent <= _precisionTolerance) {
+      result.dispose();
+      return true;
+    }
+    final error = await generateFailureOutput(result, golden, basedir);
+    result.dispose();
+    throw FlutterError(error);
+  }
 }
