@@ -25,6 +25,7 @@ class ZzzServerConfig {
     this.selfId = '',
     this.deviceId = '',
     this.presetBotIds = const ['fairy'],
+    this.dynamicCapabilities = ImDynamicProtocolCapabilities.current,
   });
 
   final String serverUrl;
@@ -32,6 +33,7 @@ class ZzzServerConfig {
   final String selfId;
   final String deviceId;
   final List<String> presetBotIds;
+  final ImDynamicProtocolCapabilities dynamicCapabilities;
 }
 
 class ZzzAccountResult {
@@ -144,9 +146,17 @@ class ZzzServerSource implements ImMessageSource {
   final _echoCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _echoCounter = 0;
   ConnectionStatus _status = ConnectionStatus.disconnected;
+  ImDynamicProtocolCapabilities? _serverDynamicCapabilities;
+  ImDynamicProtocolCapabilities? _negotiatedDynamicCapabilities;
 
   Stream<ZzzTerminalRequest> get terminalRequests =>
       _terminalRequestsController.stream;
+
+  ImDynamicProtocolCapabilities? get serverDynamicCapabilities =>
+      _serverDynamicCapabilities;
+
+  ImDynamicProtocolCapabilities? get negotiatedDynamicCapabilities =>
+      _negotiatedDynamicCapabilities;
 
   @override
   Stream<ImDynamicEventEnvelope> get dynamicEvents =>
@@ -2657,6 +2667,7 @@ class ZzzServerSource implements ImMessageSource {
       'session_token': config.authToken,
       'user_id': config.selfId,
       if (config.deviceId.isNotEmpty) 'device_id': config.deviceId,
+      'capabilities': config.dynamicCapabilities.toJson(),
     });
     if (response['status'] != 'ok' && _onAuthenticationFailed != null) {
       unawaited(_onAuthenticationFailed());
@@ -2665,6 +2676,12 @@ class ZzzServerSource implements ImMessageSource {
     final data = response['data'];
     if (data is! Map) return;
     final json = Map<String, dynamic>.from(data);
+    _serverDynamicCapabilities = ImDynamicProtocolCapabilities.tryFromJson(
+      json['server_capabilities'],
+    );
+    _negotiatedDynamicCapabilities = ImDynamicProtocolCapabilities.tryFromJson(
+      json['negotiated_capabilities'],
+    );
     _selfId = '${json['user_id'] ?? config.selfId}';
     _users[_selfId] = _userFromJson(
       json,

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:zzzproject/src/im/adapters/zzz_server/zzz_server_source.dart';
 import 'package:zzzproject/src/im/dynamic/models/im_dynamic_models.dart';
+import 'package:zzzproject/src/im/dynamic/runtime/im_dynamic_capabilities.dart';
 import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
@@ -326,15 +327,33 @@ void main() {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sockets = <WebSocket>[];
       final sendRequests = <Map<String, dynamic>>[];
+      Map<String, dynamic>? authRequest;
       server.listen((request) async {
         final socket = await WebSocketTransformer.upgrade(request);
         sockets.add(socket);
         socket.listen((raw) {
           final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
           final action = requestJson['action'];
+          if (action == 'auth') authRequest = requestJson;
           if (action == 'send_message') sendRequests.add(requestJson);
           final data = switch (action) {
-            'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+            'auth' => {
+              'user_id': 'me',
+              'nickname': 'Me',
+              'avatar_url': '',
+              'server_capabilities': {
+                'protocol_version': '1.0',
+                'dynamic_content': {
+                  'schema_versions': ['1.0'],
+                  'component_version': '1.0',
+                  'components': <String>[],
+                  'events': true,
+                  'node_id_patch': true,
+                },
+              },
+              'negotiated_capabilities':
+                  ImDynamicProtocolCapabilities.current.toJson(),
+            },
             'get_friends' => [
               {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
             ],
@@ -382,6 +401,17 @@ void main() {
       });
 
       await source.connect();
+      final advertised =
+          (authRequest!['params'] as Map<String, dynamic>)['capabilities']
+              as Map<String, dynamic>;
+      expect(advertised['protocol_version'], '1.0');
+      expect(
+        (advertised['dynamic_content']
+            as Map<String, dynamic>)['component_version'],
+        '1.0',
+      );
+      expect(source.serverDynamicCapabilities?.schemaVersions, ['1.0']);
+      expect(source.negotiatedDynamicCapabilities?.supportsEvents, isTrue);
       final sent = await source.sendDynamicContents(
         conversationId: 'private_me_bob',
         text: 'Diagnosis ready',

@@ -6,6 +6,40 @@ type MessageSegment struct {
 	Data map[string]interface{} `json:"data"`
 }
 
+const (
+	CurrentProtocolVersion         = "1.0"
+	CurrentDynamicComponentVersion = "1.0"
+)
+
+// Capabilities are exchanged during authentication. ProtocolVersion covers
+// the transport contract; DynamicContent keeps schema and component runtime
+// versions separate so either can evolve independently.
+type Capabilities struct {
+	ProtocolVersion string                      `json:"protocol_version"`
+	DynamicContent  *DynamicContentCapabilities `json:"dynamic_content,omitempty"`
+}
+
+type DynamicContentCapabilities struct {
+	SchemaVersions   []string `json:"schema_versions"`
+	ComponentVersion string   `json:"component_version"`
+	Components       []string `json:"components"`
+	Events           bool     `json:"events"`
+	NodeIDPatch      bool     `json:"node_id_patch"`
+}
+
+func CurrentServerCapabilities() Capabilities {
+	return Capabilities{
+		ProtocolVersion: CurrentProtocolVersion,
+		DynamicContent: &DynamicContentCapabilities{
+			SchemaVersions:   []string{"1.0"},
+			ComponentVersion: CurrentDynamicComponentVersion,
+			Components:       []string{},
+			Events:           true,
+			NodeIDPatch:      true,
+		},
+	}
+}
+
 // Convenience constructors for message segments.
 
 func TextSegment(text string) MessageSegment {
@@ -320,11 +354,12 @@ const (
 
 // AuthParams are the params for the "auth" action.
 type AuthParams struct {
-	Token        string `json:"token"`
-	SessionToken string `json:"session_token,omitempty"`
-	Password     string `json:"password,omitempty"`
-	UserID       string `json:"user_id,omitempty"`
-	DeviceID     string `json:"device_id"`
+	Token        string        `json:"token"`
+	SessionToken string        `json:"session_token,omitempty"`
+	Password     string        `json:"password,omitempty"`
+	UserID       string        `json:"user_id,omitempty"`
+	DeviceID     string        `json:"device_id"`
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
 }
 
 // RegisterParams are the params for the "register" action.

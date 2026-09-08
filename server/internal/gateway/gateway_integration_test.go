@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
 )
 
@@ -542,12 +543,39 @@ func dialWebSocket(t *testing.T, url string) *websocket.Conn {
 func authenticate(t *testing.T, connection *websocket.Conn, userID string) {
 	t.Helper()
 	response := request(t, connection, "auth", map[string]interface{}{
-		"token":   userID,
-		"user_id": userID,
+		"token":        userID,
+		"user_id":      userID,
+		"capabilities": currentTestCapabilities(),
 	})
 	assertOK(t, response)
 	if responseData(t, response)["user_id"] != userID {
 		t.Fatalf("authenticated as unexpected user: %#v", response)
+	}
+}
+
+func authenticateLegacy(t *testing.T, connection *websocket.Conn, userID string) {
+	t.Helper()
+	response := request(t, connection, "auth", map[string]interface{}{
+		"token":   userID,
+		"user_id": userID,
+	})
+	assertOK(t, response)
+}
+
+func currentTestCapabilities() map[string]interface{} {
+	return map[string]interface{}{
+		"protocol_version": protocol.CurrentProtocolVersion,
+		"dynamic_content": map[string]interface{}{
+			"schema_versions":   []string{"1.0"},
+			"component_version": protocol.CurrentDynamicComponentVersion,
+			"components": []string{
+				"text", "markdown", "icon", "image", "row", "column",
+				"card", "container", "divider", "button", "input",
+				"checkbox", "select", "progress", "status", "badge",
+			},
+			"events":        true,
+			"node_id_patch": true,
+		},
 	}
 }
 

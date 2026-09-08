@@ -345,6 +345,108 @@ func TestDynamicUpdateKeepsOneHistoryMessageAndBroadcastsPatch(t *testing.T) {
 	}
 }
 
+func TestDynamicCapabilitiesNegotiateAndDowngradeLegacyClients(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+
+	authResponse := request(t, alice, "auth", map[string]interface{}{
+		"token":        "alice",
+		"user_id":      "alice",
+		"capabilities": currentTestCapabilities(),
+	})
+	assertOK(t, authResponse)
+	authData := responseData(t, authResponse)
+	serverCapabilities := authData["server_capabilities"].(map[string]interface{})
+	negotiated := authData["negotiated_capabilities"].(map[string]interface{})
+	if serverCapabilities["protocol_version"] != protocol.CurrentProtocolVersion ||
+		negotiated["protocol_version"] != protocol.CurrentProtocolVersion {
+		t.Fatalf("unexpected capability negotiation: %#v", authData)
+	}
+	authenticateLegacy(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+
+	content := validDynamicContentSegment()
+	content.Data["fallback"] = map[string]interface{}{
+		"type":    "text",
+		"content": "Network diagnosis requires a newer client",
+	}
+	sent := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message": []protocol.MessageSegment{
+			protocol.TextSegment("Diagnosis ready"),
+			content,
+		},
+	})
+	assertOK(t, sent)
+	messageID := responseData(t, sent)["message_id"].(string)
+
+	legacyEvent := readJSON(t, bob)
+	legacySegments := legacyEvent["message"].([]interface{})
+	if len(legacySegments) != 2 ||
+		legacySegments[1].(map[string]interface{})["type"] != "text" ||
+		legacySegments[1].(map[string]interface{})["data"].(map[string]interface{})["text"] != "Network diagnosis requires a newer client" {
+		t.Fatalf("legacy event was not downgraded: %#v", legacySegments)
+	}
+
+	stored, err := database.GetMessage(messageID)
+	if err != nil || stored == nil || stored.Segments[1].Type != "dynamic_content" {
+		t.Fatalf("canonical dynamic content was not preserved: %#v err=%v", stored, err)
+	}
+	legacyHistory := responseDataList(t, request(t, bob, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	legacyHistorySegments := legacyHistory[0].(map[string]interface{})["message"].([]interface{})
+	if legacyHistorySegments[1].(map[string]interface{})["type"] != "text" {
+		t.Fatalf("legacy history was not downgraded: %#v", legacyHistorySegments)
+	}
+	modernHistory := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	modernHistorySegments := modernHistory[0].(map[string]interface{})["message"].([]interface{})
+	if modernHistorySegments[1].(map[string]interface{})["type"] != "dynamic_content" {
+		t.Fatalf("modern history lost dynamic content: %#v", modernHistorySegments)
+	}
+
+	update := protocol.DynamicUpdateSegment(messageID, "diagnosis-1", []protocol.DynamicPatch{{
+		Operation: "update",
+		NodeID:    "status",
+		Props:     map[string]interface{}{"text": "Complete"},
+	}})
+	assertOK(t, request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{update},
+	}))
+	if event := readJSON(t, alice); event["message_id"] != messageID {
+		t.Fatalf("modern update event = %#v", event)
+	}
+	if err := bob.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var unexpected map[string]interface{}
+	if err := bob.ReadJSON(&unexpected); err == nil {
+		t.Fatalf("legacy client received a dynamic patch: %#v", unexpected)
+	} else if networkError, ok := err.(net.Error); !ok || !networkError.Timeout() {
+		t.Fatalf("wait for legacy patch: %v", err)
+	}
+}
+
 func TestDynamicUpdateClientIDIsIdempotentForCreatePatch(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)

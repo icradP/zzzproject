@@ -32,6 +32,7 @@ type Client struct {
 	userID            string
 	deviceID          string
 	terminalSessionID string
+	capabilities      protocol.Capabilities
 	send              chan []byte
 	sendMu            sync.RWMutex
 	sendDone          bool
@@ -432,6 +433,12 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 		g.sendError(client, req.Echo, "device_id must not exceed 128 bytes")
 		return
 	}
+	advertisedCapabilities, err := parseClientCapabilities(params["capabilities"])
+	if err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
+	}
+	negotiatedCapabilities := negotiateCapabilities(advertisedCapabilities)
 	if sessionToken == "" {
 		sessionToken = token
 	}
@@ -496,6 +503,7 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 
 	firstConnection := false
 	if client.userID == "" {
+		client.capabilities = negotiatedCapabilities
 		var err error
 		firstConnection, err = g.addClient(client, userID)
 		if err != nil {
@@ -526,6 +534,8 @@ func (g *Gateway) handleAuth(client *Client, req *protocol.Request) {
 		"card_background_sensitive": user.CardBackgroundSensitive,
 		"show_mutual_groups":        user.ShowMutualGroups,
 		"show_account_id":           user.ShowAccountID,
+		"server_capabilities":       protocol.CurrentServerCapabilities(),
+		"negotiated_capabilities":   client.capabilities,
 	}
 	if password != "" {
 		if session, err := g.issueSession(userID); err == nil {
@@ -2038,7 +2048,7 @@ func (g *Gateway) handleGetMessages(client *Client, req *protocol.Request) {
 				"nickname":   msg.SenderNickname,
 				"avatar_url": senderAvatar,
 			},
-			"message":         msg.Segments,
+			"message":         clientMessageSegments(client, msg.Segments),
 			"timestamp":       msg.Timestamp.Unix(),
 			"timestamp_ms":    msg.Timestamp.UnixMilli(),
 			"recalled":        msg.Recalled,
@@ -3234,7 +3244,7 @@ func (g *Gateway) handleGetForwardMessage(client *Client, req *protocol.Request)
 				"user_id":  msg.SenderID,
 				"nickname": msg.SenderNickname,
 			},
-			"message":      msg.Segments,
+			"message":      clientMessageSegments(client, msg.Segments),
 			"timestamp":    msg.Timestamp.Unix(),
 			"timestamp_ms": msg.Timestamp.UnixMilli(),
 		}
@@ -3474,6 +3484,8 @@ func (g *Gateway) broadcastToConversation(convID string, event interface{}, excl
 	if err != nil {
 		return
 	}
+	messageEvent, isMessageEvent := event.(protocol.MessageEvent)
+	capabilitySensitive := isMessageEvent && hasCapabilitySensitiveSegment(messageEvent.Message)
 
 	conv, _ := g.store.GetConversation(convID)
 	if conv == nil {
@@ -3500,7 +3512,15 @@ func (g *Gateway) broadcastToConversation(convID string, event interface{}, excl
 		}
 	}
 	for _, client := range clients {
-		client.enqueue(data)
+		outgoing := data
+		if capabilitySensitive {
+			var deliver bool
+			outgoing, deliver = marshalClientEvent(client, messageEvent)
+			if !deliver {
+				continue
+			}
+		}
+		client.enqueue(outgoing)
 	}
 }
 
@@ -3512,6 +3532,8 @@ func (g *Gateway) broadcastToConversationExceptClient(convID string, event inter
 	if err != nil {
 		return
 	}
+	messageEvent, isMessageEvent := event.(protocol.MessageEvent)
+	capabilitySensitive := isMessageEvent && hasCapabilitySensitiveSegment(messageEvent.Message)
 
 	conv, _ := g.store.GetConversation(convID)
 	if conv == nil {
@@ -3532,7 +3554,15 @@ func (g *Gateway) broadcastToConversationExceptClient(convID string, event inter
 		if current == excluded {
 			continue
 		}
-		current.enqueue(data)
+		outgoing := data
+		if capabilitySensitive {
+			var deliver bool
+			outgoing, deliver = marshalClientEvent(current, messageEvent)
+			if !deliver {
+				continue
+			}
+		}
+		current.enqueue(outgoing)
 	}
 }
 
@@ -3771,9 +3801,19 @@ func (g *Gateway) sendToUser(userID string, event interface{}) {
 	if err != nil {
 		return
 	}
+	messageEvent, isMessageEvent := event.(protocol.MessageEvent)
+	capabilitySensitive := isMessageEvent && hasCapabilitySensitiveSegment(messageEvent.Message)
 
 	for _, client := range g.clientsForUser(userID) {
-		client.enqueue(data)
+		outgoing := data
+		if capabilitySensitive {
+			var deliver bool
+			outgoing, deliver = marshalClientEvent(client, messageEvent)
+			if !deliver {
+				continue
+			}
+		}
+		client.enqueue(outgoing)
 	}
 }
 

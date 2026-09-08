@@ -7,6 +7,26 @@ import 'package:zzzproject/src/im/adapters/nonebot/nonebot_mapper.dart';
 
 void main() {
   test(
+    'dynamic capabilities keep protocol, schema, and component versions',
+    () {
+      final json = ImDynamicProtocolCapabilities.current.toJson();
+      final decoded = ImDynamicProtocolCapabilities.fromJson(json);
+
+      expect(json['protocol_version'], '1.0');
+      expect(
+        (json['dynamic_content'] as Map<String, dynamic>)['schema_versions'],
+        ['1.0'],
+      );
+      expect(decoded.protocolVersion, '1.0');
+      expect(decoded.schemaVersions, ['1.0']);
+      expect(decoded.componentVersion, '1.0');
+      expect(decoded.components, containsAll(['text', 'button', 'status']));
+      expect(decoded.supportsEvents, isTrue);
+      expect(decoded.supportsNodeIdPatch, isTrue);
+    },
+  );
+
+  test(
     'mock repository creates and emits idempotent dynamic content',
     () async {
       final repository = MockImRepository();
