@@ -19,7 +19,8 @@ Commands:
 
 Environment:
   ZZZ_MUSL_CC        x86_64 musl C compiler (auto-detected by default)
-  ZZZ_OUTPUT_DIR     Artifact directory (default: <repo>/dist)
+  ZZZ_OUTPUT_DIR     Artifact directory (default: /Volumes/ssd01/tmp/codex/zzz-native-release/artifacts)
+  ZZZ_TMP_ROOT       Writable local temporary root (default: /Volumes/ssd01/tmp/codex)
   ZZZ_DEPLOY_TARGET  SSH target used when deploy has no positional target
   ZZZ_RELEASE_BRANCH Remote branch required for deploy (default: master)
   ZZZ_SKIP_TESTS=1   Skip local Go and asset checks
@@ -46,7 +47,8 @@ require_command() {
 }
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-output_dir=${ZZZ_OUTPUT_DIR:-${repo_root}/dist}
+tmp_root=${ZZZ_TMP_ROOT:-/Volumes/ssd01/tmp/codex}
+output_dir=${ZZZ_OUTPUT_DIR:-${tmp_root}/zzz-native-release/artifacts}
 smoke_image=${ZZZ_SMOKE_IMAGE:-alpine:3.22}
 release_branch=${ZZZ_RELEASE_BRANCH:-master}
 action=${1:-build}
@@ -77,13 +79,15 @@ require_command file
 require_command shasum
 require_command docker
 
+[[ -d ${tmp_root} && -w ${tmp_root} ]] || die \
+  "temporary root is not writable: ${tmp_root}"
+
 release_sha=$(git -C "${repo_root}" rev-parse HEAD)
 release_id=${release_sha:0:12}
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/zzz-native-release.XXXXXX")
+work_dir=$(mktemp -d "${tmp_root}/zzz-native-release.XXXXXX")
 artifact_dir=${work_dir}/artifacts
 package_root=${work_dir}/package
-checkout_root=${work_dir}/checkout
-release_source_root=${checkout_root}
+release_source_root=${repo_root}
 release_server_root=${release_source_root}/server
 
 cleanup() {
@@ -107,9 +111,16 @@ resolve_musl_compiler() {
 }
 
 prepare_release_checkout() {
-  log "Checking out committed release ${release_id} in a temporary workspace."
-  git clone --quiet --shared --no-checkout "${repo_root}" "${checkout_root}"
-  git -C "${checkout_root}" checkout --quiet --detach "${release_sha}"
+  # Build the local committed tree directly. A clone would hide local
+  # workspace state and violates the local-first repository policy.
+  local changes
+  changes=$(git -C "${repo_root}" status --porcelain --untracked-files=all -- \
+    server deploy/zzz-im .github/workflows/deploy-pages.yml)
+  [[ -z ${changes} ]] || die \
+    'server or native deployment inputs are not committed; commit them before build/deploy'
+  release_source_root=${repo_root}
+  release_server_root=${release_source_root}/server
+  log "Building committed release ${release_id} from the local worktree."
 }
 
 prepare_validation_worktree() {
