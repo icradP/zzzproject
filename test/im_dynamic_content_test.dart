@@ -6,6 +6,62 @@ import 'package:zzzproject/zzz_im_chat.dart';
 import 'package:zzzproject/src/im/adapters/nonebot/nonebot_mapper.dart';
 
 void main() {
+  test(
+    'mock repository creates and emits idempotent dynamic content',
+    () async {
+      final repository = MockImRepository();
+      addTearDown(repository.dispose);
+      const content = ImDynamicContent(
+        id: 'mock-card-1',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'text',
+          props: {'text': 'Local preview'},
+        ),
+      );
+      final emitted = repository
+          .watchMessages('dm_belle_me')
+          .firstWhere(
+            (messages) => messages.any(
+              (message) =>
+                  message.segments?.any(
+                    (segment) => segment.type == 'dynamic_content',
+                  ) ==
+                  true,
+            ),
+          );
+
+      final sent = await repository.sendDynamicContent(
+        conversationId: 'dm_belle_me',
+        content: content,
+        text: 'Preview',
+        clientMessageId: 'mock-client-1',
+      );
+      final messages = await emitted;
+      final retried = await repository.sendDynamicContent(
+        conversationId: 'dm_belle_me',
+        content: content,
+        text: 'Preview',
+        clientMessageId: 'mock-client-1',
+      );
+      final afterRetry = await repository.watchMessages('dm_belle_me').first;
+
+      expect(sent.kind, ImMessageKind.dynamicContent);
+      expect(sent.segments?.map((segment) => segment.type), [
+        'text',
+        'dynamic_content',
+      ]);
+      expect(messages.last.id, sent.id);
+      expect(retried.id, sent.id);
+      expect(
+        afterRetry.where((message) => message.id == sent.id),
+        hasLength(1),
+      );
+    },
+  );
+
   test('dynamic content round-trips its schema and ignores unknown fields', () {
     final content = ImDynamicContent.fromJson({
       'type': 'dynamic_content',

@@ -43,6 +43,56 @@ class ImDynamicSchemaValidator {
   final int maxTextLength;
   final int maxImages;
 
+  /// Validates the cards embedded in one message. Content IDs must be unique
+  /// because events and patches address a card by that ID.
+  ImDynamicValidationResult validateBatch(List<ImDynamicContent> contents) {
+    final errors = <ImDynamicValidationIssue>[];
+    final warnings = <ImDynamicValidationIssue>[];
+    if (contents.isEmpty) {
+      errors.add(
+        const ImDynamicValidationIssue(
+          path: 'contents',
+          message: 'at least one dynamic content is required',
+        ),
+      );
+      return ImDynamicValidationResult(errors: errors);
+    }
+
+    final ids = <String>{};
+    for (var index = 0; index < contents.length; index++) {
+      final content = contents[index];
+      final result = validate(content);
+      errors.addAll(
+        result.errors.map(
+          (issue) => ImDynamicValidationIssue(
+            path: 'contents[$index].${issue.path}',
+            message: issue.message,
+          ),
+        ),
+      );
+      warnings.addAll(
+        result.warnings.map(
+          (issue) => ImDynamicValidationIssue(
+            path: 'contents[$index].${issue.path}',
+            message: issue.message,
+          ),
+        ),
+      );
+      if (!ids.add(content.id)) {
+        errors.add(
+          ImDynamicValidationIssue(
+            path: 'contents[$index].id',
+            message: 'content id must be unique within a message',
+          ),
+        );
+      }
+    }
+    return ImDynamicValidationResult(
+      errors: List.unmodifiable(errors),
+      warnings: List.unmodifiable(warnings),
+    );
+  }
+
   ImDynamicValidationResult validate(ImDynamicContent content) {
     final errors = <ImDynamicValidationIssue>[];
     final warnings = <ImDynamicValidationIssue>[];

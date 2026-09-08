@@ -221,6 +221,36 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Future<ImMessage> sendDynamicContents({
+    required String conversationId,
+    required List<ImDynamicContent> contents,
+    String? text,
+    String? clientMessageId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    final message = await registration.repository.sendDynamicContents(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      contents: contents,
+      text: text,
+      clientMessageId: clientMessageId,
+    );
+    return _scopeMessage(registration, message);
+  }
+
+  @override
+  Future<ImMessage> sendDynamicContent({
+    required String conversationId,
+    required ImDynamicContent content,
+    String? text,
+    String? clientMessageId,
+  }) => sendDynamicContents(
+    conversationId: conversationId,
+    contents: [content],
+    text: text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
   Future<void> sendDynamicEvent({
     required String conversationId,
     required ImDynamicEvent event,

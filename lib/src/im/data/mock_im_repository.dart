@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 
 import '../../assets/app_assets.dart';
+import '../dynamic/models/im_dynamic_models.dart';
+import '../dynamic/runtime/im_dynamic_validator.dart';
 import '../models/im_models.dart';
 import 'im_repository.dart';
 import 'im_sticker_catalog.dart';
@@ -19,6 +21,7 @@ class MockImRepository extends ImRepository {
   final _conversations = <String, ImConversation>{};
   final _messages = <String, List<ImMessage>>{};
   final _groupAnnouncements = <String, List<ImGroupAnnouncement>>{};
+  final _dynamicMessagesByClientId = <(String, String), ImMessage>{};
   var _announcementCounter = 0;
   final _groupMuteAll = <String, bool>{};
   final _groupRoles = <String, Map<String, ImGroupRole>>{};
@@ -358,6 +361,84 @@ class MockImRepository extends ImRepository {
     _emitConversations();
 
     return message;
+  }
+
+  @override
+  Future<ImMessage> sendDynamicContents({
+    required String conversationId,
+    required List<ImDynamicContent> contents,
+    String? text,
+    String? clientMessageId,
+  }) async {
+    _validateDynamicContents(contents);
+    final normalizedClientId = clientMessageId?.trim() ?? '';
+    final idempotencyKey = (conversationId, normalizedClientId);
+    if (normalizedClientId.isNotEmpty) {
+      final existing = _dynamicMessagesByClientId[idempotencyKey];
+      if (existing != null) return existing;
+    }
+
+    final trimmedText = text?.trim() ?? '';
+    final segments = <OneBotMessageSegment>[
+      if (trimmedText.isNotEmpty)
+        OneBotMessageSegment(type: 'text', data: {'text': trimmedText}),
+      for (final content in contents)
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: Map<String, dynamic>.from(content.toJson())..remove('type'),
+        ),
+    ];
+    final now = DateTime.now();
+    final message = ImMessage(
+      id: 'local_${now.microsecondsSinceEpoch}',
+      conversationId: conversationId,
+      senderId: _currentUserId,
+      text:
+          trimmedText.isEmpty
+              ? List.filled(contents.length, '[动态内容]').join(' ')
+              : trimmedText,
+      sentAt: now,
+      kind: ImMessageKind.dynamicContent,
+      isMine: true,
+      status: ImMessageStatus.sent,
+      segments: segments,
+    );
+
+    _messages.putIfAbsent(conversationId, () => []).add(message);
+    if (normalizedClientId.isNotEmpty) {
+      _dynamicMessagesByClientId[idempotencyKey] = message;
+    }
+    _emitMessages(conversationId);
+
+    final conversation = _conversations[conversationId];
+    if (conversation != null) {
+      _conversations[conversationId] = conversation.copyWith(
+        subtitle: message.text,
+        updatedAt: now,
+        unreadCount: 0,
+      );
+    } else {
+      final isGroup = conversationId.startsWith('group_');
+      _conversations[conversationId] = ImConversation(
+        id: conversationId,
+        type: isGroup ? ImConversationType.group : ImConversationType.direct,
+        title:
+            isGroup
+                ? 'Group ${conversationId.substring(6)}'
+                : _resolveDisplayName(conversationId),
+        participantIds: [_currentUserId],
+        subtitle: message.text,
+        updatedAt: now,
+      );
+    }
+    _emitConversations();
+    return message;
+  }
+
+  void _validateDynamicContents(List<ImDynamicContent> contents) {
+    final result = const ImDynamicSchemaValidator().validateBatch(contents);
+    if (result.isValid) return;
+    throw ArgumentError.value(contents, 'contents', result.errors.join('; '));
   }
 
   @override

@@ -44,6 +44,31 @@ abstract class ImMessageSource {
     String? replyToMessageId,
   });
 
+  /// Creates one message containing one or more validated dynamic contents.
+  /// [text], when present, is emitted as the leading message segment.
+  Future<ImMessage> sendDynamicContents({
+    required String conversationId,
+    required List<ImDynamicContent> contents,
+    String? text,
+    String? clientMessageId,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic content creation is not supported by this source.',
+    );
+  }
+
+  Future<ImMessage> sendDynamicContent({
+    required String conversationId,
+    required ImDynamicContent content,
+    String? text,
+    String? clientMessageId,
+  }) => sendDynamicContents(
+    conversationId: conversationId,
+    contents: [content],
+    text: text,
+    clientMessageId: clientMessageId,
+  );
+
   Future<void> sendDynamicEvent({
     required String conversationId,
     required ImDynamicEvent event,

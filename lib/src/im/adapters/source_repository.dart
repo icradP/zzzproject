@@ -72,6 +72,32 @@ class SourceBackedRepository implements ImRepository {
   );
 
   @override
+  Future<ImMessage> sendDynamicContents({
+    required String conversationId,
+    required List<ImDynamicContent> contents,
+    String? text,
+    String? clientMessageId,
+  }) => _source.sendDynamicContents(
+    conversationId: conversationId,
+    contents: contents,
+    text: text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<ImMessage> sendDynamicContent({
+    required String conversationId,
+    required ImDynamicContent content,
+    String? text,
+    String? clientMessageId,
+  }) => _source.sendDynamicContent(
+    conversationId: conversationId,
+    content: content,
+    text: text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
   Future<void> sendDynamicEvent({
     required String conversationId,
     required ImDynamicEvent event,

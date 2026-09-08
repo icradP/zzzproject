@@ -321,6 +321,136 @@ void main() {
   });
 
   test(
+    'ZZZ server source sends validated text with multiple dynamic contents',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final sockets = <WebSocket>[];
+      final sendRequests = <Map<String, dynamic>>[];
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        sockets.add(socket);
+        socket.listen((raw) {
+          final requestJson = jsonDecode(raw as String) as Map<String, dynamic>;
+          final action = requestJson['action'];
+          if (action == 'send_message') sendRequests.add(requestJson);
+          final data = switch (action) {
+            'auth' => {'user_id': 'me', 'nickname': 'Me', 'avatar_url': ''},
+            'get_friends' => [
+              {'user_id': 'bob', 'nickname': 'Bob', 'avatar_url': ''},
+            ],
+            'get_conversations' => [
+              {
+                'conversation_id': 'private_me_bob',
+                'type': 'private',
+                'title': 'Bob',
+                'participants': ['me', 'bob'],
+                'unread_count': 0,
+                'last_timestamp': 200,
+              },
+            ],
+            'get_messages' => <Object?>[],
+            'send_message' => {
+              'message_id': 'dynamic-message-1',
+              'timestamp_ms': 200,
+            },
+            _ => <String, Object?>{},
+          };
+          socket.add(
+            jsonEncode({
+              'status': 'ok',
+              'retcode': 0,
+              'data': data,
+              'echo': requestJson['echo'],
+            }),
+          );
+        });
+      });
+
+      final source = ZzzServerSource(
+        config: ZzzServerConfig(
+          serverUrl: 'ws://127.0.0.1:${server.port}',
+          selfId: 'me',
+        ),
+        allowReconnect: false,
+      );
+      addTearDown(() async {
+        source.disconnect();
+        for (final socket in sockets) {
+          await socket.close();
+        }
+        await server.close(force: true);
+      });
+
+      await source.connect();
+      final sent = await source.sendDynamicContents(
+        conversationId: 'private_me_bob',
+        text: 'Diagnosis ready',
+        contents: [
+          _dynamicContent('diagnosis-1', 'Network status'),
+          _dynamicContent('actions-1', 'Available actions'),
+        ],
+        clientMessageId: 'dynamic-client-1',
+      );
+
+      expect(sent.id, 'dynamic-message-1');
+      expect(sendRequests, hasLength(1));
+      final params = sendRequests.single['params'] as Map<String, dynamic>;
+      expect(params['client_message_id'], 'dynamic-client-1');
+      expect(params['message'], [
+        {
+          'type': 'text',
+          'data': {'text': 'Diagnosis ready'},
+        },
+        {
+          'type': 'dynamic_content',
+          'data': {
+            'id': 'diagnosis-1',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'root-diagnosis-1',
+              'type': 'text',
+              'props': {'text': 'Network status'},
+            },
+          },
+        },
+        {
+          'type': 'dynamic_content',
+          'data': {
+            'id': 'actions-1',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'root-actions-1',
+              'type': 'text',
+              'props': {'text': 'Available actions'},
+            },
+          },
+        },
+      ]);
+
+      expect(
+        () => source.sendDynamicContent(
+          conversationId: 'private_me_bob',
+          content: _dynamicContent('', 'Invalid'),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => source.sendDynamicContents(
+          conversationId: 'private_me_bob',
+          contents: [
+            _dynamicContent('duplicate', 'First'),
+            _dynamicContent('duplicate', 'Second'),
+          ],
+        ),
+        throwsArgumentError,
+      );
+      expect(sendRequests, hasLength(1));
+    },
+  );
+
+  test(
     'ZZZ server source sends and receives transient dynamic events',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -552,6 +682,13 @@ void main() {
     },
   );
 }
+
+ImDynamicContent _dynamicContent(String id, String text) => ImDynamicContent(
+  id: id,
+  version: '1.0',
+  source: ImDynamicContentSource.ai,
+  tree: ImDynamicNode(id: 'root-$id', type: 'text', props: {'text': text}),
+);
 
 List<dynamic> _sentSegments(Map<String, dynamic> request) {
   final params = request['params'] as Map<String, dynamic>;

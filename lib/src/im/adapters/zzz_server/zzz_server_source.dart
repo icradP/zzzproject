@@ -423,6 +423,48 @@ class ZzzServerSource implements ImMessageSource {
   }
 
   @override
+  Future<ImMessage> sendDynamicContents({
+    required String conversationId,
+    required List<ImDynamicContent> contents,
+    String? text,
+    String? clientMessageId,
+  }) {
+    _validateDynamicContents(contents);
+    final trimmedText = text?.trim() ?? '';
+    return _sendMessage(conversationId, [
+      if (trimmedText.isNotEmpty)
+        {
+          'type': 'text',
+          'data': {'text': trimmedText},
+        },
+      for (final content in contents)
+        {
+          'type': 'dynamic_content',
+          'data': Map<String, dynamic>.from(content.toJson())..remove('type'),
+        },
+    ], clientMessageId: clientMessageId);
+  }
+
+  @override
+  Future<ImMessage> sendDynamicContent({
+    required String conversationId,
+    required ImDynamicContent content,
+    String? text,
+    String? clientMessageId,
+  }) => sendDynamicContents(
+    conversationId: conversationId,
+    contents: [content],
+    text: text,
+    clientMessageId: clientMessageId,
+  );
+
+  void _validateDynamicContents(List<ImDynamicContent> contents) {
+    final result = const ImDynamicSchemaValidator().validateBatch(contents);
+    if (result.isValid) return;
+    throw ArgumentError.value(contents, 'contents', result.errors.join('; '));
+  }
+
+  @override
   Future<ImMessage> sendStickerMessage({
     required String conversationId,
     required ImStickerReference sticker,

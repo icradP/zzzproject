@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:onebot_flutter/onebot_flutter.dart';
 import 'package:zzzproject/src/im/adapters/composite_im_repository.dart';
 import 'package:zzzproject/src/im/data/mock_im_repository.dart';
+import 'package:zzzproject/src/im/dynamic/models/im_dynamic_models.dart';
 import 'package:zzzproject/src/im/models/im_models.dart';
 import 'package:zzzproject/src/im/models/im_source_address.dart';
 
@@ -156,6 +157,55 @@ void main() {
     expect(zzzMessages, hasLength(3));
     expect(qqSelf.id, 'qq::me');
     expect(ImSourceAddress.localIdOf(qqSelf.id), 'me');
+  });
+
+  test('routes and scopes dynamic content creation by source', () async {
+    final zzzRepository = MockImRepository();
+    final qqRepository = MockImRepository();
+    final repository = CompositeImRepository(
+      registrations: [
+        ImRepositoryRegistration(
+          id: 'zzz',
+          label: 'ZZZ Server',
+          repository: zzzRepository,
+        ),
+        ImRepositoryRegistration(
+          id: 'qq',
+          label: 'QQ',
+          repository: qqRepository,
+        ),
+      ],
+      primarySourceId: 'zzz',
+    );
+    addTearDown(repository.dispose);
+
+    const content = ImDynamicContent(
+      id: 'status-1',
+      version: '1.0',
+      source: ImDynamicContentSource.user,
+      tree: ImDynamicNode(id: 'root', type: 'status', props: {'text': 'Ready'}),
+    );
+    final message = await repository.sendDynamicContent(
+      conversationId: 'qq::dm_belle_me',
+      content: content,
+      text: 'Remote status',
+      clientMessageId: 'client-1',
+    );
+    final qqMessages = await repository
+        .watchMessages('qq::dm_belle_me')
+        .firstWhere((messages) => messages.length == 4);
+    final zzzMessages =
+        await repository.watchMessages('zzz::dm_belle_me').first;
+
+    expect(message.conversationId, 'qq::dm_belle_me');
+    expect(message.senderId, 'qq::me');
+    expect(message.kind, ImMessageKind.dynamicContent);
+    expect(qqMessages.last.id, message.id);
+    expect(qqMessages.last.segments?.map((segment) => segment.type), [
+      'text',
+      'dynamic_content',
+    ]);
+    expect(zzzMessages, hasLength(3));
   });
 
   test('preserves message metadata across source namespacing', () {
