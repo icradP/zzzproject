@@ -126,6 +126,43 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 }
 ```
 
+当内容结构整体变化时使用 `dynamic_replace`。替换必须保留相同的 `content_id`，并携带一份完整且通过校验的 Dynamic Content schema；消息 ID、文本段和同一消息中的其他内容不会变化：
+
+```json
+{
+  "type": "dynamic_replace",
+  "data": {
+    "message_id": "msg_123",
+    "content_id": "diagnosis-1",
+    "content": {
+      "id": "diagnosis-1",
+      "version": "1.0",
+      "source": "ai",
+      "fallback": {"type": "text", "content": "诊断已完成"},
+      "tree": {
+        "id": "root",
+        "type": "card",
+        "props": {"title": "诊断完成"}
+      }
+    }
+  }
+}
+```
+
+当需要移除一个 Dynamic Content、但保留原消息和其他内容时使用 `dynamic_remove`：
+
+```json
+{
+  "type": "dynamic_remove",
+  "data": {
+    "message_id": "msg_123",
+    "content_id": "diagnosis-1"
+  }
+}
+```
+
+`dynamic_update`、`dynamic_replace` 和 `dynamic_remove` 都是对已有消息的变更，不会创建新的历史消息。服务端会把变更广播给具备相应能力的实时客户端，并把变更后的完整消息用于历史读取；不支持 Dynamic Content Operations 的旧客户端不会收到无法解释的变更段。
+
 服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，`payload` 必须是 JSON 对象，业务层决定是否将其作为审计消息保存。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
 
 需要支持网络重试的动态更新应额外携带 `client_message_id`（沿用发送者维度的 1-128 位客户端请求 ID）：

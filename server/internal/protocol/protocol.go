@@ -20,22 +20,24 @@ type Capabilities struct {
 }
 
 type DynamicContentCapabilities struct {
-	SchemaVersions   []string `json:"schema_versions"`
-	ComponentVersion string   `json:"component_version"`
-	Components       []string `json:"components"`
-	Events           bool     `json:"events"`
-	NodeIDPatch      bool     `json:"node_id_patch"`
+	SchemaVersions    []string `json:"schema_versions"`
+	ComponentVersion  string   `json:"component_version"`
+	Components        []string `json:"components"`
+	Events            bool     `json:"events"`
+	NodeIDPatch       bool     `json:"node_id_patch"`
+	ContentOperations bool     `json:"content_operations"`
 }
 
 func CurrentServerCapabilities() Capabilities {
 	return Capabilities{
 		ProtocolVersion: CurrentProtocolVersion,
 		DynamicContent: &DynamicContentCapabilities{
-			SchemaVersions:   []string{"1.0"},
-			ComponentVersion: CurrentDynamicComponentVersion,
-			Components:       []string{},
-			Events:           true,
-			NodeIDPatch:      true,
+			SchemaVersions:    []string{"1.0"},
+			ComponentVersion:  CurrentDynamicComponentVersion,
+			Components:        []string{},
+			Events:            true,
+			NodeIDPatch:       true,
+			ContentOperations: true,
 		},
 	}
 }
@@ -140,6 +142,31 @@ func DynamicUpdateSegment(messageID, contentID string, patches []DynamicPatch) M
 			"message_id": messageID,
 			"content_id": contentID,
 			"patches":    patches,
+		},
+	}
+}
+
+// DynamicReplaceSegment replaces one complete dynamic_content schema while
+// preserving the parent message and content identities.
+func DynamicReplaceSegment(messageID, contentID string, content map[string]interface{}) MessageSegment {
+	return MessageSegment{
+		Type: "dynamic_replace",
+		Data: map[string]interface{}{
+			"message_id": messageID,
+			"content_id": contentID,
+			"content":    content,
+		},
+	}
+}
+
+// DynamicRemoveSegment removes one complete dynamic_content segment from an
+// existing message without deleting the surrounding message or its siblings.
+func DynamicRemoveSegment(messageID, contentID string) MessageSegment {
+	return MessageSegment{
+		Type: "dynamic_remove",
+		Data: map[string]interface{}{
+			"message_id": messageID,
+			"content_id": contentID,
 		},
 	}
 }

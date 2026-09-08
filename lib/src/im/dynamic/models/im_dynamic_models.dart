@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../../content/im_content_event.dart';
+
 const _maxDynamicWireIdentifierLength = 128;
 const _maxDynamicWirePatches = 100;
 const _maxDynamicWirePatchIndex = 50;
@@ -431,6 +433,24 @@ class ImDynamicPatchSet {
   };
 }
 
+/// Transport context for a validated in-place content update.
+///
+/// Keeping updates separate from the conversation message stream lets one
+/// bubble rebuild without notifying every row in the chat list.
+class ImDynamicUpdateEnvelope {
+  const ImDynamicUpdateEnvelope({
+    required this.conversationId,
+    required this.senderId,
+    required this.update,
+    required this.sentAt,
+  });
+
+  final String conversationId;
+  final String senderId;
+  final ImDynamicPatchSet update;
+  final DateTime sentAt;
+}
+
 enum ImDynamicLifecycle {
   created,
   active,
@@ -487,22 +507,19 @@ class ImDynamicState {
   };
 }
 
-class ImDynamicEvent {
+class ImDynamicEvent extends ImContentEvent {
   const ImDynamicEvent({
-    required this.messageId,
-    required this.contentId,
+    required super.messageId,
+    required super.contentId,
     required this.nodeId,
     required this.event,
     required this.action,
-    this.payload = const <String, dynamic>{},
-  });
+    super.payload = const <String, dynamic>{},
+  }) : super(type: event);
 
-  final String messageId;
-  final String contentId;
   final String nodeId;
   final String event;
   final String? action;
-  final Map<String, dynamic> payload;
 
   factory ImDynamicEvent.fromJson(Map<String, dynamic> json) {
     final event = _stringField(json, 'event');

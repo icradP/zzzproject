@@ -134,6 +134,8 @@ class ZzzServerSource implements ImMessageSource {
       StreamController<ZzzTerminalRequest>.broadcast();
   final _dynamicEventsController =
       StreamController<ImDynamicEventEnvelope>.broadcast();
+  final _dynamicUpdatesController =
+      StreamController<ImDynamicUpdateEnvelope>.broadcast();
   final _messageControllers = <String, StreamController<List<ImMessage>>>{};
 
   final _conversations = <String, ImConversation>{};
@@ -161,6 +163,10 @@ class ZzzServerSource implements ImMessageSource {
   @override
   Stream<ImDynamicEventEnvelope> get dynamicEvents =>
       _dynamicEventsController.stream;
+
+  @override
+  Stream<ImDynamicUpdateEnvelope> get dynamicUpdates =>
+      _dynamicUpdatesController.stream;
 
   @override
   String get platformName => 'ZZZ Server';
@@ -225,6 +231,7 @@ class ZzzServerSource implements ImMessageSource {
     unawaited(_friendRequestsController.close());
     unawaited(_terminalRequestsController.close());
     unawaited(_dynamicEventsController.close());
+    unawaited(_dynamicUpdatesController.close());
     for (final controller in _messageControllers.values) {
       unawaited(controller.close());
     }
@@ -467,6 +474,32 @@ class ZzzServerSource implements ImMessageSource {
     text: text,
     clientMessageId: clientMessageId,
   );
+
+  @override
+  Future<ImMessage> sendLocalAgentDynamicContent({
+    required String conversationId,
+    required ImDynamicContent content,
+    String? text,
+    String? clientMessageId,
+  }) {
+    _validateDynamicContents([content]);
+    final trimmedText = text?.trim() ?? '';
+    return _sendMessage(conversationId, [
+      {
+        'type': 'agent_route',
+        'data': {'route': 'local', 'role': 'assistant'},
+      },
+      if (trimmedText.isNotEmpty)
+        {
+          'type': 'text',
+          'data': {'text': trimmedText},
+        },
+      {
+        'type': 'dynamic_content',
+        'data': Map<String, dynamic>.from(content.toJson())..remove('type'),
+      },
+    ], clientMessageId: clientMessageId);
+  }
 
   void _validateDynamicContents(List<ImDynamicContent> contents) {
     final result = const ImDynamicSchemaValidator().validateBatch(contents);
@@ -1670,6 +1703,14 @@ class ZzzServerSource implements ImMessageSource {
           _applyDynamicUpdate(json);
           break;
         }
+        if (_dynamicReplaceData(json) != null) {
+          _applyDynamicReplace(json);
+          break;
+        }
+        if (_dynamicRemoveData(json) != null) {
+          _applyDynamicRemove(json);
+          break;
+        }
         final message = _parseMessage(json);
         if (message != null) _addMessageToStream(message);
         final terminalRequest = _parseTerminalRequest(json);
@@ -1691,6 +1732,25 @@ class ZzzServerSource implements ImMessageSource {
     if (segments is! List) return null;
     for (final raw in segments.whereType<Map>()) {
       if (raw['type'] != 'dynamic_update' || raw['data'] is! Map) continue;
+      return Map<String, dynamic>.from(raw['data'] as Map);
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _dynamicReplaceData(Map<String, dynamic> json) =>
+      _dynamicMutationData(json, 'dynamic_replace');
+
+  Map<String, dynamic>? _dynamicRemoveData(Map<String, dynamic> json) =>
+      _dynamicMutationData(json, 'dynamic_remove');
+
+  Map<String, dynamic>? _dynamicMutationData(
+    Map<String, dynamic> json,
+    String type,
+  ) {
+    final segments = json['message'];
+    if (segments is! List) return null;
+    for (final raw in segments.whereType<Map>()) {
+      if (raw['type'] != type || raw['data'] is! Map) continue;
       return Map<String, dynamic>.from(raw['data'] as Map);
     }
     return null;
@@ -1756,6 +1816,9 @@ class ZzzServerSource implements ImMessageSource {
     if (dynamicIndex < 0 || content == null) return true;
     try {
       final patched = const ImDynamicPatchApplier().apply(content, update);
+      if (jsonEncode(patched.toJson()) == jsonEncode(content.toJson())) {
+        return true;
+      }
       final updatedSegments = List<OneBotMessageSegment>.from(segments);
       final segmentData = Map<String, dynamic>.from(patched.toJson())
         ..remove('type');
@@ -1764,9 +1827,79 @@ class ZzzServerSource implements ImMessageSource {
         data: segmentData,
       );
       messages[messageIndex] = message.copyWith(segments: updatedSegments);
-      if (emit) _emitMessages(conversationId);
+      if (emit) {
+        final sender = json['sender'];
+        final senderId = sender is Map ? '${sender['user_id'] ?? ''}' : _selfId;
+        _dynamicUpdatesController.add(
+          ImDynamicUpdateEnvelope(
+            conversationId: conversationId,
+            senderId: senderId.isEmpty ? _selfId : senderId,
+            update: update,
+            sentAt: _timestampFromJson(json) ?? DateTime.now(),
+          ),
+        );
+      }
     } on ImDynamicPatchException {
       // Ignore a stale or invalid update; the original message remains usable.
+    }
+    return true;
+  }
+
+  bool _applyDynamicReplace(Map<String, dynamic> json) {
+    final data = _dynamicReplaceData(json);
+    if (data == null) return false;
+    final messageId = '${data['message_id'] ?? ''}';
+    final contentId = '${data['content_id'] ?? ''}';
+    final rawContent = data['content'];
+    if (messageId.isEmpty || contentId.isEmpty || rawContent is! Map) {
+      return true;
+    }
+    final conversationId = '${json['conversation_id'] ?? ''}';
+    final messages = _messages[conversationId];
+    if (conversationId.isEmpty || messages == null) return true;
+    final messageIndex = messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex < 0) return true;
+    try {
+      final replacement = ImDynamicContent.fromJson(
+        Map<String, dynamic>.from(rawContent),
+      );
+      final updated = const ImDynamicMessagePatchAdapter().replace(
+        messages[messageIndex],
+        contentId: contentId,
+        replacement: replacement,
+      );
+      messages[messageIndex] = updated;
+      _emitMessages(conversationId);
+    } on Object {
+      // Invalid or stale replacements leave the current message untouched.
+    }
+    return true;
+  }
+
+  bool _applyDynamicRemove(Map<String, dynamic> json) {
+    final data = _dynamicRemoveData(json);
+    if (data == null) return false;
+    final messageId = '${data['message_id'] ?? ''}';
+    final contentId = '${data['content_id'] ?? ''}';
+    if (messageId.isEmpty || contentId.isEmpty) return true;
+    final conversationId = '${json['conversation_id'] ?? ''}';
+    final messages = _messages[conversationId];
+    if (conversationId.isEmpty || messages == null) return true;
+    final messageIndex = messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex < 0) return true;
+    try {
+      final updated = const ImDynamicMessagePatchAdapter().remove(
+        messages[messageIndex],
+        contentId: contentId,
+      );
+      messages[messageIndex] = updated;
+      _emitMessages(conversationId);
+    } on ImDynamicPatchException {
+      // A duplicate remove is already converged and needs no further action.
     }
     return true;
   }
@@ -1881,6 +2014,7 @@ class ZzzServerSource implements ImMessageSource {
   /// Applies a node-id patch to an existing dynamic content message. The
   /// server persists the resulting segments and broadcasts only the patch, so
   /// every client keeps the same message bubble and history entry.
+  @override
   Future<ImMessage> sendDynamicUpdate({
     required String conversationId,
     required String messageId,
@@ -1899,6 +2033,48 @@ class ZzzServerSource implements ImMessageSource {
       {'type': 'dynamic_update', 'data': update},
     ], clientMessageId: clientMessageId);
   }
+
+  @override
+  Future<ImMessage> replaceDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required ImDynamicContent content,
+    String? clientMessageId,
+  }) {
+    _validateDynamicContents([content]);
+    if (content.id != contentId) {
+      throw ArgumentError.value(
+        content.id,
+        'content.id',
+        'Replacement content id must match contentId.',
+      );
+    }
+    return _sendMessage(conversationId, [
+      {
+        'type': 'dynamic_replace',
+        'data': {
+          'message_id': messageId,
+          'content_id': contentId,
+          'content': Map<String, dynamic>.from(content.toJson())
+            ..remove('type'),
+        },
+      },
+    ], clientMessageId: clientMessageId);
+  }
+
+  @override
+  Future<ImMessage> removeDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    String? clientMessageId,
+  }) => _sendMessage(conversationId, [
+    {
+      'type': 'dynamic_remove',
+      'data': {'message_id': messageId, 'content_id': contentId},
+    },
+  ], clientMessageId: clientMessageId);
 
   /// Sends a local-Agent message that is persisted and visible to other IM
   /// clients, while preventing the server-side Fairy from treating it as a
@@ -2384,6 +2560,8 @@ class ZzzServerSource implements ImMessageSource {
       'terminal_result' => '[终端执行结果]',
       'dynamic_content' => '[动态内容]',
       'dynamic_update' => '',
+      'dynamic_replace' => '',
+      'dynamic_remove' => '',
       'dynamic_event' => '',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
@@ -2405,6 +2583,8 @@ class ZzzServerSource implements ImMessageSource {
     'json' => ImMessageKind.json,
     'dynamic_content' => ImMessageKind.dynamicContent,
     'dynamic_update' => ImMessageKind.dynamicContent,
+    'dynamic_replace' => ImMessageKind.dynamicContent,
+    'dynamic_remove' => ImMessageKind.dynamicContent,
     _ => ImMessageKind.text,
   };
 
@@ -2497,15 +2677,25 @@ class ZzzServerSource implements ImMessageSource {
       response['data'] as Map? ?? const {},
     );
     final dynamicUpdate = _dynamicUpdateData({'message': segments});
-    if (dynamicUpdate != null) {
+    final dynamicReplace = _dynamicReplaceData({'message': segments});
+    final dynamicRemove = _dynamicRemoveData({'message': segments});
+    final dynamicMutation = dynamicUpdate ?? dynamicReplace ?? dynamicRemove;
+    if (dynamicMutation != null) {
       // The server persists the target message and broadcasts only the patch.
       // Apply it locally too, so the initiating device never creates a new
       // bubble for an in-place update.
-      _applyDynamicUpdate({
+      final event = <String, dynamic>{
         'conversation_id': conversationId,
         'message': segments,
-      });
-      final targetId = '${dynamicUpdate['message_id'] ?? ''}';
+      };
+      if (dynamicUpdate != null) {
+        _applyDynamicUpdate(event);
+      } else if (dynamicReplace != null) {
+        _applyDynamicReplace(event);
+      } else {
+        _applyDynamicRemove(event);
+      }
+      final targetId = '${dynamicMutation['message_id'] ?? ''}';
       final existing =
           _messages[conversationId]
               ?.where((message) => message.id == targetId)

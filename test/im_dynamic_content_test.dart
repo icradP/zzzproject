@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -514,10 +515,182 @@ void main() {
     },
   );
 
+  test('runtime snapshot restores persisted schema and lifecycle state', () {
+    const content = ImDynamicContent(
+      id: 'snapshot-1',
+      version: '1.0',
+      source: ImDynamicContentSource.ai,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'status',
+        props: {'text': 'Complete'},
+      ),
+    );
+    final runtime = ImDynamicRuntime(
+      content: content,
+      state: const ImDynamicState(
+        lifecycle: ImDynamicLifecycle.closed,
+        values: {'result': 'ok'},
+      ),
+    );
+    final encoded = runtime.snapshot(messageId: 'message-snapshot').toJson();
+    final decoded = ImDynamicRuntimeSnapshot.fromJson(encoded);
+    final restored = ImDynamicRuntime.fromSnapshot(decoded);
+
+    expect(decoded.messageId, 'message-snapshot');
+    expect(restored.content.tree.props['text'], 'Complete');
+    expect(restored.state.lifecycle, ImDynamicLifecycle.closed);
+    expect(restored.state.values['result'], 'ok');
+    expect(restored.state.isInteractive, isFalse);
+    runtime.dispose();
+    restored.dispose();
+  });
+
+  test(
+    'runtime synchronizes persisted schema without losing lifecycle state',
+    () {
+      const initial = ImDynamicContent(
+        id: 'synchronized-1',
+        version: '1.0',
+        source: ImDynamicContentSource.ai,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'status',
+          props: {'text': 'Working'},
+        ),
+      );
+      const updated = ImDynamicContent(
+        id: 'synchronized-1',
+        version: '1.0',
+        source: ImDynamicContentSource.ai,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'status',
+          props: {'text': 'Complete'},
+        ),
+      );
+      final runtime = ImDynamicRuntime(
+        content: initial,
+        state: const ImDynamicState(
+          lifecycle: ImDynamicLifecycle.processing,
+          values: {'progress': 0.75},
+        ),
+      );
+
+      runtime.synchronizeContent(updated);
+
+      expect(runtime.content.tree.props['text'], 'Complete');
+      expect(runtime.state.lifecycle, ImDynamicLifecycle.processing);
+      expect(runtime.state.values['progress'], 0.75);
+      runtime.dispose();
+    },
+  );
+
+  testWidgets(
+    'content view owns a runtime and follows persisted schema changes',
+    (tester) async {
+      ImDynamicContent content = const ImDynamicContent(
+        id: 'owned-runtime-1',
+        version: '1.0',
+        source: ImDynamicContentSource.ai,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'input',
+          props: {'value': 'Before'},
+        ),
+      );
+
+      Widget buildView() => MaterialApp(
+        home: Scaffold(
+          body: ImDynamicContentView(
+            key: const ValueKey('owned-runtime-view'),
+            content: content,
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(buildView());
+      await tester.enterText(find.byType(TextField), 'Local draft');
+      content = const ImDynamicContent(
+        id: 'owned-runtime-1',
+        version: '1.0',
+        source: ImDynamicContentSource.ai,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'column',
+          children: [
+            ImDynamicNode(
+              id: 'status',
+              type: 'status',
+              props: {'text': 'Updated'},
+            ),
+            ImDynamicNode(
+              id: 'field',
+              type: 'input',
+              props: {'value': 'Server value'},
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(buildView());
+
+      expect(find.text('Updated'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Server value'), findsOneWidget);
+    },
+  );
+
+  test('message patch adapter updates only the addressed dynamic segment', () {
+    final message = ImMessage(
+      id: 'message-patch',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: 'Status',
+      sentAt: DateTime(2026),
+      segments: [
+        OneBotMessageSegment.plain('Status'),
+        OneBotMessageSegment(
+          type: 'dynamic_content',
+          data: {
+            'id': 'card-patch',
+            'version': '1.0',
+            'source': 'ai',
+            'tree': {
+              'id': 'root',
+              'type': 'status',
+              'props': {'text': 'Checking'},
+            },
+          },
+        ),
+      ],
+    );
+    const update = ImDynamicPatchSet(
+      messageId: 'message-patch',
+      contentId: 'card-patch',
+      patches: [
+        ImDynamicPatch(
+          operation: ImDynamicPatchOperation.update,
+          nodeId: 'root',
+          props: {'text': 'Complete'},
+        ),
+      ],
+    );
+
+    final patched = const ImDynamicMessagePatchAdapter().apply(message, update);
+    expect(patched.id, message.id);
+    expect(patched.segments?[0].data['text'], 'Status');
+    expect(
+      ImDynamicContent.tryFromSegmentData(
+        patched.segments![1].data,
+      )?.tree.props['text'],
+      'Complete',
+    );
+  });
+
   testWidgets(
     'dynamic button renders inside the shared message bubble and emits an event',
     (tester) async {
       ImDynamicEvent? event;
+      ImContentEvent? contentEvent;
       final message = ImMessage(
         id: 'message-1',
         conversationId: 'conversation-1',
@@ -568,6 +741,7 @@ void main() {
               ),
               showSenderName: false,
               onDynamicEvent: (value) => event = value,
+              onContentEvent: (value) => contentEvent = value,
             ),
           ),
         ),
@@ -580,8 +754,103 @@ void main() {
       expect(event?.contentId, 'content-1');
       expect(event?.nodeId, 'run');
       expect(event?.action, 'run_plan');
+      expect(contentEvent, same(event));
     },
   );
+
+  testWidgets('forward open emits a unified content event', (tester) async {
+    final repository = MockImRepository();
+    final pushManager = NoOpImPushManager();
+    addTearDown(repository.dispose);
+    addTearDown(pushManager.dispose);
+    ImContentEvent? event;
+    final message = ImMessage(
+      id: 'message-forward-event',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: '[Chat records]',
+      sentAt: DateTime(2026),
+      kind: ImMessageKind.forward,
+      segments: const [
+        OneBotMessageSegment(type: 'forward', data: {'id': 'forward-1'}),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ImScope(
+          repository: repository,
+          interactions: const NoOpImInteractionHandler(),
+          nsfwChecker: StubNsfwChecker(),
+          nsfwStateCache: NsfwStateCache(),
+          pushManager: pushManager,
+          onConnectionsChanged: () async {},
+          child: Scaffold(
+            body: ImMessageBubble(
+              message: message,
+              senderName: 'Fairy',
+              avatar: MemoryImage(
+                base64Decode(
+                  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                ),
+              ),
+              showSenderName: false,
+              onContentEvent: (value) => event = value,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Chat records'));
+    await tester.pump();
+
+    expect(event?.messageId, 'message-forward-event');
+    expect(event?.type, 'open');
+    expect(event?.contentId, 'message-forward-event:segment:0');
+  });
+
+  testWidgets('sticker tap emits a unified content event', (tester) async {
+    ImContentEvent? event;
+    final message = ImMessage(
+      id: 'message-sticker-event',
+      conversationId: 'conversation-1',
+      senderId: 'fairy',
+      text: '[Sticker]',
+      sentAt: DateTime(2026),
+      kind: ImMessageKind.face,
+      segments: const [
+        OneBotMessageSegment(
+          type: 'sticker',
+          data: {'pack_id': 'zzz-core', 'asset_id': 'corin-01', 'version': 1},
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImMessageBubble(
+            message: message,
+            senderName: 'Fairy',
+            avatar: MemoryImage(
+              base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+            ),
+            showSenderName: false,
+            onContentEvent: (value) => event = value,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Sticker: Corin'));
+
+    expect(event?.messageId, 'message-sticker-event');
+    expect(event?.type, 'tap');
+    expect(event?.contentId, 'message-sticker-event:segment:0');
+  });
 
   testWidgets('dynamic content preserves sibling text in the same bubble', (
     tester,
@@ -628,6 +897,214 @@ void main() {
     await tester.pump();
     expect(find.text('Summary'), findsOneWidget);
     expect(find.text('Ready'), findsOneWidget);
+  });
+
+  testWidgets('chat row applies a patch without replacing the message list', (
+    tester,
+  ) async {
+    final updates = StreamController<ImDynamicUpdateEnvelope>.broadcast();
+    addTearDown(updates.close);
+    ImMessage buildMessage({String statusText = 'Checking'}) {
+      return ImMessage(
+        id: 'message-local-patch',
+        conversationId: 'conversation-local-patch',
+        senderId: 'fairy',
+        text: 'Status',
+        sentAt: DateTime(2026),
+        segments: [
+          OneBotMessageSegment(
+            type: 'dynamic_content',
+            data: {
+              'id': 'card-local-patch',
+              'version': '1.0',
+              'source': 'ai',
+              'tree': {
+                'id': 'root',
+                'type': 'status',
+                'props': {'text': statusText},
+              },
+            },
+          ),
+        ],
+      );
+    }
+
+    const conversation = ImConversation(
+      id: 'conversation-local-patch',
+      type: ImConversationType.direct,
+      title: 'Fairy',
+      participantIds: ['fairy'],
+    );
+    Widget buildChat({String statusText = 'Checking'}) => MaterialApp(
+      home: Scaffold(
+        body: ImChatRoomView(
+          key: const ValueKey('local-patch-chat'),
+          conversation: conversation,
+          messages: [buildMessage(statusText: statusText)],
+          dynamicUpdates: updates.stream,
+          onSend: (_) async {},
+          resolveUserName: (_) async => 'Fairy',
+          resolveUserAvatar:
+              (_) async => MemoryImage(
+                base64Decode(
+                  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                ),
+              ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(buildChat());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Checking'), findsOneWidget);
+
+    updates.add(
+      ImDynamicUpdateEnvelope(
+        conversationId: 'conversation-local-patch',
+        senderId: 'fairy',
+        update: ImDynamicPatchSet(
+          messageId: 'message-local-patch',
+          contentId: 'card-local-patch',
+          patches: [
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: 'root',
+              props: {'text': 'Complete'},
+            ),
+          ],
+        ),
+        sentAt: DateTime(2026),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Checking'), findsNothing);
+    expect(find.text('Complete'), findsOneWidget);
+
+    // A freshly allocated but equivalent upstream snapshot must not restore
+    // stale content over the row-local patch.
+    await tester.pumpWidget(buildChat());
+    await tester.pump();
+    expect(find.text('Checking'), findsNothing);
+    expect(find.text('Complete'), findsOneWidget);
+
+    // A real upstream content change still replaces the row-local snapshot.
+    await tester.pumpWidget(buildChat(statusText: 'Server confirmed'));
+    await tester.pump();
+    expect(find.text('Complete'), findsNothing);
+    expect(find.text('Server confirmed'), findsOneWidget);
+  });
+
+  testWidgets('1000-message history keeps high-frequency patches row-local', (
+    tester,
+  ) async {
+    final updates = StreamController<ImDynamicUpdateEnvelope>.broadcast();
+    addTearDown(updates.close);
+    final messages = List<ImMessage>.generate(1000, (index) {
+      return ImMessage(
+        id: 'history-$index',
+        conversationId: 'large-history',
+        senderId: 'fairy',
+        text: 'Status $index',
+        sentAt: DateTime(2026).add(Duration(seconds: index)),
+        segments: [
+          OneBotMessageSegment(
+            type: 'dynamic_content',
+            data: {
+              'id': 'status-$index',
+              'version': '1.0',
+              'source': 'ai',
+              'tree': {
+                'id': 'root',
+                'type': 'status',
+                'props': {'text': 'Initial $index'},
+              },
+            },
+          ),
+        ],
+      );
+    });
+    final buildCounts = <String, int>{};
+    Widget countBuild(
+      BuildContext context, {
+      required ImMessage message,
+      required String senderName,
+      required ImageProvider avatar,
+      required bool showSenderName,
+      required bool hideAvatar,
+      required bool compact,
+      required bool hideTimestamp,
+      required bool showMessageStatus,
+    }) {
+      buildCounts.update(message.id, (count) => count + 1, ifAbsent: () => 1);
+      final content = ImDynamicContent.tryFromSegmentData(
+        message.segments!.single.data,
+      );
+      return SizedBox(
+        height: 40,
+        child: Text(content?.tree.props['text']?.toString() ?? ''),
+      );
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImChatRoomView(
+            conversation: const ImConversation(
+              id: 'large-history',
+              type: ImConversationType.direct,
+              title: 'Fairy',
+              participantIds: ['fairy'],
+            ),
+            messages: messages,
+            dynamicUpdates: updates.stream,
+            messageBuilder: countBuild,
+            onSend: (_) async {},
+            resolveUserName: (_) async => 'Fairy',
+            resolveUserAvatar:
+                (_) async => MemoryImage(
+                  base64Decode(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                  ),
+                ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final before = Map<String, int>.from(buildCounts);
+    expect(before, isNotEmpty);
+    expect(before, contains('history-0'));
+
+    for (var index = 0; index < 50; index++) {
+      updates.add(
+        ImDynamicUpdateEnvelope(
+          conversationId: 'large-history',
+          senderId: 'fairy',
+          update: ImDynamicPatchSet(
+            messageId: 'history-0',
+            contentId: 'status-0',
+            patches: [
+              ImDynamicPatch(
+                operation: ImDynamicPatchOperation.update,
+                nodeId: 'root',
+                props: {'text': 'Progress $index'},
+              ),
+            ],
+          ),
+          sentAt: DateTime(2026),
+        ),
+      );
+    }
+    await tester.pump();
+
+    expect(find.text('Progress 49'), findsOneWidget);
+    expect(buildCounts['history-0'], before['history-0']! + 1);
+    for (final entry in before.entries) {
+      if (entry.key == 'history-0') continue;
+      expect(buildCounts[entry.key], entry.value, reason: entry.key);
+    }
   });
 
   testWidgets('dynamic content preserves the existing sibling voice renderer', (

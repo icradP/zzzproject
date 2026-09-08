@@ -8,6 +8,7 @@ class ImDynamicProtocolCapabilities {
     required this.components,
     required this.supportsEvents,
     required this.supportsNodeIdPatch,
+    required this.supportsContentOperations,
   });
 
   static const current = ImDynamicProtocolCapabilities(
@@ -34,6 +35,7 @@ class ImDynamicProtocolCapabilities {
     },
     supportsEvents: true,
     supportsNodeIdPatch: true,
+    supportsContentOperations: true,
   );
 
   final String protocolVersion;
@@ -42,6 +44,7 @@ class ImDynamicProtocolCapabilities {
   final Set<String> components;
   final bool supportsEvents;
   final bool supportsNodeIdPatch;
+  final bool supportsContentOperations;
 
   bool get supportsDynamicContent =>
       protocolVersion.isNotEmpty &&
@@ -56,6 +59,7 @@ class ImDynamicProtocolCapabilities {
       'components': components.toList(growable: false)..sort(),
       'events': supportsEvents,
       'node_id_patch': supportsNodeIdPatch,
+      'content_operations': supportsContentOperations,
     },
   };
 
@@ -85,6 +89,7 @@ class ImDynamicProtocolCapabilities {
       ),
       supportsEvents: data['events'] == true,
       supportsNodeIdPatch: data['node_id_patch'] == true,
+      supportsContentOperations: data['content_operations'] == true,
     );
   }
 

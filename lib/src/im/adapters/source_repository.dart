@@ -53,6 +53,9 @@ class SourceBackedRepository implements ImRepository {
   Stream<ImDynamicEventEnvelope> get dynamicEvents => _source.dynamicEvents;
 
   @override
+  Stream<ImDynamicUpdateEnvelope> get dynamicUpdates => _source.dynamicUpdates;
+
+  @override
   Future<bool> loadOlderMessages(String conversationId) =>
       _source.loadOlderMessages(conversationId);
 
@@ -94,6 +97,49 @@ class SourceBackedRepository implements ImRepository {
     conversationId: conversationId,
     content: content,
     text: text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<ImMessage> sendDynamicUpdate({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required List<ImDynamicPatch> patches,
+    String? clientMessageId,
+  }) => _source.sendDynamicUpdate(
+    conversationId: conversationId,
+    messageId: messageId,
+    contentId: contentId,
+    patches: patches,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<ImMessage> replaceDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required ImDynamicContent content,
+    String? clientMessageId,
+  }) => _source.replaceDynamicContent(
+    conversationId: conversationId,
+    messageId: messageId,
+    contentId: contentId,
+    content: content,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<ImMessage> removeDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    String? clientMessageId,
+  }) => _source.removeDynamicContent(
+    conversationId: conversationId,
+    messageId: messageId,
+    contentId: contentId,
     clientMessageId: clientMessageId,
   );
 

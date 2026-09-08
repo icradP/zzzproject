@@ -13,6 +13,8 @@ class ImVoiceBubble extends StatefulWidget {
     required this.isMine,
     this.fileSize,
     this.declaredDuration,
+    this.onPlay,
+    this.onPause,
   });
 
   final String? fileId;
@@ -21,13 +23,15 @@ class ImVoiceBubble extends StatefulWidget {
   final bool isMine;
   final int? fileSize;
   final Duration? declaredDuration;
+  final VoidCallback? onPlay;
+  final VoidCallback? onPause;
 
   @override
   State<ImVoiceBubble> createState() => _ImVoiceBubbleState();
 }
 
 class _ImVoiceBubbleState extends State<ImVoiceBubble> {
-  final _player = AudioPlayer();
+  AudioPlayer? _player;
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
@@ -38,44 +42,56 @@ class _ImVoiceBubbleState extends State<ImVoiceBubble> {
   @override
   void initState() {
     super.initState();
-    _player.onPlayerStateChanged.listen((s) {
-      if (mounted) setState(() => _playerState = s);
-    });
-    _player.onDurationChanged.listen((d) {
-      if (mounted) setState(() => _duration = d);
-    });
-    _player.onPositionChanged.listen((p) {
-      if (mounted) setState(() => _position = p);
-    });
-    _player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() {});
-    });
     if (widget.localPath != null && widget.localPath!.isNotEmpty) {
       _resolvedPath = widget.localPath;
-      _initSource();
     }
   }
 
+  AudioPlayer _ensurePlayer() {
+    final existing = _player;
+    if (existing != null) return existing;
+
+    final player = AudioPlayer();
+    _player = player;
+    player.onPlayerStateChanged.listen((s) {
+      if (mounted) setState(() => _playerState = s);
+    });
+    player.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _duration = d);
+    });
+    player.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _position = p);
+    });
+    player.onPlayerComplete.listen((_) {
+      if (mounted) setState(() {});
+    });
+    return player;
+  }
+
   Future<void> _initSource() async {
-    if (_resolvedPath == null) return;
+    final path = _resolvedPath;
+    if (path == null || _ready) return;
     try {
-      final uri = Uri.tryParse(_resolvedPath!);
+      final player = _ensurePlayer();
+      final uri = Uri.tryParse(path);
       if (uri != null &&
           (uri.scheme == 'http' ||
               uri.scheme == 'https' ||
               uri.scheme == 'blob')) {
-        await _player.setSource(UrlSource(uri.toString()));
+        await player.setSource(UrlSource(uri.toString()));
       } else {
-        await _player.setSourceDeviceFile(_resolvedPath!);
+        await player.setSourceDeviceFile(path);
       }
-      await _player.setReleaseMode(ReleaseMode.stop);
+      await player.setReleaseMode(ReleaseMode.stop);
       if (mounted) setState(() => _ready = true);
     } catch (_) {}
   }
 
   @override
   void dispose() {
-    _player.dispose();
+    final player = _player;
+    _player = null;
+    player?.dispose();
     super.dispose();
   }
 
@@ -101,19 +117,25 @@ class _ImVoiceBubbleState extends State<ImVoiceBubble> {
   void _togglePlay() async {
     if (!_ready) {
       await _ensureDownloaded();
+      await _initSource();
       if (!_ready) return;
     }
+    final player = _player;
+    if (player == null) return;
     switch (_playerState) {
       case PlayerState.playing:
-        _player.pause();
+        widget.onPause?.call();
+        player.pause();
         break;
       case PlayerState.paused:
-        _player.resume();
+        widget.onPlay?.call();
+        player.resume();
         break;
       case PlayerState.stopped:
       case PlayerState.completed:
-        _player.seek(Duration.zero);
-        _player.resume();
+        widget.onPlay?.call();
+        player.seek(Duration.zero);
+        player.resume();
         break;
       case PlayerState.disposed:
         break;

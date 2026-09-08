@@ -14,9 +14,10 @@ Map<String, dynamic> _segmentData(ImMessage message) {
 }
 
 class ImLinkBubble extends StatelessWidget {
-  const ImLinkBubble({required this.message, super.key});
+  const ImLinkBubble({required this.message, this.onOpen, super.key});
 
   final ImMessage message;
+  final ValueChanged<Uri>? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -115,6 +116,7 @@ class ImLinkBubble extends StatelessWidget {
   }
 
   Future<void> _open(BuildContext context, Uri uri) async {
+    onOpen?.call(uri);
     try {
       if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
     } catch (_) {}
@@ -126,9 +128,10 @@ class ImLinkBubble extends StatelessWidget {
 }
 
 class ImLocationBubble extends StatelessWidget {
-  const ImLocationBubble({required this.message, super.key});
+  const ImLocationBubble({required this.message, this.onOpen, super.key});
 
   final ImMessage message;
+  final ValueChanged<Uri>? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -207,6 +210,7 @@ class ImLocationBubble extends StatelessWidget {
       queryParameters: {'mlat': '$lat', 'mlon': '$lon'},
       fragment: 'map=16/$lat/$lon',
     );
+    onOpen?.call(uri);
     try {
       if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
     } catch (_) {}

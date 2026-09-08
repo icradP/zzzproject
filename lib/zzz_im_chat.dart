@@ -15,6 +15,8 @@ export 'src/im/adapters/source_repository.dart';
 export 'src/im/adapters/zzz_server/zzz_server_source.dart';
 export 'src/im/im_scope.dart';
 export 'src/im/models/im_models.dart';
+export 'src/im/content/im_content.dart';
 export 'src/im/dynamic/im_dynamic.dart';
+export 'src/im/data/im_dynamic_runtime_preferences.dart';
 export 'src/im/widgets/im_chat_widgets.dart';
 export 'src/im/widgets/im_chat_room_view.dart';

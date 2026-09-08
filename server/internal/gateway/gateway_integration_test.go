@@ -573,8 +573,9 @@ func currentTestCapabilities() map[string]interface{} {
 				"card", "container", "divider", "button", "input",
 				"checkbox", "select", "progress", "status", "badge",
 			},
-			"events":        true,
-			"node_id_patch": true,
+			"events":             true,
+			"node_id_patch":      true,
+			"content_operations": true,
 		},
 	}
 }

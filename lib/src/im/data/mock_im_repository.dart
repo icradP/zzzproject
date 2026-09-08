@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 
 import '../../assets/app_assets.dart';
+import '../dynamic/adapters/im_dynamic_message_patch_adapter.dart';
 import '../dynamic/models/im_dynamic_models.dart';
 import '../dynamic/runtime/im_dynamic_validator.dart';
 import '../models/im_models.dart';
@@ -433,6 +434,79 @@ class MockImRepository extends ImRepository {
     }
     _emitConversations();
     return message;
+  }
+
+  @override
+  Future<ImMessage> sendDynamicUpdate({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required List<ImDynamicPatch> patches,
+    String? clientMessageId,
+  }) async {
+    final messages = _messages[conversationId];
+    if (messages == null) {
+      throw StateError('Conversation $conversationId was not found.');
+    }
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) throw StateError('Message $messageId was not found.');
+    final updated = const ImDynamicMessagePatchAdapter().apply(
+      messages[index],
+      ImDynamicPatchSet(
+        messageId: messageId,
+        contentId: contentId,
+        patches: patches,
+      ),
+    );
+    messages[index] = updated;
+    _emitMessages(conversationId);
+    return updated;
+  }
+
+  @override
+  Future<ImMessage> replaceDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required ImDynamicContent content,
+    String? clientMessageId,
+  }) async {
+    final messages = _messages[conversationId];
+    if (messages == null) {
+      throw StateError('Conversation $conversationId was not found.');
+    }
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) throw StateError('Message $messageId was not found.');
+    final updated = const ImDynamicMessagePatchAdapter().replace(
+      messages[index],
+      contentId: contentId,
+      replacement: content,
+    );
+    messages[index] = updated;
+    _emitMessages(conversationId);
+    return updated;
+  }
+
+  @override
+  Future<ImMessage> removeDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    String? clientMessageId,
+  }) async {
+    final messages = _messages[conversationId];
+    if (messages == null) {
+      throw StateError('Conversation $conversationId was not found.');
+    }
+    final index = messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) throw StateError('Message $messageId was not found.');
+    final updated = const ImDynamicMessagePatchAdapter().remove(
+      messages[index],
+      contentId: contentId,
+    );
+    messages[index] = updated;
+    _emitMessages(conversationId);
+    return updated;
   }
 
   void _validateDynamicContents(List<ImDynamicContent> contents) {

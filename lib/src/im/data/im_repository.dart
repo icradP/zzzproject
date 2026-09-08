@@ -30,6 +30,9 @@ abstract class ImRepository {
   /// transient application events and never appear in message history.
   Stream<ImDynamicEventEnvelope> get dynamicEvents => const Stream.empty();
 
+  /// In-place Dynamic Content updates, separate from the message snapshot.
+  Stream<ImDynamicUpdateEnvelope> get dynamicUpdates => const Stream.empty();
+
   /// Loads the page immediately before the oldest emitted message. Returns
   /// whether another older page may still exist.
   Future<bool> loadOlderMessages(String conversationId) async => false;
@@ -68,6 +71,45 @@ abstract class ImRepository {
     text: text,
     clientMessageId: clientMessageId,
   );
+
+  /// Applies an in-place node-id patch to an existing Dynamic Content card.
+  /// Implementations must preserve the original message identity.
+  Future<ImMessage> sendDynamicUpdate({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required List<ImDynamicPatch> patches,
+    String? clientMessageId,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic content updates are not supported by this repository.',
+    );
+  }
+
+  /// Replaces one complete Dynamic Content schema in an existing message.
+  Future<ImMessage> replaceDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required ImDynamicContent content,
+    String? clientMessageId,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic content replacement is not supported by this repository.',
+    );
+  }
+
+  /// Removes one Dynamic Content segment while preserving sibling content.
+  Future<ImMessage> removeDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    String? clientMessageId,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic content removal is not supported by this repository.',
+    );
+  }
 
   /// Dispatches one component interaction without creating a chat message.
   Future<void> sendDynamicEvent({

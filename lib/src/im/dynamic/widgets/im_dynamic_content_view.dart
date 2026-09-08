@@ -3,13 +3,15 @@ import 'package:flutter/material.dart';
 import '../models/im_dynamic_models.dart';
 import '../runtime/im_dynamic_registry.dart';
 import '../runtime/im_dynamic_runtime.dart';
+import '../runtime/im_dynamic_runtime_store.dart';
 import '../runtime/im_dynamic_validator.dart';
 
 /// Safely renders a validated dynamic content tree.
-class ImDynamicContentView extends StatelessWidget {
+class ImDynamicContentView extends StatefulWidget {
   const ImDynamicContentView({
     required this.content,
     this.runtime,
+    this.runtimeStore,
     this.messageId = '',
     this.registry,
     this.validator = const ImDynamicSchemaValidator(),
@@ -19,23 +21,79 @@ class ImDynamicContentView extends StatelessWidget {
 
   final ImDynamicContent content;
   final ImDynamicRuntime? runtime;
+  final ImDynamicRuntimeStore? runtimeStore;
   final String messageId;
   final ImDynamicComponentRegistry? registry;
   final ImDynamicSchemaValidator validator;
   final ValueChanged<ImDynamicEvent>? onEvent;
 
   @override
-  Widget build(BuildContext context) {
-    final runtime = this.runtime;
-    if (runtime != null) {
-      return ListenableBuilder(
-        listenable: runtime,
-        builder:
-            (context, _) =>
-                _buildContent(context, runtime.content, runtime.state),
-      );
+  State<ImDynamicContentView> createState() => _ImDynamicContentViewState();
+}
+
+class _ImDynamicContentViewState extends State<ImDynamicContentView> {
+  ImDynamicRuntime? _runtime;
+  bool _ownsRuntime = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _configureRuntime();
+  }
+
+  @override
+  void didUpdateWidget(covariant ImDynamicContentView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final runtimeChanged =
+        !identical(oldWidget.runtime, widget.runtime) ||
+        !identical(oldWidget.runtimeStore, widget.runtimeStore) ||
+        oldWidget.messageId != widget.messageId ||
+        oldWidget.content.id != widget.content.id;
+    if (runtimeChanged) {
+      _configureRuntime();
+      return;
     }
-    return _buildContent(context, content, const ImDynamicState());
+    if (!identical(oldWidget.content, widget.content) &&
+        widget.content.id == _runtime!.content.id) {
+      _runtime!.synchronizeContent(widget.content);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_ownsRuntime) _runtime?.dispose();
+    super.dispose();
+  }
+
+  void _configureRuntime() {
+    final previous = _runtime;
+    if (_ownsRuntime && previous != null) previous.dispose();
+    final supplied = widget.runtime;
+    final store = widget.runtimeStore;
+    if (supplied != null) {
+      _runtime = supplied;
+      _ownsRuntime = false;
+    } else if (store != null) {
+      _runtime = store.runtimeFor(
+        messageId: widget.messageId,
+        content: widget.content,
+      );
+      _ownsRuntime = false;
+    } else {
+      _runtime = ImDynamicRuntime(content: widget.content);
+      _ownsRuntime = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runtime = _runtime!;
+    return ListenableBuilder(
+      listenable: runtime,
+      builder:
+          (context, _) =>
+              _buildContent(context, runtime.content, runtime.state),
+    );
   }
 
   Widget _buildContent(
@@ -43,7 +101,7 @@ class ImDynamicContentView extends StatelessWidget {
     ImDynamicContent content,
     ImDynamicState state,
   ) {
-    final validation = validator.validate(content);
+    final validation = widget.validator.validate(content);
     if (!validation.isValid) {
       return _fallback(
         context,
@@ -52,12 +110,12 @@ class ImDynamicContentView extends StatelessWidget {
       );
     }
 
-    final components = registry ?? ImDynamicComponentRegistry.standard();
+    final components = widget.registry ?? ImDynamicComponentRegistry.standard();
     late final ImDynamicRenderContext renderContext;
     renderContext = ImDynamicRenderContext(
-      messageId: messageId,
+      messageId: widget.messageId,
       contentId: content.id,
-      onEvent: onEvent,
+      onEvent: widget.onEvent,
       state: <String, dynamic>{
         'lifecycle': state.lifecycle.name,
         ...state.values,

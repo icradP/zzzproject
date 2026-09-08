@@ -1,14 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../theme/zzz_colors.dart';
 import '../../../widgets/zzz_widgets.dart';
 import '../../models/im_models.dart';
+import '../../content/im_content.dart';
 import '../../data/im_sticker_catalog.dart';
 import '../../dynamic/im_dynamic.dart';
 import 'im_file_card.dart';
 import 'im_forward_bubble.dart';
+import 'im_message_content_view.dart';
 import 'im_nsfw_guard.dart';
 import '../im_platform_image_widget.dart' show platformImageWidget;
 import 'im_reaction_chips.dart';
@@ -24,9 +27,10 @@ String? _previewLocationFor(ImMessage message) =>
 
 /// Collapsible recalled-message banner — system-message style.
 class _RecalledBanner extends StatefulWidget {
-  const _RecalledBanner({required this.message, required this.senderName});
-  final ImMessage message;
+  const _RecalledBanner({required this.senderName, required this.content});
+
   final String senderName;
+  final Widget content;
 
   @override
   State<_RecalledBanner> createState() => _RecalledBannerState();
@@ -71,59 +75,9 @@ class _RecalledBannerState extends State<_RecalledBanner> {
         if (_expanded)
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Opacity(
-              opacity: 0.6,
-              child: _RecalledContent(message: widget.message),
-            ),
+            child: Opacity(opacity: 0.6, child: widget.content),
           ),
       ],
-    );
-  }
-}
-
-/// Renders recalled message content without the outer bubble (avoids
-/// recursion from [ImMessageBubble] checking `recalled` again).
-class _RecalledContent extends StatelessWidget {
-  const _RecalledContent({required this.message});
-  final ImMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    final previewLocation = _previewLocationFor(message);
-    if (message.hasMedia && previewLocation != null) {
-      if (message.kind == ImMessageKind.image) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: platformImageWidget(
-            previewLocation,
-            width: 200,
-            fit: BoxFit.cover,
-          ),
-        );
-      }
-      if (message.kind == ImMessageKind.record) {
-        return ImVoiceBubble(
-          fileId: null,
-          url: null,
-          localPath: message.mediaPath,
-          isMine: message.isMine,
-          fileSize: message.mediaSize,
-          declaredDuration: message.mediaDuration,
-        );
-      }
-      if (message.kind == ImMessageKind.share) {
-        return ImLinkBubble(message: message);
-      }
-      if (message.kind == ImMessageKind.location) {
-        return ImLocationBubble(message: message);
-      }
-    }
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 250),
-      child: Text(
-        message.text,
-        style: const TextStyle(color: Colors.white54, fontSize: 13),
-      ),
     );
   }
 }
@@ -149,7 +103,11 @@ class ImMessageBubble extends StatelessWidget {
     this.resolveUserName,
     this.onReactionTap,
     this.dynamicContentRegistry,
+    this.dynamicRuntimeStore,
     this.contentAdapterRegistry,
+    this.contentNodeAdapterRegistry,
+    this.contentRendererRegistry,
+    this.onContentEvent,
     this.onDynamicEvent,
     super.key,
   });
@@ -191,54 +149,55 @@ class ImMessageBubble extends StatelessWidget {
   final ValueChanged<ImReaction>? onReactionTap;
 
   final ImDynamicComponentRegistry? dynamicContentRegistry;
+  final ImDynamicRuntimeStore? dynamicRuntimeStore;
   final ImMessageContentAdapterRegistry? contentAdapterRegistry;
+  final ImContentAdapterRegistry? contentNodeAdapterRegistry;
+  final ImContentRendererRegistry? contentRendererRegistry;
+  final ValueChanged<ImContentEvent>? onContentEvent;
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
 
   @override
   Widget build(BuildContext context) {
-    // Recalled message
-    if (message.recalled) {
-      return _RecalledBanner(message: message, senderName: senderName);
-    }
-    // System message
-    if (message.kind == ImMessageKind.system) {
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(
-            message.text,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-        ),
+    final contentTree = resolveImMessageContentTree(
+      message: message,
+      legacyAdapterRegistry: contentAdapterRegistry,
+      adapterRegistry: contentNodeAdapterRegistry,
+    );
+    final hasStructuredContent = imContentTreeHasStructuredContent(contentTree);
+    final sticker = ImStickerCatalog.resolveMessage(message);
+
+    Widget buildMessageContent({required bool readOnlyPreview}) {
+      return ImMessageContentView(
+        tree: contentTree,
+        hasStructuredContent: hasStructuredContent,
+        rendererRegistry: contentRendererRegistry,
+        onEvent: onContentEvent,
+        readOnlyPreview: readOnlyPreview,
+        fallback:
+            (
+              buildContext,
+              node, {
+              required bool hasStructuredContent,
+              required bool readOnlyPreview,
+            }) => _buildContentNode(
+              buildContext,
+              node,
+              hasStructuredContent: hasStructuredContent,
+              sticker: sticker,
+              readOnlyPreview: readOnlyPreview,
+            ),
+        emptyBuilder:
+            (_, {required bool readOnlyPreview}) => Text(
+              message.text,
+              style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+            ),
       );
     }
-    // Poke message
-    if (message.kind == ImMessageKind.poke) {
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.touch_app_rounded, size: 16, color: Colors.white54),
-              const SizedBox(width: 6),
-              Text(
-                message.text,
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
+
+    if (message.recalled) {
+      return _RecalledBanner(
+        senderName: senderName,
+        content: buildMessageContent(readOnlyPreview: true),
       );
     }
 
@@ -256,183 +215,14 @@ class ImMessageBubble extends StatelessWidget {
         (message.kind == ImMessageKind.record) &&
         (message.text.isEmpty || message.text == '[语音]');
     final isJsonCard = message.kind == ImMessageKind.json;
-    final hasDynamicContent = _hasDynamicContent();
     final isForward = message.kind == ImMessageKind.forward;
-    final sticker = ImStickerCatalog.resolveMessage(message);
+    final bubbleContent = buildMessageContent(readOnlyPreview: false);
 
-    Widget buildBubbleContent() {
-      if (hasDynamicContent) {
-        return _buildDynamicContentWithCompanions(context);
-      }
-      if (sticker != null) {
-        return Semantics(
-          label: 'Sticker: ${sticker.label}',
-          child: SizedBox.square(
-            dimension: 150,
-            child: Image.asset(
-              sticker.assetPath,
-              package: assetPackage,
-              fit: BoxFit.contain,
-              errorBuilder:
-                  (_, __, ___) => Text(
-                    message.text,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-            ),
-          ),
-        );
-      }
-      if (message.kind == ImMessageKind.forward) {
-        return ImForwardBubble(message: message);
-      }
-      if (message.kind == ImMessageKind.record) {
-        final seg = message.segments?.firstOrNull;
-        return ImVoiceBubble(
-          fileId: seg?.data['file']?.toString(),
-          url: seg?.data['url']?.toString(),
-          localPath: message.mediaPath,
-          isMine: isMine,
-          fileSize: message.mediaSize,
-          declaredDuration: message.mediaDuration,
-        );
-      }
-      if (message.kind == ImMessageKind.share) {
-        return ImLinkBubble(message: message);
-      }
-      if (message.kind == ImMessageKind.location) {
-        return ImLocationBubble(message: message);
-      }
-      if (message.kind == ImMessageKind.file ||
-          message.kind == ImMessageKind.video) {
-        final mediaUri = _mediaUri();
-        final isVideo = message.kind == ImMessageKind.video;
-        return ImFileCard(
-          fileName:
-              message.text.isNotEmpty
-                  ? message.text
-                  : (isVideo ? 'Video' : 'Unknown file'),
-          fileSize: message.mediaSize,
-          isMine: isMine,
-          isVideo: isVideo,
-          onOpen: mediaUri == null ? null : () => _openMedia(context, mediaUri),
-        );
-      }
-      final hasImage =
-          message.hasMedia &&
-          (message.kind == ImMessageKind.image || isJsonCard);
-      if (!hasImage) {
-        return Text(
-          message.text,
-          style: TextStyle(
-            color: isMine ? Colors.white : Colors.black87,
-            fontSize: 15,
-            height: 1.35,
-          ),
-        );
-      }
-      // Mini-program card
-      if (isJsonCard) {
-        final previewLocation = _previewLocationFor(message);
-        if (previewLocation == null) return const SizedBox.shrink();
-        return ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 250),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ImNsfwGuard(
-                messageId: message.id,
-                mediaPath: previewLocation,
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(14),
-                  ),
-                  child: platformImageWidget(
-                    previewLocation,
-                    fit: BoxFit.scaleDown,
-                    errorBuilder: (context, error, stack) {
-                      return const SizedBox.shrink();
-                    },
-                  ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                decoration: BoxDecoration(
-                  color:
-                      isMine
-                          ? ZzzColors.blue.withValues(alpha: 0.85)
-                          : const Color(0xFFe8e8ec),
-                  borderRadius: const BorderRadius.vertical(
-                    bottom: Radius.circular(14),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      message.text,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: isMine ? Colors.white70 : Colors.black54,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '小程序',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: isMine ? Colors.white38 : Colors.black38,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      }
-      // Plain image
-      final previewLocation = _previewLocationFor(message);
-      if (previewLocation == null) {
-        return Text(
-          message.text,
-          style: TextStyle(
-            color: isMine ? Colors.white : Colors.black87,
-            fontSize: 15,
-            height: 1.35,
-          ),
-        );
-      }
-      return ImNsfwGuard(
-        messageId: message.id,
-        mediaPath: previewLocation,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(isImageOnly ? 18 : 12),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 250, maxHeight: 400),
-            child: platformImageWidget(
-              previewLocation,
-              fit: BoxFit.scaleDown,
-              errorBuilder: (context, error, stack) {
-                return Text(
-                  message.text,
-                  style: TextStyle(
-                    color: isMine ? Colors.white : Colors.black87,
-                    fontSize: 15,
-                    height: 1.35,
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      );
+    if (message.kind == ImMessageKind.system ||
+        message.kind == ImMessageKind.poke) {
+      return bubbleContent;
     }
 
-    final bubbleContent = buildBubbleContent();
     final wrappedContent =
         isJsonCard
             ? Container(
@@ -657,70 +447,219 @@ class ImMessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildDynamicContentWithCompanions(BuildContext context) {
-    final children = <Widget>[];
-    final segments = message.segments ?? const [];
-    for (var segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
-      final segment = segments[segmentIndex];
-      final data = segment.data;
-      final content = _contentForSegment(segment, segmentIndex);
-      if (content != null) {
-        children.add(
-          ImDynamicContentView(
-            messageId: message.id,
-            content: content,
-            registry: dynamicContentRegistry,
-            onEvent: onDynamicEvent,
-          ),
-        );
-        continue;
-      }
-      switch (segment.type) {
-        case 'dynamic_content':
-          final fallback = ImDynamicFallback.tryFromSegmentData(data);
-          final text = fallback?.content.trim();
-          children.add(
-            SelectableText(
-              text == null || text.isEmpty
-                  ? 'Unable to display this dynamic content.'
-                  : text,
-              style: TextStyle(
-                color: message.isMine ? Colors.white : Colors.black87,
-                fontSize: 15,
-                height: 1.35,
-              ),
+  Widget _buildContentNode(
+    BuildContext context,
+    ImContentNode node, {
+    required bool hasStructuredContent,
+    required ImStickerDefinition? sticker,
+    required bool readOnlyPreview,
+  }) {
+    if (message.kind == ImMessageKind.system) {
+      return _buildSystemMessage();
+    }
+    if (message.kind == ImMessageKind.poke) {
+      return _buildPokeMessage();
+    }
+    final content = node.dynamicContent;
+    if (content != null) {
+      return ImDynamicContentView(
+        messageId: message.id,
+        content: content,
+        registry: dynamicContentRegistry,
+        runtimeStore: dynamicRuntimeStore,
+        onEvent: _emitDynamicEvent,
+      );
+    }
+    if (_isDynamicPrimitive(node.type)) {
+      return ImDynamicContentView(
+        messageId: message.id,
+        content: ImDynamicContent(
+          id: node.id,
+          version: '1.0',
+          source: ImDynamicContentSource.system,
+          tree: node.toDynamicNode(),
+        ),
+        registry: dynamicContentRegistry,
+        runtimeStore: dynamicRuntimeStore,
+        onEvent: _emitDynamicEvent,
+      );
+    }
+    if (!hasStructuredContent) {
+      return _buildLegacyMessageContent(
+        context,
+        node,
+        sticker,
+        readOnlyPreview: readOnlyPreview,
+      );
+    }
+    return _buildCompanionContent(
+      context,
+      node,
+      sticker,
+      readOnlyPreview: readOnlyPreview,
+    );
+  }
+
+  Widget _buildSystemMessage() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          message.text,
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPokeMessage() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.touch_app_rounded,
+              size: 16,
+              color: Colors.white54,
             ),
-          );
-        case 'text':
-          final text = data['text']?.toString() ?? '';
-          if (text.trim().isNotEmpty) {
-            children.add(
-              Text(
-                text,
-                style: TextStyle(
-                  color: message.isMine ? Colors.white : Colors.black87,
-                  fontSize: 15,
-                  height: 1.35,
-                ),
-              ),
-            );
-          }
-        case 'image':
-          final location = data['url']?.toString() ?? data['file']?.toString();
-          if (location == null || location.trim().isEmpty) break;
-          children.add(
-            ImNsfwGuard(
-              messageId: '${message.id}-${children.length}',
-              mediaPath: location,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 250,
-                    maxHeight: 400,
+            const SizedBox(width: 6),
+            Text(
+              message.text,
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLegacyMessageContent(
+    BuildContext context,
+    ImContentNode node,
+    ImStickerDefinition? sticker, {
+    required bool readOnlyPreview,
+  }) {
+    if (sticker != null) {
+      return _buildSticker(
+        sticker,
+        onTap: () => _emitContentEvent(node, 'tap', const {}),
+      );
+    }
+    if (message.kind == ImMessageKind.forward) {
+      return ImForwardBubble(
+        message: message,
+        onOpen: () => _emitContentEvent(node, 'open', const {}),
+      );
+    }
+    if (message.kind == ImMessageKind.record) {
+      return ImVoiceBubble(
+        fileId: node.data['file']?.toString(),
+        url: node.data['url']?.toString(),
+        localPath: message.mediaPath,
+        isMine: message.isMine,
+        fileSize: message.mediaSize,
+        declaredDuration: message.mediaDuration,
+        onPlay: () => _emitContentEvent(node, 'play', const {}),
+        onPause: () => _emitContentEvent(node, 'pause', const {}),
+      );
+    }
+    if (message.kind == ImMessageKind.share) {
+      return ImLinkBubble(
+        message: message,
+        onOpen:
+            (uri) => _emitContentEvent(node, 'open', {'uri': uri.toString()}),
+      );
+    }
+    if (message.kind == ImMessageKind.location) {
+      return ImLocationBubble(
+        message: message,
+        onOpen:
+            (uri) => _emitContentEvent(node, 'open', {'uri': uri.toString()}),
+      );
+    }
+    if (message.kind == ImMessageKind.file ||
+        message.kind == ImMessageKind.video) {
+      final mediaUri = _mediaUri();
+      final isVideo = message.kind == ImMessageKind.video;
+      return ImFileCard(
+        fileName:
+            message.text.isNotEmpty
+                ? message.text
+                : (isVideo ? 'Video' : 'Unknown file'),
+        fileSize: message.mediaSize,
+        isMine: message.isMine,
+        isVideo: isVideo,
+        onOpen:
+            mediaUri == null
+                ? null
+                : () {
+                  _emitContentEvent(node, 'open', {'uri': mediaUri.toString()});
+                  unawaited(_openMedia(context, mediaUri));
+                },
+      );
+    }
+    final isJsonCard = message.kind == ImMessageKind.json;
+    final hasImage =
+        message.hasMedia && (message.kind == ImMessageKind.image || isJsonCard);
+    if (!hasImage) {
+      return Text(
+        message.text,
+        style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+      );
+    }
+    return _buildImageContent(
+      context,
+      node: node,
+      isJsonCard: isJsonCard,
+      readOnlyPreview: readOnlyPreview,
+    );
+  }
+
+  Widget _buildImageContent(
+    BuildContext context, {
+    required ImContentNode node,
+    required bool isJsonCard,
+    required bool readOnlyPreview,
+  }) {
+    final previewLocation = _previewLocationFor(message);
+    if (previewLocation == null) {
+      return Text(
+        message.text,
+        style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+      );
+    }
+    if (isJsonCard) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 250),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap:
+                  () =>
+                      _emitContentEvent(node, 'tap', {'uri': previewLocation}),
+              child: ImNsfwGuard(
+                messageId: message.id,
+                mediaPath: previewLocation,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(14),
                   ),
                   child: platformImageWidget(
-                    location,
+                    previewLocation,
                     fit: BoxFit.scaleDown,
                     errorBuilder:
                         (context, error, stack) => const SizedBox.shrink(),
@@ -728,105 +667,292 @@ class ImMessageBubble extends StatelessWidget {
                 ),
               ),
             ),
-          );
-        case 'record':
-          final rawDuration = data['duration_ms'];
-          children.add(
-            ImVoiceBubble(
-              fileId: data['file']?.toString(),
-              url: data['url']?.toString(),
-              localPath:
-                  message.kind == ImMessageKind.record
-                      ? message.mediaPath
-                      : null,
-              isMine: message.isMine,
-              fileSize: (data['size'] as num?)?.toInt() ?? message.mediaSize,
-              declaredDuration:
-                  rawDuration is num
-                      ? Duration(milliseconds: rawDuration.toInt())
-                      : message.mediaDuration,
-            ),
-          );
-        case 'file':
-        case 'video':
-          final location = data['url']?.toString() ?? data['file']?.toString();
-          final uri =
-              location == null || location.trim().isEmpty
-                  ? null
-                  : (Uri.tryParse(location)?.hasScheme == true
-                      ? Uri.tryParse(location)
-                      : Uri.file(location));
-          children.add(
-            ImFileCard(
-              fileName:
-                  data['name']?.toString() ??
-                  data['file']?.toString() ??
-                  (segment.type == 'video' ? 'Video' : 'File'),
-              fileSize: (data['size'] as num?)?.toInt(),
-              isMine: message.isMine,
-              isVideo: segment.type == 'video',
-              onOpen: uri == null ? null : () => _openMedia(context, uri),
-            ),
-          );
-        case 'share':
-          children.add(ImLinkBubble(message: message));
-        case 'location':
-          children.add(ImLocationBubble(message: message));
-        case 'reply':
-        case 'agent_route':
-          break;
-        default:
-          children.add(
-            Text(
-              '[${segment.type}]',
-              style: TextStyle(
-                color: message.isMine ? Colors.white : Colors.black87,
-                fontSize: 13,
+            Container(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              decoration: BoxDecoration(
+                color:
+                    message.isMine
+                        ? ZzzColors.blue.withValues(alpha: 0.85)
+                        : const Color(0xFFe8e8ec),
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(14),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: message.isMine ? Colors.white70 : Colors.black54,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '小程序',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: message.isMine ? Colors.white38 : Colors.black38,
+                    ),
+                  ),
+                ],
               ),
             ),
-          );
-      }
+          ],
+        ),
+      );
     }
-    if (children.length == 1) return children.single;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var index = 0; index < children.length; index++) ...[
-          if (index > 0) const SizedBox(height: 8),
-          children[index],
-        ],
-      ],
+    final isImageOnly = message.text.isEmpty || message.text == '[图片]';
+    return GestureDetector(
+      onTap: () => _emitContentEvent(node, 'tap', {'uri': previewLocation}),
+      child: ImNsfwGuard(
+        messageId: message.id,
+        mediaPath: previewLocation,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(isImageOnly ? 18 : 12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 250, maxHeight: 400),
+            child: platformImageWidget(
+              previewLocation,
+              fit: BoxFit.scaleDown,
+              errorBuilder:
+                  (context, error, stack) => Text(
+                    message.text,
+                    style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+                  ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  bool _hasDynamicContent() {
-    final segments = message.segments ?? const [];
-    for (final segment in segments) {
-      if (segment.type == 'dynamic_content' ||
-          contentAdapterRegistry?.find(segment.type) != null) {
-        return true;
-      }
+  Widget _buildCompanionContent(
+    BuildContext context,
+    ImContentNode node,
+    ImStickerDefinition? sticker, {
+    required bool readOnlyPreview,
+  }) {
+    final data = node.data;
+    switch (node.type) {
+      case ImContentNodeType.dynamicContent:
+        final fallback = ImDynamicFallback.tryFromSegmentData(data);
+        final text = fallback?.content.trim();
+        return SelectableText(
+          text == null || text.isEmpty
+              ? 'Unable to display this dynamic content.'
+              : text,
+          style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+        );
+      case ImContentNodeType.text:
+        return Text(
+          data['text']?.toString() ?? '',
+          style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+        );
+      case ImContentNodeType.image:
+        final location = data['url']?.toString() ?? data['file']?.toString();
+        if (location == null || location.trim().isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return GestureDetector(
+          onTap: () => _emitContentEvent(node, 'tap', {'uri': location}),
+          child: ImNsfwGuard(
+            messageId: '${message.id}:${node.id}',
+            mediaPath: location,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 250,
+                  maxHeight: 400,
+                ),
+                child: platformImageWidget(
+                  location,
+                  fit: BoxFit.scaleDown,
+                  errorBuilder:
+                      (context, error, stack) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          ),
+        );
+      case ImContentNodeType.audio:
+        final rawDuration = data['duration_ms'];
+        return ImVoiceBubble(
+          fileId: data['file']?.toString(),
+          url: data['url']?.toString(),
+          localPath:
+              message.kind == ImMessageKind.record ? message.mediaPath : null,
+          isMine: message.isMine,
+          fileSize: (data['size'] as num?)?.toInt() ?? message.mediaSize,
+          declaredDuration:
+              rawDuration is num
+                  ? Duration(milliseconds: rawDuration.toInt())
+                  : message.mediaDuration,
+          onPlay: () => _emitContentEvent(node, 'play', const {}),
+          onPause: () => _emitContentEvent(node, 'pause', const {}),
+        );
+      case ImContentNodeType.file:
+      case ImContentNodeType.video:
+        final location = data['url']?.toString() ?? data['file']?.toString();
+        final parsed = location == null ? null : Uri.tryParse(location);
+        final uri =
+            location == null || location.trim().isEmpty
+                ? null
+                : (parsed?.hasScheme == true ? parsed : Uri.file(location));
+        return ImFileCard(
+          fileName:
+              data['name']?.toString() ??
+              data['file']?.toString() ??
+              (node.type == ImContentNodeType.video ? 'Video' : 'File'),
+          fileSize: (data['size'] as num?)?.toInt(),
+          isMine: message.isMine,
+          isVideo: node.type == ImContentNodeType.video,
+          onOpen:
+              uri == null
+                  ? null
+                  : () {
+                    _emitContentEvent(node, 'open', {'uri': uri.toString()});
+                    unawaited(_openMedia(context, uri));
+                  },
+        );
+      case ImContentNodeType.share:
+        return ImLinkBubble(
+          message: message,
+          onOpen:
+              (uri) => _emitContentEvent(node, 'open', {'uri': uri.toString()}),
+        );
+      case ImContentNodeType.location:
+        return ImLocationBubble(
+          message: message,
+          onOpen:
+              (uri) => _emitContentEvent(node, 'open', {'uri': uri.toString()}),
+        );
+      case ImContentNodeType.forward:
+        return ImForwardBubble(
+          message: message,
+          onOpen: () => _emitContentEvent(node, 'open', const {}),
+        );
+      case ImContentNodeType.sticker:
+        return sticker == null
+            ? Text(
+              message.text,
+              style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+            )
+            : _buildSticker(
+              sticker,
+              onTap: () => _emitContentEvent(node, 'tap', const {}),
+            );
+      case ImContentNodeType.system:
+        return Text(
+          message.text,
+          style: _messageTextStyle(readOnlyPreview: readOnlyPreview),
+        );
+      case ImContentNodeType.reply:
+        return const SizedBox.shrink();
+      case ImContentNodeType.markdown:
+      case ImContentNodeType.icon:
+      case ImContentNodeType.row:
+      case ImContentNodeType.column:
+      case ImContentNodeType.card:
+      case ImContentNodeType.container:
+      case ImContentNodeType.divider:
+      case ImContentNodeType.button:
+      case ImContentNodeType.input:
+      case ImContentNodeType.checkbox:
+      case ImContentNodeType.select:
+      case ImContentNodeType.progress:
+      case ImContentNodeType.status:
+      case ImContentNodeType.badge:
+        return const SizedBox.shrink();
+      case ImContentNodeType.unknown:
+        return Text(
+          '[${node.wireType}]',
+          style: _messageTextStyle(
+            fontSize: 13,
+            readOnlyPreview: readOnlyPreview,
+          ),
+        );
     }
-    return false;
   }
 
-  ImDynamicContent? _contentForSegment(
-    OneBotMessageSegment segment,
-    int segmentIndex,
+  Widget _buildSticker(ImStickerDefinition sticker, {VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Semantics(
+        label: 'Sticker: ${sticker.label}',
+        child: SizedBox.square(
+          dimension: 150,
+          child: Image.asset(
+            sticker.assetPath,
+            package: assetPackage,
+            fit: BoxFit.contain,
+            errorBuilder:
+                (_, __, ___) => Text(
+                  message.text,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  TextStyle _messageTextStyle({
+    double fontSize = 15,
+    bool readOnlyPreview = false,
+  }) {
+    return TextStyle(
+      color:
+          readOnlyPreview
+              ? Colors.white70
+              : (message.isMine ? Colors.white : Colors.black87),
+      fontSize: fontSize,
+      height: 1.35,
+    );
+  }
+
+  void _emitContentEvent(
+    ImContentNode node,
+    String type,
+    Map<String, dynamic> payload,
   ) {
-    try {
-      if (segment.type == 'dynamic_content') {
-        return ImDynamicContent.tryFromSegmentData(segment.data);
-      }
-      return contentAdapterRegistry?.convert(
-        message: message,
-        segment: segment,
-        segmentIndex: segmentIndex,
-      );
-    } on Object {
-      return null;
-    }
+    onContentEvent?.call(
+      ImContentEvent(
+        messageId: message.id,
+        contentId: node.id,
+        type: type,
+        payload: payload,
+      ),
+    );
+  }
+
+  void _emitDynamicEvent(ImDynamicEvent event) {
+    onDynamicEvent?.call(event);
+    onContentEvent?.call(event);
+  }
+
+  bool _isDynamicPrimitive(ImContentNodeType type) {
+    return switch (type) {
+      ImContentNodeType.markdown ||
+      ImContentNodeType.icon ||
+      ImContentNodeType.row ||
+      ImContentNodeType.column ||
+      ImContentNodeType.card ||
+      ImContentNodeType.container ||
+      ImContentNodeType.divider ||
+      ImContentNodeType.button ||
+      ImContentNodeType.input ||
+      ImContentNodeType.checkbox ||
+      ImContentNodeType.select ||
+      ImContentNodeType.progress ||
+      ImContentNodeType.status ||
+      ImContentNodeType.badge => true,
+      _ => false,
+    };
   }
 }
 

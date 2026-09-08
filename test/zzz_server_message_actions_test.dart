@@ -684,11 +684,54 @@ void main() {
 
       await source.connect();
       await source.watchMessages('private_me_bob').first;
+      final updates = <ImDynamicUpdateEnvelope>[];
+      final updateSubscription = source.dynamicUpdates.listen(updates.add);
+      final messageSnapshots = <List<ImMessage>>[];
+      final messageSubscription = source
+          .watchMessages('private_me_bob')
+          .listen(messageSnapshots.add);
+      addTearDown(updateSubscription.cancel);
+      addTearDown(messageSubscription.cancel);
+      await Future<void>.delayed(Duration.zero);
+      messageSnapshots.clear();
       const patch = ImDynamicPatch(
         operation: ImDynamicPatchOperation.update,
         nodeId: 'status',
         props: {'text': 'Complete'},
       );
+      final updated = await source.sendDynamicUpdate(
+        conversationId: 'private_me_bob',
+        messageId: 'message-1',
+        contentId: 'card-1',
+        patches: [patch],
+        clientMessageId: 'zzzterm-update-1',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(updates, hasLength(1));
+      expect(updates.single.conversationId, 'private_me_bob');
+      expect(updates.single.update.messageId, 'message-1');
+      expect(messageSnapshots, isEmpty);
+      final updatedContent = ImDynamicContent.fromSegmentData(
+        updated.segments!.single.data,
+      );
+      expect(updatedContent.tree.findById('status')?.props['text'], 'Complete');
+
+      final sentParams = sendRequests.single['params'] as Map<String, dynamic>;
+      sockets.single.add(
+        jsonEncode({
+          'post_type': 'message',
+          'message_type': 'private',
+          'message_id': 'message-1',
+          'conversation_id': 'private_me_bob',
+          'sender': {'user_id': 'me', 'nickname': 'Me'},
+          'message': sentParams['message'],
+          'timestamp_ms': 200,
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(updates, hasLength(1));
+      expect(messageSnapshots, isEmpty);
+
       await source.sendDynamicUpdate(
         conversationId: 'private_me_bob',
         messageId: 'message-1',
@@ -696,19 +739,82 @@ void main() {
         patches: [patch],
         clientMessageId: 'zzzterm-update-1',
       );
-      await source.sendDynamicUpdate(
-        conversationId: 'private_me_bob',
-        messageId: 'message-1',
-        contentId: 'card-1',
-        patches: [patch],
-        clientMessageId: 'zzzterm-update-1',
-      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(updates, hasLength(1));
+      expect(messageSnapshots, isEmpty);
       expect(sendRequests, hasLength(2));
       for (final request in sendRequests) {
         final params = request['params'] as Map<String, dynamic>;
         expect(params['client_message_id'], 'zzzterm-update-1');
         expect((params['message'] as List).single['type'], 'dynamic_update');
       }
+
+      messageSnapshots.clear();
+      final replacement = _dynamicContent('card-1', 'Replaced');
+      await source.replaceDynamicContent(
+        conversationId: 'private_me_bob',
+        messageId: 'message-1',
+        contentId: 'card-1',
+        content: replacement,
+        clientMessageId: 'zzzterm-replace-1',
+      );
+      messageSnapshots.clear();
+      final replaceRequest = sendRequests.last;
+      final replaceParams = replaceRequest['params'] as Map<String, dynamic>;
+      expect(replaceParams['client_message_id'], 'zzzterm-replace-1');
+      expect(
+        (replaceParams['message'] as List).single['type'],
+        'dynamic_replace',
+      );
+      sockets.single.add(
+        jsonEncode({
+          'post_type': 'message',
+          'message_type': 'private',
+          'message_id': 'message-1',
+          'conversation_id': 'private_me_bob',
+          'sender': {'user_id': 'bob', 'nickname': 'Bob'},
+          'message': replaceParams['message'],
+          'timestamp_ms': 300,
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(messageSnapshots, isNotEmpty);
+      expect(
+        ImDynamicContent.fromSegmentData(
+          messageSnapshots.last.single.segments!.single.data,
+        ).tree.props['text'],
+        'Replaced',
+      );
+
+      messageSnapshots.clear();
+      await source.removeDynamicContent(
+        conversationId: 'private_me_bob',
+        messageId: 'message-1',
+        contentId: 'card-1',
+        clientMessageId: 'zzzterm-remove-1',
+      );
+      messageSnapshots.clear();
+      final removeRequest = sendRequests.last;
+      final removeParams = removeRequest['params'] as Map<String, dynamic>;
+      expect(removeParams['client_message_id'], 'zzzterm-remove-1');
+      expect(
+        (removeParams['message'] as List).single['type'],
+        'dynamic_remove',
+      );
+      sockets.single.add(
+        jsonEncode({
+          'post_type': 'message',
+          'message_type': 'private',
+          'message_id': 'message-1',
+          'conversation_id': 'private_me_bob',
+          'sender': {'user_id': 'bob', 'nickname': 'Bob'},
+          'message': removeParams['message'],
+          'timestamp_ms': 400,
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(messageSnapshots, isNotEmpty);
+      expect(messageSnapshots.last.single.segments, isEmpty);
     },
   );
 }

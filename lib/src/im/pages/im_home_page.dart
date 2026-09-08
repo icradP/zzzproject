@@ -12,6 +12,7 @@ import '../data/im_animation_config.dart';
 import '../data/im_backdrop_config.dart';
 import '../data/im_push_manager.dart';
 import '../data/im_repository.dart';
+import '../dynamic/im_dynamic.dart';
 import '../im_scope.dart';
 import '../models/im_models.dart';
 import '../widgets/conversation_list_view.dart';
@@ -208,6 +209,60 @@ class _ImHomePageState extends State<ImHomePage>
       conversationId: conversation.id,
       message: message,
       replyToMessageId: replyToMessageId,
+    );
+  }
+
+  Future<void> _saveDynamicEdit(
+    ImRepository repository,
+    ImConversation conversation,
+    ImMessage message,
+    ImDynamicCommand command,
+  ) async {
+    final clientMessageId =
+        'im-edit-${message.id}-${DateTime.now().microsecondsSinceEpoch}';
+    switch (command.operation) {
+      case ImDynamicCommandOperation.replace:
+        final content = command.content;
+        if (content == null) {
+          throw StateError('Dynamic replacement content is missing.');
+        }
+        await repository.replaceDynamicContent(
+          conversationId: conversation.id,
+          messageId: command.messageId,
+          contentId: command.contentId,
+          content: content,
+          clientMessageId: clientMessageId,
+        );
+      case ImDynamicCommandOperation.remove:
+        await repository.removeDynamicContent(
+          conversationId: conversation.id,
+          messageId: command.messageId,
+          contentId: command.contentId,
+          clientMessageId: clientMessageId,
+        );
+      case ImDynamicCommandOperation.create:
+      case ImDynamicCommandOperation.update:
+        throw UnsupportedError(
+          'This editor only replaces or removes existing Dynamic Content.',
+        );
+    }
+  }
+
+  Future<void> _createDynamicContent(
+    ImRepository repository,
+    ImConversation conversation,
+    ImDynamicCommand command,
+  ) async {
+    final content = command.content;
+    if (command.operation != ImDynamicCommandOperation.create ||
+        content == null) {
+      throw UnsupportedError('Bubble Editor did not produce create content.');
+    }
+    await repository.sendDynamicContent(
+      conversationId: conversation.id,
+      content: content,
+      clientMessageId:
+          'im-create-${command.messageId}-${DateTime.now().microsecondsSinceEpoch}',
     );
   }
 
@@ -955,6 +1010,8 @@ class _ImHomePageState extends State<ImHomePage>
                       remove: remove,
                     );
                   },
+                  dynamicUpdates: repository.dynamicUpdates,
+                  dynamicRuntimeStore: ImScope.dynamicRuntimeStoreOf(context),
                   onDynamicEvent: (event) {
                     unawaited(
                       repository
@@ -965,6 +1022,12 @@ class _ImHomePageState extends State<ImHomePage>
                           .catchError((_) {}),
                     );
                   },
+                  onCreateDynamic:
+                      (command) =>
+                          _createDynamicContent(repository, conv, command),
+                  onEditDynamic:
+                      (message, command) =>
+                          _saveDynamicEdit(repository, conv, message, command),
                 ),
               );
             },

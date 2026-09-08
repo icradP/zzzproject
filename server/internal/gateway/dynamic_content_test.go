@@ -345,6 +345,151 @@ func TestDynamicUpdateKeepsOneHistoryMessageAndBroadcastsPatch(t *testing.T) {
 	}
 }
 
+func TestDynamicReplaceAndRemoveKeepMessageIdentityAndAreIdempotent(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+
+	first := validDynamicContentSegment()
+	first.Data["metadata"] = map[string]interface{}{"title": "Original"}
+	first.Data["fallback"] = map[string]interface{}{
+		"type":    "text",
+		"content": "Original fallback",
+	}
+	second := protocol.DynamicContentSegment(map[string]interface{}{
+		"id": "second-card", "version": "1.0", "source": "user",
+		"tree": map[string]interface{}{
+			"id": "second-root", "type": "status",
+			"props": map[string]interface{}{"text": "Keep me"},
+		},
+	})
+	initial := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message": []protocol.MessageSegment{
+			protocol.TextSegment("Before cards"),
+			first,
+			second,
+		},
+	})
+	assertOK(t, initial)
+	messageID := responseData(t, initial)["message_id"].(string)
+	_ = readJSON(t, bob)
+
+	replacement := protocol.DynamicContentSegment(map[string]interface{}{
+		"id": "diagnosis-1", "version": "1.0", "source": "ai",
+		"metadata": map[string]interface{}{"title": "Replaced"},
+		"fallback": map[string]interface{}{
+			"type":    "text",
+			"content": "Replacement fallback",
+		},
+		"tree": map[string]interface{}{
+			"id": "replacement-root", "type": "card",
+			"props": map[string]interface{}{"title": "Complete"},
+		},
+	})
+	replaceParams := map[string]interface{}{
+		"conversation_id":   conversationID,
+		"client_message_id": "dynamic-replace-1",
+		"message": []protocol.MessageSegment{
+			protocol.DynamicReplaceSegment(messageID, "diagnosis-1", replacement.Data),
+		},
+	}
+	replaced := request(t, alice, "send_message", replaceParams)
+	assertOK(t, replaced)
+	if data := responseData(t, replaced); data["message_id"] != messageID || data["updated"] != true || data["duplicate"] != false {
+		t.Fatalf("unexpected replace response: %#v", replaced)
+	}
+	for _, connection := range []*websocket.Conn{alice, bob} {
+		event := readJSON(t, connection)
+		if event["message_id"] != messageID {
+			t.Fatalf("replace event message id = %#v", event)
+		}
+		segments := event["message"].([]interface{})
+		if segments[0].(map[string]interface{})["type"] != "dynamic_replace" {
+			t.Fatalf("replace event segments = %#v", segments)
+		}
+	}
+
+	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	if len(history) != 1 {
+		t.Fatalf("replace created %d history messages", len(history))
+	}
+	storedSegments := history[0].(map[string]interface{})["message"].([]interface{})
+	if len(storedSegments) != 3 || storedSegments[0].(map[string]interface{})["type"] != "text" {
+		t.Fatalf("replace changed message siblings: %#v", storedSegments)
+	}
+	storedReplacement := storedSegments[1].(map[string]interface{})["data"].(map[string]interface{})
+	if storedReplacement["version"] != "1.0" || storedReplacement["metadata"].(map[string]interface{})["title"] != "Replaced" || storedReplacement["fallback"].(map[string]interface{})["content"] != "Replacement fallback" {
+		t.Fatalf("replacement schema fields were not preserved: %#v", storedReplacement)
+	}
+	if storedSegments[2].(map[string]interface{})["data"].(map[string]interface{})["id"] != "second-card" {
+		t.Fatalf("sibling dynamic content changed: %#v", storedSegments[2])
+	}
+
+	duplicateReplace := request(t, alice, "send_message", replaceParams)
+	assertOK(t, duplicateReplace)
+	if responseData(t, duplicateReplace)["duplicate"] != true {
+		t.Fatalf("replace retry was not idempotent: %#v", duplicateReplace)
+	}
+
+	removeParams := map[string]interface{}{
+		"conversation_id":   conversationID,
+		"client_message_id": "dynamic-remove-1",
+		"message": []protocol.MessageSegment{
+			protocol.DynamicRemoveSegment(messageID, "second-card"),
+		},
+	}
+	removed := request(t, alice, "send_message", removeParams)
+	assertOK(t, removed)
+	if data := responseData(t, removed); data["message_id"] != messageID || data["updated"] != true || data["duplicate"] != false {
+		t.Fatalf("unexpected remove response: %#v", removed)
+	}
+	for _, connection := range []*websocket.Conn{alice, bob} {
+		event := readJSON(t, connection)
+		if event["message_id"] != messageID {
+			t.Fatalf("remove event message id = %#v", event)
+		}
+		segments := event["message"].([]interface{})
+		if segments[0].(map[string]interface{})["type"] != "dynamic_remove" {
+			t.Fatalf("remove event segments = %#v", segments)
+		}
+	}
+
+	duplicateRemove := request(t, alice, "send_message", removeParams)
+	assertOK(t, duplicateRemove)
+	if responseData(t, duplicateRemove)["duplicate"] != true {
+		t.Fatalf("remove retry was not idempotent: %#v", duplicateRemove)
+	}
+	finalHistory := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	finalSegments := finalHistory[0].(map[string]interface{})["message"].([]interface{})
+	if len(finalSegments) != 2 || finalSegments[0].(map[string]interface{})["type"] != "text" || finalSegments[1].(map[string]interface{})["data"].(map[string]interface{})["id"] != "diagnosis-1" {
+		t.Fatalf("remove did not preserve remaining content: %#v", finalSegments)
+	}
+}
+
 func TestDynamicCapabilitiesNegotiateAndDowngradeLegacyClients(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)

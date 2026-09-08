@@ -179,6 +179,29 @@ func validateDynamicUpdateSegment(segment protocol.MessageSegment) error {
 	return err
 }
 
+func validateDynamicReplaceSegment(segment protocol.MessageSegment) error {
+	if segment.Type != "dynamic_replace" {
+		return nil
+	}
+	encoded, err := json.Marshal(segment.Data)
+	if err != nil {
+		return fmt.Errorf("dynamic replace is not valid JSON")
+	}
+	if len(encoded) > maxDynamicContentBytes {
+		return fmt.Errorf("dynamic replace is too large")
+	}
+	_, _, _, err = parseDynamicReplaceData(segment.Data)
+	return err
+}
+
+func validateDynamicRemoveSegment(segment protocol.MessageSegment) error {
+	if segment.Type != "dynamic_remove" {
+		return nil
+	}
+	_, _, err := parseDynamicRemoveData(segment.Data)
+	return err
+}
+
 func dynamicSchemaFromData(data map[string]interface{}) (map[string]interface{}, error) {
 	var schema map[string]interface{}
 	switch nested := data["content"].(type) {
@@ -466,6 +489,119 @@ func parseDynamicUpdateData(data map[string]interface{}) (string, string, []map[
 		patches = append(patches, patch)
 	}
 	return messageID, contentID, patches, nil
+}
+
+func parseDynamicReplaceData(data map[string]interface{}) (string, string, map[string]interface{}, error) {
+	messageID, _ := data["message_id"].(string)
+	contentID, _ := data["content_id"].(string)
+	if !validDynamicIdentifier(messageID) || !validDynamicIdentifier(contentID) {
+		return "", "", nil, fmt.Errorf("dynamic replace message_id or content_id is invalid")
+	}
+	if _, exists := data["content"]; !exists {
+		return "", "", nil, fmt.Errorf("dynamic replace content is missing")
+	}
+	schema, err := dynamicSchemaFromData(data)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if schema["id"] != contentID {
+		return "", "", nil, fmt.Errorf("dynamic replacement id does not match content_id")
+	}
+	if err := validateDynamicSchema(schema); err != nil {
+		return "", "", nil, err
+	}
+	return messageID, contentID, schema, nil
+}
+
+func parseDynamicRemoveData(data map[string]interface{}) (string, string, error) {
+	messageID, _ := data["message_id"].(string)
+	contentID, _ := data["content_id"].(string)
+	if !validDynamicIdentifier(messageID) || !validDynamicIdentifier(contentID) {
+		return "", "", fmt.Errorf("dynamic remove message_id or content_id is invalid")
+	}
+	return messageID, contentID, nil
+}
+
+func dynamicMutationMessageID(segment protocol.MessageSegment) (string, error) {
+	switch segment.Type {
+	case "dynamic_update":
+		messageID, _, _, err := parseDynamicUpdateData(segment.Data)
+		return messageID, err
+	case "dynamic_replace":
+		messageID, _, _, err := parseDynamicReplaceData(segment.Data)
+		return messageID, err
+	case "dynamic_remove":
+		messageID, _, err := parseDynamicRemoveData(segment.Data)
+		return messageID, err
+	default:
+		return "", fmt.Errorf("unsupported dynamic mutation")
+	}
+}
+
+func applyDynamicMutationToSegments(segments []protocol.MessageSegment, segment protocol.MessageSegment) ([]protocol.MessageSegment, string, error) {
+	switch segment.Type {
+	case "dynamic_update":
+		return applyDynamicUpdateToSegments(segments, segment.Data)
+	case "dynamic_replace":
+		return applyDynamicReplaceToSegments(segments, segment.Data)
+	case "dynamic_remove":
+		return applyDynamicRemoveToSegments(segments, segment.Data)
+	default:
+		return nil, "", fmt.Errorf("unsupported dynamic mutation")
+	}
+}
+
+func applyDynamicReplaceToSegments(segments []protocol.MessageSegment, data map[string]interface{}) ([]protocol.MessageSegment, string, error) {
+	messageID, contentID, replacement, err := parseDynamicReplaceData(data)
+	if err != nil {
+		return nil, "", err
+	}
+	index, err := dynamicContentSegmentIndex(segments, contentID, "replace")
+	if err != nil {
+		return nil, "", err
+	}
+	result := append([]protocol.MessageSegment(nil), segments...)
+	result[index] = protocol.DynamicContentSegment(replacement)
+	return result, messageID, nil
+}
+
+func applyDynamicRemoveToSegments(segments []protocol.MessageSegment, data map[string]interface{}) ([]protocol.MessageSegment, string, error) {
+	messageID, contentID, err := parseDynamicRemoveData(data)
+	if err != nil {
+		return nil, "", err
+	}
+	index, err := dynamicContentSegmentIndex(segments, contentID, "remove")
+	if err != nil {
+		return nil, "", err
+	}
+	result := make([]protocol.MessageSegment, 0, len(segments)-1)
+	result = append(result, segments[:index]...)
+	result = append(result, segments[index+1:]...)
+	return result, messageID, nil
+}
+
+func dynamicContentSegmentIndex(segments []protocol.MessageSegment, contentID, operation string) (int, error) {
+	matched := -1
+	for index, segment := range segments {
+		if segment.Type != "dynamic_content" {
+			continue
+		}
+		schema, err := dynamicSchemaFromData(segment.Data)
+		if err != nil {
+			return -1, err
+		}
+		if schema["id"] != contentID {
+			continue
+		}
+		if matched >= 0 {
+			return -1, fmt.Errorf("dynamic %s content_id is ambiguous", operation)
+		}
+		matched = index
+	}
+	if matched < 0 {
+		return -1, fmt.Errorf("dynamic %s target content was not found", operation)
+	}
+	return matched, nil
 }
 
 func applyDynamicUpdateToSegments(segments []protocol.MessageSegment, data map[string]interface{}) ([]protocol.MessageSegment, string, error) {

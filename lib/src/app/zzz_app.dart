@@ -23,6 +23,7 @@ import '../im/data/im_interaction_handler.dart';
 import '../im/data/im_image_hosting_config.dart';
 import '../im/data/im_logger.dart';
 import '../im/data/im_message_display_config.dart';
+import '../im/data/im_dynamic_runtime_preferences.dart';
 import '../im/data/im_notification_service.dart';
 import '../im/data/im_media_cache.dart';
 import '../im/models/im_models.dart';
@@ -33,6 +34,7 @@ import '../im/data/im_nsfw_checker_stub.dart';
 import '../im/data/im_nsfw_config.dart';
 import '../im/data/im_repository.dart';
 import '../im/data/im_push_manager.dart';
+import '../im/dynamic/runtime/im_dynamic_runtime_store.dart';
 import '../im/im_scope.dart';
 import '../im/pages/im_web_setup_page.dart';
 import '../theme/zzz_colors.dart';
@@ -51,6 +53,9 @@ class _ZzzAppState extends State<ZzzApp> {
   Stream<ConnectionStatus>? _connectionStatus;
   ImNsfwChecker? _nsfwChecker;
   final _nsfwStateCache = NsfwStateCache();
+  final _dynamicRuntimeStore = ImDynamicRuntimeStore(
+    persistence: ImDynamicRuntimePreferencesPersistence(),
+  );
   bool _needsWebSetup = false;
   ImPushManager _pushManager = NoOpImPushManager();
   ImClientRuntime? _runtime;
@@ -87,6 +92,7 @@ class _ZzzAppState extends State<ZzzApp> {
 
   Future<void> _initRepository() async {
     final generation = ++_repositoryGeneration;
+    await _dynamicRuntimeStore.initialize();
     final profiles = await ImConnectionProfiles.load();
     final storageConfig = await ImStorageConfig.load();
     await ImAnimationConfig.load();
@@ -284,6 +290,7 @@ class _ZzzAppState extends State<ZzzApp> {
     _repository?.dispose();
     _pushManager.dispose();
     _nsfwChecker?.dispose();
+    _dynamicRuntimeStore.dispose();
     super.dispose();
   }
 
@@ -314,6 +321,7 @@ class _ZzzAppState extends State<ZzzApp> {
       nsfwChecker: _nsfwChecker!,
       nsfwStateCache: _nsfwStateCache,
       pushManager: _pushManager,
+      dynamicRuntimeStore: _dynamicRuntimeStore,
       onConnectionsChanged: _initRepository,
       onSignOut: kIsWeb ? _signOutWeb : null,
       connectionStatus: _connectionStatus,

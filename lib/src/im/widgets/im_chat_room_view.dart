@@ -8,12 +8,14 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:mime/mime.dart';
+import 'package:onebot_flutter/onebot_flutter.dart' show OneBotMessageSegment;
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 import '../../assets/app_assets.dart';
 import '../../theme/zzz_colors.dart';
 import '../../widgets/zzz_widgets.dart';
 import '../im_scope.dart';
+import '../content/im_content.dart';
 import '../data/im_draft_store.dart';
 import '../data/im_message_display_config.dart';
 import '../data/im_sticker_catalog.dart';
@@ -58,8 +60,15 @@ class ImChatRoomView extends StatefulWidget {
     this.onBack,
     this.messageBuilder,
     this.dynamicContentRegistry,
+    this.dynamicRuntimeStore,
     this.contentAdapterRegistry,
+    this.contentNodeAdapterRegistry,
+    this.contentRendererRegistry,
+    this.dynamicUpdates,
+    this.onContentEvent,
     this.onDynamicEvent,
+    this.onCreateDynamic,
+    this.onEditDynamic,
     this.composerEnabled = true,
     this.composerHintText = 'Message something...',
     this.attachmentsEnabled = true,
@@ -102,15 +111,43 @@ class ImChatRoomView extends StatefulWidget {
   /// registry is safe and intentionally limited to built-in components.
   final ImDynamicComponentRegistry? dynamicContentRegistry;
 
+  /// Shared runtime state for Dynamic Content bubbles. When omitted, this
+  /// chat room owns an in-memory store for its lifetime.
+  final ImDynamicRuntimeStore? dynamicRuntimeStore;
+
   /// Optional compatibility adapters for legacy business message segments.
   /// Registered segments render through the Dynamic Content runtime while
   /// their persisted wire representation remains unchanged.
   final ImMessageContentAdapterRegistry? contentAdapterRegistry;
 
+  /// Unified ContentNode adapters. Legacy Dynamic adapters remain supported
+  /// through [contentAdapterRegistry] and are bridged automatically.
+  final ImContentAdapterRegistry? contentNodeAdapterRegistry;
+
+  /// Optional renderers for unified ContentNode types. Unregistered types keep
+  /// using the existing IM renderers during the incremental migration.
+  final ImContentRendererRegistry? contentRendererRegistry;
+
+  /// Optional in-place Dynamic Content updates. When supplied, only the
+  /// affected message row is rebuilt instead of replacing the whole list.
+  final Stream<ImDynamicUpdateEnvelope>? dynamicUpdates;
+
+  /// Receives interactions from any renderer in the unified content layer.
+  final ValueChanged<ImContentEvent>? onContentEvent;
+
   /// Receives user interaction from a rendered dynamic content node. Business
   /// code decides whether an action calls an API, updates a message, or runs a
   /// local operation.
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
+
+  /// Opens the Bubble Editor with a new user-authored Dynamic Schema. The
+  /// caller persists the resulting create command as a new message.
+  final Future<void> Function(ImDynamicCommand command)? onCreateDynamic;
+
+  /// Opens the shared Dynamic Schema editor for a message. The caller owns
+  /// persistence of the resulting command.
+  final Future<void> Function(ImMessage message, ImDynamicCommand command)?
+  onEditDynamic;
   final bool composerEnabled;
   final String composerHintText;
   final bool attachmentsEnabled;
@@ -121,10 +158,14 @@ class ImChatRoomView extends StatefulWidget {
 }
 
 class _ImChatRoomViewState extends State<ImChatRoomView> {
+  ImDynamicRuntimeStore? _ownedDynamicRuntimeStore;
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
   final _messageKeys = <String, GlobalKey>{};
+  final _messageNotifiers = <String, ValueNotifier<ImMessage>>{};
+  StreamSubscription<ImDynamicUpdateEnvelope>? _dynamicUpdateSubscription;
+  final _dynamicMessagePatchAdapter = const ImDynamicMessagePatchAdapter();
   bool _sending = false;
   bool _showMembers = false;
   bool _showAttach = false;
@@ -145,9 +186,15 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   String _mentionQuery = '';
   int _mentionLoadGeneration = 0;
 
+  ImDynamicRuntimeStore get _dynamicRuntimeStore =>
+      widget.dynamicRuntimeStore ?? _ownedDynamicRuntimeStore!;
+
   @override
   void initState() {
     super.initState();
+    if (widget.dynamicRuntimeStore == null) {
+      _ownedDynamicRuntimeStore = ImDynamicRuntimeStore();
+    }
     _lastMaxExtent = 0;
     _showMessageStatus = ImMessageDisplayConfig.showsMessageStatus;
     ImMessageDisplayConfig.showMessageStatus.addListener(
@@ -156,6 +203,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     _canLoadOlder = widget.onLoadOlder != null;
     _scrollController.addListener(_handleScroll);
     _composerController.addListener(_handleComposerChanged);
+    _subscribeToDynamicUpdates(widget.dynamicUpdates);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _scrollToBottom();
@@ -178,6 +226,9 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       _handleMessageStatusVisibilityChanged,
     );
     _draftSaveTimer?.cancel();
+    _dynamicUpdateSubscription?.cancel();
+    _disposeMessageNotifiers();
+    _ownedDynamicRuntimeStore?.dispose();
     final ownerId = _draftOwnerId;
     if (ownerId != null) {
       unawaited(
@@ -206,8 +257,18 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   @override
   void didUpdateWidget(covariant ImChatRoomView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.dynamicRuntimeStore, widget.dynamicRuntimeStore)) {
+      _ownedDynamicRuntimeStore?.dispose();
+      _ownedDynamicRuntimeStore =
+          widget.dynamicRuntimeStore == null ? ImDynamicRuntimeStore() : null;
+    }
+    if (oldWidget.dynamicUpdates != widget.dynamicUpdates) {
+      _dynamicUpdateSubscription?.cancel();
+      _subscribeToDynamicUpdates(widget.dynamicUpdates);
+    }
     final convChanged = widget.conversation.id != oldWidget.conversation.id;
     if (convChanged) {
+      _disposeMessageNotifiers();
       _lastMaxExtent = 0;
       _showMembers = false;
       _showAttach = false;
@@ -219,6 +280,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       _mentionQuery = '';
       _canLoadOlder = widget.onLoadOlder != null;
       unawaited(_loadMentionCandidates());
+    } else {
+      _synchronizeMessageNotifiers(oldWidget.messages, widget.messages);
     }
     final prepended =
         !convChanged &&
@@ -230,6 +293,193 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
         (widget.messages.length != oldWidget.messages.length && !prepended)) {
       _scrollToBottom();
     }
+  }
+
+  void _subscribeToDynamicUpdates(Stream<ImDynamicUpdateEnvelope>? updates) {
+    if (updates == null) return;
+    _dynamicUpdateSubscription = updates.listen(_applyDynamicUpdate);
+  }
+
+  void _applyDynamicUpdate(ImDynamicUpdateEnvelope envelope) {
+    if (envelope.conversationId != widget.conversation.id) return;
+    final notifier = _messageNotifiers[envelope.update.messageId];
+    final message =
+        notifier?.value ??
+        widget.messages
+            .where((item) => item.id == envelope.update.messageId)
+            .firstOrNull;
+    if (message == null) return;
+    try {
+      final patched = _dynamicMessagePatchAdapter.apply(
+        message,
+        envelope.update,
+      );
+      final target =
+          notifier ??
+          _messageNotifiers.putIfAbsent(
+            message.id,
+            () => ValueNotifier(message),
+          );
+      target.value = patched;
+    } on ImDynamicPatchException {
+      // A stale patch must not interrupt the conversation stream.
+    }
+  }
+
+  ValueNotifier<ImMessage> _messageNotifierFor(ImMessage message) {
+    return _messageNotifiers.putIfAbsent(
+      message.id,
+      () => ValueNotifier(message),
+    );
+  }
+
+  void _synchronizeMessageNotifiers(
+    List<ImMessage> previous,
+    List<ImMessage> current,
+  ) {
+    final previousById = {for (final message in previous) message.id: message};
+    final currentIds = current.map((message) => message.id).toSet();
+    final removed = _messageNotifiers.keys
+        .where((messageId) => !currentIds.contains(messageId))
+        .toList(growable: false);
+    for (final messageId in removed) {
+      _messageNotifiers.remove(messageId)?.dispose();
+      _messageKeys.remove(messageId);
+      unawaited(_dynamicRuntimeStore.clearMessage(messageId));
+    }
+    for (final message in current) {
+      final notifier = _messageNotifiers[message.id];
+      if (notifier == null) continue;
+      final previousMessage = previousById[message.id];
+      if (previousMessage == null ||
+          !_hasSameMessageSnapshot(previousMessage, message)) {
+        if (previousMessage != null) {
+          final currentContentIds = _dynamicContentIds(message);
+          for (final contentId in _dynamicContentIds(
+            previousMessage,
+          ).difference(currentContentIds)) {
+            unawaited(
+              _dynamicRuntimeStore.clearContent(
+                messageId: message.id,
+                contentId: contentId,
+              ),
+            );
+          }
+        }
+        notifier.value = message;
+      }
+    }
+  }
+
+  Set<String> _dynamicContentIds(ImMessage message) {
+    final ids = <String>{};
+    for (final segment in message.segments ?? const <OneBotMessageSegment>[]) {
+      if (segment.type != 'dynamic_content') continue;
+      final content = ImDynamicContent.tryFromSegmentData(segment.data);
+      if (content != null) ids.add(content.id);
+    }
+    return ids;
+  }
+
+  void _disposeMessageNotifiers() {
+    for (final notifier in _messageNotifiers.values) {
+      notifier.dispose();
+    }
+    _messageNotifiers.clear();
+    _messageKeys.clear();
+  }
+
+  bool _hasSameMessageSnapshot(ImMessage previous, ImMessage current) {
+    if (identical(previous, current)) return true;
+    return previous.id == current.id &&
+        previous.conversationId == current.conversationId &&
+        previous.senderId == current.senderId &&
+        previous.senderDisplayName == current.senderDisplayName &&
+        previous.text == current.text &&
+        previous.sentAt == current.sentAt &&
+        previous.kind == current.kind &&
+        previous.status == current.status &&
+        previous.readCount == current.readCount &&
+        previous.recipientCount == current.recipientCount &&
+        previous.isMine == current.isMine &&
+        _hasSameSegments(previous.segments, current.segments) &&
+        previous.mediaPath == current.mediaPath &&
+        previous.mediaUrl == current.mediaUrl &&
+        previous.mediaSize == current.mediaSize &&
+        previous.mediaWidth == current.mediaWidth &&
+        previous.mediaHeight == current.mediaHeight &&
+        previous.thumbnailPath == current.thumbnailPath &&
+        previous.thumbnailUrl == current.thumbnailUrl &&
+        previous.mediaMime == current.mediaMime &&
+        previous.mediaDuration == current.mediaDuration &&
+        _hasSameReactions(previous.reactions, current.reactions) &&
+        previous.replyToMessageId == current.replyToMessageId &&
+        previous.recalled == current.recalled &&
+        previous.sourceId == current.sourceId &&
+        previous.sourceLabel == current.sourceLabel;
+  }
+
+  bool _hasSameSegments(
+    List<OneBotMessageSegment>? previous,
+    List<OneBotMessageSegment>? current,
+  ) {
+    if (identical(previous, current)) return true;
+    if (previous == null ||
+        current == null ||
+        previous.length != current.length) {
+      return false;
+    }
+    for (var index = 0; index < previous.length; index++) {
+      if (previous[index].type != current[index].type ||
+          !_hasSameJsonValue(previous[index].data, current[index].data)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _hasSameReactions(
+    List<ImReaction>? previous,
+    List<ImReaction>? current,
+  ) {
+    if (identical(previous, current)) return true;
+    if (previous == null ||
+        current == null ||
+        previous.length != current.length) {
+      return false;
+    }
+    for (var index = 0; index < previous.length; index++) {
+      final before = previous[index];
+      final after = current[index];
+      if (before.emojiId != after.emojiId ||
+          before.count != after.count ||
+          before.reactedByMe != after.reactedByMe) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _hasSameJsonValue(Object? previous, Object? current) {
+    if (identical(previous, current)) return true;
+    if (previous is Map && current is Map) {
+      if (previous.length != current.length) return false;
+      for (final entry in previous.entries) {
+        if (!current.containsKey(entry.key) ||
+            !_hasSameJsonValue(entry.value, current[entry.key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (previous is List && current is List) {
+      if (previous.length != current.length) return false;
+      for (var index = 0; index < previous.length; index++) {
+        if (!_hasSameJsonValue(previous[index], current[index])) return false;
+      }
+      return true;
+    }
+    return previous == current;
   }
 
   Future<void> _restoreDraft() async {
@@ -715,6 +965,227 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     );
   }
 
+  List<ImDynamicContent> _dynamicContentsForMessage(ImMessage message) {
+    final contents = <ImDynamicContent>[];
+    for (final segment in message.segments ?? const <OneBotMessageSegment>[]) {
+      if (segment.type != 'dynamic_content') continue;
+      final content = ImDynamicContent.tryFromSegmentData(segment.data);
+      if (content != null) contents.add(content);
+    }
+    return List.unmodifiable(contents);
+  }
+
+  Future<void> _showDynamicEditor(ImMessage message) async {
+    final callback = widget.onEditDynamic;
+    final contents = _dynamicContentsForMessage(message);
+    if (callback == null || contents.isEmpty) return;
+
+    ImDynamicContent? content = contents.length == 1 ? contents.single : null;
+    if (content == null) {
+      content = await showZzzModalPanel<ImDynamicContent>(
+        context: context,
+        builder:
+            (dialogContext) => ZzzModalPanel(
+              key: const ValueKey('dynamic-content-picker-panel'),
+              title: 'Choose Dynamic Content',
+              subtitle: 'This message contains multiple cards',
+              icon: Icons.dashboard_customize_outlined,
+              maxWidth: 520,
+              maxHeight: 520,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: contents.length,
+                separatorBuilder:
+                    (_, __) => const Divider(height: 1, color: Colors.white12),
+                itemBuilder: (context, index) {
+                  final candidate = contents[index];
+                  return ListTile(
+                    key: ValueKey('dynamic-content-choice-${candidate.id}'),
+                    leading: const Icon(Icons.view_module_outlined),
+                    title: Text(candidate.id),
+                    subtitle: Text(
+                      '${candidate.source.name} · ${candidate.version}',
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => Navigator.of(dialogContext).pop(candidate),
+                  );
+                },
+              ),
+            ),
+      );
+      if (!mounted || content == null) return;
+    }
+
+    final selectedContent = content;
+    final controller = ImDynamicEditorController(content: selectedContent);
+    var saving = false;
+    try {
+      await showZzzModalPanel<void>(
+        context: context,
+        builder:
+            (dialogContext) => ZzzModalPanel(
+              key: const ValueKey('dynamic-editor-panel'),
+              title: 'Edit Dynamic Content',
+              subtitle: selectedContent.id,
+              icon: Icons.tune_rounded,
+              maxWidth: 900,
+              maxHeight: 680,
+              child: ImDynamicEditor(
+                controller: controller,
+                messageId: message.id,
+                onSave: (command) {
+                  if (saving) return;
+                  saving = true;
+                  unawaited(() async {
+                    try {
+                      if (command.operation ==
+                              ImDynamicCommandOperation.remove &&
+                          !await _confirmDynamicContentRemoval(
+                            dialogContext,
+                            command.contentId,
+                          )) {
+                        saving = false;
+                        return;
+                      }
+                      await callback(message, command);
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop();
+                      }
+                    } catch (error) {
+                      saving = false;
+                      if (!dialogContext.mounted) return;
+                      final text = error.toString().replaceFirst(
+                        'Exception: ',
+                        '',
+                      );
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(
+                          content: Text(text),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  }());
+                },
+              ),
+            ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _showDynamicCreator() async {
+    final callback = widget.onCreateDynamic;
+    if (callback == null || _sending) return;
+    final token = DateTime.now().microsecondsSinceEpoch.toString();
+    final content = ImDynamicContent(
+      id: 'user-content-$token',
+      version: '1.0',
+      source: ImDynamicContentSource.user,
+      tree: const ImDynamicNode(
+        id: 'root',
+        type: 'column',
+        children: [
+          ImDynamicNode(
+            id: 'body',
+            type: 'text',
+            props: {'text': 'New interactive content'},
+          ),
+        ],
+      ),
+      fallback: const ImDynamicFallback(
+        type: 'text',
+        content: 'Interactive content',
+      ),
+      metadata: const {'created_by': 'bubble_editor'},
+    );
+    final controller = ImDynamicEditorController(content: content)
+      ..selectNode('body');
+    var saving = false;
+    try {
+      await showZzzModalPanel<void>(
+        context: context,
+        builder:
+            (dialogContext) => ZzzModalPanel(
+              key: const ValueKey('dynamic-creator-panel'),
+              title: 'Create Dynamic Content',
+              subtitle: 'Bubble Editor',
+              icon: Icons.dashboard_customize_outlined,
+              maxWidth: 900,
+              maxHeight: 680,
+              child: ImDynamicEditor(
+                controller: controller,
+                messageId: 'draft-$token',
+                creating: true,
+                onSave: (command) {
+                  if (saving) return;
+                  saving = true;
+                  unawaited(() async {
+                    try {
+                      await callback(command);
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop();
+                      }
+                    } catch (error) {
+                      saving = false;
+                      if (!dialogContext.mounted) return;
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            error.toString().replaceFirst('Exception: ', ''),
+                          ),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  }());
+                },
+              ),
+            ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<bool> _confirmDynamicContentRemoval(
+    BuildContext context,
+    String contentId,
+  ) async {
+    final confirmed = await showZzzModalPanel<bool>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            key: const ValueKey('remove-dynamic-content-panel'),
+            title: 'Remove Dynamic Content',
+            subtitle: contentId,
+            icon: Icons.delete_outline,
+            maxWidth: 420,
+            maxHeight: 280,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                key: const ValueKey('confirm-remove-dynamic-content'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Remove'),
+              ),
+            ],
+            child: const Padding(
+              padding: EdgeInsets.all(18),
+              child: Text(
+                'The surrounding message and any other content will remain.',
+              ),
+            ),
+          ),
+    );
+    return confirmed == true;
+  }
+
   Future<void> _showMessageActions(
     ImMessage message,
     Offset globalPosition,
@@ -740,6 +1211,15 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
           const PopupMenuItem(
             value: _MessageAction.copy,
             child: _MessageActionItem(icon: Icons.copy_rounded, label: 'Copy'),
+          ),
+        if (widget.onEditDynamic != null &&
+            _dynamicContentsForMessage(message).isNotEmpty)
+          const PopupMenuItem(
+            value: _MessageAction.editDynamic,
+            child: _MessageActionItem(
+              icon: Icons.tune_rounded,
+              label: 'Edit dynamic content',
+            ),
           ),
         if (widget.onReply != null)
           const PopupMenuItem(
@@ -792,6 +1272,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
             ),
           );
         }
+      case _MessageAction.editDynamic:
+        await _showDynamicEditor(message);
       case _MessageAction.reply:
         setState(() {
           _replyingTo = message;
@@ -1224,53 +1706,66 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   onSecondaryTapDown:
                       (details) =>
                           _showMessageActions(message, details.globalPosition),
-                  child:
-                      widget.messageBuilder?.call(
-                        context,
-                        message: message,
-                        senderName: senderName,
-                        avatar: avatar,
-                        showSenderName: showName,
-                        hideAvatar: hideAvatar,
-                        compact: compact,
-                        hideTimestamp: hideTimestamp,
-                        showMessageStatus: _showMessageStatus,
-                      ) ??
-                      ImMessageBubble(
-                        message: message,
-                        assetPackage: widget.assetPackage,
-                        senderName: senderName,
-                        avatar: avatar,
-                        showSenderName: showName,
-                        hideAvatar: hideAvatar,
-                        compact: compact,
-                        hideTimestamp: hideTimestamp,
-                        showMessageStatus: _showMessageStatus,
-                        dynamicContentRegistry: widget.dynamicContentRegistry,
-                        contentAdapterRegistry: widget.contentAdapterRegistry,
-                        onDynamicEvent: widget.onDynamicEvent,
-                        resolveQuote: widget.resolveMessage,
-                        onQuoteTap:
-                            message.isReply
-                                ? () =>
-                                    _scrollToMessage(message.replyToMessageId!)
-                                : null,
-                        highlighted:
-                            _highlightMessageId != null &&
-                            (message.id == _highlightMessageId ||
-                                message.id.startsWith(
-                                  '${_highlightMessageId}_',
-                                )),
-                        resolveUserName: widget.resolveUserName,
-                        onReactionTap:
-                            widget.onReact == null
-                                ? null
-                                : (reaction) => _applyReaction(
-                                  message,
-                                  reaction.emojiId,
-                                  remove: reaction.reactedByMe,
-                                ),
-                      ),
+                  child: ValueListenableBuilder<ImMessage>(
+                    valueListenable: _messageNotifierFor(message),
+                    builder:
+                        (context, currentMessage, _) =>
+                            widget.messageBuilder?.call(
+                              context,
+                              message: currentMessage,
+                              senderName: senderName,
+                              avatar: avatar,
+                              showSenderName: showName,
+                              hideAvatar: hideAvatar,
+                              compact: compact,
+                              hideTimestamp: hideTimestamp,
+                              showMessageStatus: _showMessageStatus,
+                            ) ??
+                            ImMessageBubble(
+                              message: currentMessage,
+                              assetPackage: widget.assetPackage,
+                              senderName: senderName,
+                              avatar: avatar,
+                              showSenderName: showName,
+                              hideAvatar: hideAvatar,
+                              compact: compact,
+                              hideTimestamp: hideTimestamp,
+                              showMessageStatus: _showMessageStatus,
+                              dynamicContentRegistry:
+                                  widget.dynamicContentRegistry,
+                              dynamicRuntimeStore: _dynamicRuntimeStore,
+                              contentAdapterRegistry:
+                                  widget.contentAdapterRegistry,
+                              contentNodeAdapterRegistry:
+                                  widget.contentNodeAdapterRegistry,
+                              contentRendererRegistry:
+                                  widget.contentRendererRegistry,
+                              onContentEvent: widget.onContentEvent,
+                              onDynamicEvent: widget.onDynamicEvent,
+                              resolveQuote: widget.resolveMessage,
+                              onQuoteTap:
+                                  currentMessage.isReply
+                                      ? () => _scrollToMessage(
+                                        currentMessage.replyToMessageId!,
+                                      )
+                                      : null,
+                              highlighted:
+                                  _highlightMessageId != null &&
+                                  (currentMessage.id == _highlightMessageId ||
+                                      currentMessage.id.startsWith(
+                                        '${_highlightMessageId}_',
+                                      )),
+                              resolveUserName: widget.resolveUserName,
+                              onReactionTap:
+                                  widget.onReact == null
+                                      ? null
+                                      : (reaction) => _applyReaction(
+                                        currentMessage,
+                                        reaction.emojiId,
+                                        remove: reaction.reactedByMe,
+                                      ),
+                            ),
+                  ),
                 );
               },
             );
@@ -1542,6 +2037,22 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                   ),
                 ),
               ),
+              if (widget.onCreateDynamic != null) ...[
+                const SizedBox(width: 4),
+                SizedBox.square(
+                  dimension: 44,
+                  child: IconButton(
+                    key: const ValueKey('create-dynamic-content'),
+                    tooltip: 'Create interactive content',
+                    onPressed:
+                        !widget.composerEnabled ? null : _showDynamicCreator,
+                    icon: const Icon(
+                      Icons.dashboard_customize_outlined,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ),
+              ],
               if (widget.attachmentsEnabled) ...[
                 const SizedBox(width: 8),
                 SizedBox.square(
@@ -1657,7 +2168,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
   }
 }
 
-enum _MessageAction { react, copy, reply, forward, poke, recall }
+enum _MessageAction { react, copy, editDynamic, reply, forward, poke, recall }
 
 class _MentionCandidate {
   const _MentionCandidate({required this.userId, required this.name});

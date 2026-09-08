@@ -1069,7 +1069,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			return
 		}
 	}
-	var dynamicUpdate *protocol.MessageSegment
+	var dynamicMutation *protocol.MessageSegment
 	var dynamicEvent *protocol.MessageSegment
 	for index := range segments {
 		segment := segments[index]
@@ -1080,7 +1080,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 				return
 			}
 		case "dynamic_update":
-			if dynamicUpdate != nil || len(segments) != 1 {
+			if dynamicMutation != nil || len(segments) != 1 {
 				g.sendError(client, req.Echo, "dynamic_update must be the only message segment")
 				return
 			}
@@ -1088,7 +1088,27 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 				g.sendError(client, req.Echo, err.Error())
 				return
 			}
-			dynamicUpdate = &segments[index]
+			dynamicMutation = &segments[index]
+		case "dynamic_replace":
+			if dynamicMutation != nil || len(segments) != 1 {
+				g.sendError(client, req.Echo, "dynamic_replace must be the only message segment")
+				return
+			}
+			if err := validateDynamicReplaceSegment(segment); err != nil {
+				g.sendError(client, req.Echo, err.Error())
+				return
+			}
+			dynamicMutation = &segments[index]
+		case "dynamic_remove":
+			if dynamicMutation != nil || len(segments) != 1 {
+				g.sendError(client, req.Echo, "dynamic_remove must be the only message segment")
+				return
+			}
+			if err := validateDynamicRemoveSegment(segment); err != nil {
+				g.sendError(client, req.Echo, err.Error())
+				return
+			}
+			dynamicMutation = &segments[index]
 		case "dynamic_event":
 			if dynamicEvent != nil || len(segments) != 1 {
 				g.sendError(client, req.Echo, "dynamic_event must be the only message segment")
@@ -1101,8 +1121,8 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 			dynamicEvent = &segments[index]
 		}
 	}
-	if dynamicUpdate != nil {
-		g.handleDynamicUpdate(client, req, convID, convType, clientMessageID, *dynamicUpdate)
+	if dynamicMutation != nil {
+		g.handleDynamicMutation(client, req, convID, convType, clientMessageID, *dynamicMutation)
 		return
 	}
 	if dynamicEvent != nil {
@@ -1228,7 +1248,11 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 }
 
 func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, conversationID, conversationType, clientMessageID string, segment protocol.MessageSegment) {
-	messageID, _, _, err := parseDynamicUpdateData(segment.Data)
+	g.handleDynamicMutation(client, req, conversationID, conversationType, clientMessageID, segment)
+}
+
+func (g *Gateway) handleDynamicMutation(client *Client, req *protocol.Request, conversationID, conversationType, clientMessageID string, segment protocol.MessageSegment) {
+	messageID, err := dynamicMutationMessageID(segment)
 	if err != nil {
 		g.sendError(client, req.Echo, err.Error())
 		return
@@ -1284,7 +1308,7 @@ func (g *Gateway) handleDynamicUpdate(client *Client, req *protocol.Request, con
 		g.sendError(client, req.Echo, "cannot update a recalled message")
 		return
 	}
-	updatedSegments, _, err := applyDynamicUpdateToSegments(target.Segments, segment.Data)
+	updatedSegments, _, err := applyDynamicMutationToSegments(target.Segments, segment)
 	if err != nil {
 		g.sendError(client, req.Echo, err.Error())
 		return
@@ -3780,7 +3804,7 @@ func pushBody(segments []protocol.MessageSegment) string {
 			text.WriteString("[Terminal operation result]")
 		case "dynamic_content":
 			text.WriteString("[Interactive content]")
-		case "dynamic_event", "dynamic_update":
+		case "dynamic_event", "dynamic_update", "dynamic_replace", "dynamic_remove":
 			// UI events and in-place updates are not new notifications.
 		}
 	}

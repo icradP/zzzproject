@@ -5,6 +5,7 @@ import 'data/im_interaction_handler.dart';
 import 'data/im_nsfw_checker.dart';
 import 'data/im_repository.dart';
 import 'data/im_push_manager.dart';
+import 'dynamic/runtime/im_dynamic_runtime_store.dart';
 
 /// Provides [ImRepository], interaction callbacks, and the NSFW checker
 /// to the widget tree.
@@ -15,6 +16,7 @@ class ImScope extends InheritedWidget {
     required this.nsfwChecker,
     required this.nsfwStateCache,
     required this.pushManager,
+    this.dynamicRuntimeStore,
     required this.onConnectionsChanged,
     this.onSignOut,
     this.connectionStatus,
@@ -27,6 +29,7 @@ class ImScope extends InheritedWidget {
   final ImNsfwChecker nsfwChecker;
   final NsfwStateCache nsfwStateCache;
   final ImPushManager pushManager;
+  final ImDynamicRuntimeStore? dynamicRuntimeStore;
   final Future<void> Function() onConnectionsChanged;
   final Future<void> Function()? onSignOut;
   final Stream<ConnectionStatus>? connectionStatus;
@@ -52,6 +55,9 @@ class ImScope extends InheritedWidget {
   static ImPushManager pushManagerOf(BuildContext context) =>
       of(context).pushManager;
 
+  static ImDynamicRuntimeStore? dynamicRuntimeStoreOf(BuildContext context) =>
+      of(context).dynamicRuntimeStore;
+
   static Future<void> reloadConnections(BuildContext context) =>
       of(context).onConnectionsChanged();
 
@@ -69,6 +75,7 @@ class ImScope extends InheritedWidget {
         nsfwChecker != oldWidget.nsfwChecker ||
         nsfwStateCache != oldWidget.nsfwStateCache ||
         pushManager != oldWidget.pushManager ||
+        dynamicRuntimeStore != oldWidget.dynamicRuntimeStore ||
         onConnectionsChanged != oldWidget.onConnectionsChanged ||
         onSignOut != oldWidget.onSignOut ||
         connectionStatus != oldWidget.connectionStatus;

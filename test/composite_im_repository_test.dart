@@ -208,6 +208,57 @@ void main() {
     expect(zzzMessages, hasLength(3));
   });
 
+  test(
+    'routes dynamic updates with source-scoped message identities',
+    () async {
+      final qqRepository = MockImRepository();
+      final repository = CompositeImRepository(
+        registrations: [
+          ImRepositoryRegistration(
+            id: 'qq',
+            label: 'QQ',
+            repository: qqRepository,
+          ),
+        ],
+        primarySourceId: 'qq',
+      );
+      addTearDown(repository.dispose);
+
+      const content = ImDynamicContent(
+        id: 'status-1',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'status',
+          props: {'text': 'Before'},
+        ),
+      );
+      final message = await repository.sendDynamicContent(
+        conversationId: 'qq::dm_belle_me',
+        content: content,
+      );
+      final updated = await repository.sendDynamicUpdate(
+        conversationId: message.conversationId,
+        messageId: message.id,
+        contentId: 'status-1',
+        patches: const [
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.update,
+            nodeId: 'root',
+            props: {'text': 'After'},
+          ),
+        ],
+      );
+
+      expect(updated.id, message.id);
+      expect(updated.conversationId, message.conversationId);
+      final segment = updated.segments!.single;
+      final patched = ImDynamicContent.fromSegmentData(segment.data);
+      expect(patched.tree.props['text'], 'After');
+    },
+  );
+
   test('preserves message metadata across source namespacing', () {
     final repository = CompositeImRepository(
       registrations: [

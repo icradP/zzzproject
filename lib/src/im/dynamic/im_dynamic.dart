@@ -1,8 +1,16 @@
 export 'adapters/im_message_content_adapter.dart';
+export 'adapters/im_dynamic_message_patch_adapter.dart';
+export 'adapters/im_dynamic_command_adapter.dart';
+export 'editor/im_dynamic_editor_controller.dart';
+export 'editor/im_dynamic_editor.dart';
+export 'models/im_dynamic_command.dart';
 export 'models/im_dynamic_models.dart';
+export 'models/im_dynamic_template.dart';
 export 'runtime/im_dynamic_capabilities.dart';
 export 'runtime/im_dynamic_registry.dart';
 export 'runtime/im_dynamic_patch.dart';
 export 'runtime/im_dynamic_runtime.dart';
+export 'runtime/im_dynamic_runtime_store.dart';
+export 'runtime/im_dynamic_store.dart';
 export 'runtime/im_dynamic_validator.dart';
 export 'widgets/im_dynamic_content_view.dart';

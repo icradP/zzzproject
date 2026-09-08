@@ -64,6 +64,14 @@ class CompositeImRepository implements ImRepository {
           onError: _dynamicEventsController.addError,
         ),
       );
+      _dynamicUpdateSubscriptions.add(
+        registration.repository.dynamicUpdates.listen(
+          (envelope) => _dynamicUpdatesController.add(
+            _scopeDynamicUpdate(registration, envelope),
+          ),
+          onError: _dynamicUpdatesController.addError,
+        ),
+      );
       final status = registration.connectionStatus;
       if (status != null) {
         _statusSubscriptions.add(
@@ -86,6 +94,7 @@ class CompositeImRepository implements ImRepository {
   final List<StreamSubscription<dynamic>> _conversationSubscriptions = [];
   final List<StreamSubscription<dynamic>> _friendRequestSubscriptions = [];
   final List<StreamSubscription<dynamic>> _dynamicEventSubscriptions = [];
+  final List<StreamSubscription<dynamic>> _dynamicUpdateSubscriptions = [];
   final List<StreamSubscription<dynamic>> _statusSubscriptions = [];
   final _usersController = StreamController<List<ImUser>>.broadcast();
   final _conversationController =
@@ -94,6 +103,8 @@ class CompositeImRepository implements ImRepository {
       StreamController<List<ImFriendRequest>>.broadcast();
   final _dynamicEventsController =
       StreamController<ImDynamicEventEnvelope>.broadcast();
+  final _dynamicUpdatesController =
+      StreamController<ImDynamicUpdateEnvelope>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
 
   Stream<ConnectionStatus> get connectionStatus {
@@ -181,6 +192,10 @@ class CompositeImRepository implements ImRepository {
   }
 
   @override
+  Stream<ImDynamicUpdateEnvelope> get dynamicUpdates =>
+      _dynamicUpdatesController.stream;
+
+  @override
   Future<bool> loadOlderMessages(String conversationId) {
     final registration = _registrationForValue(conversationId);
     return registration.repository.loadOlderMessages(
@@ -249,6 +264,64 @@ class CompositeImRepository implements ImRepository {
     text: text,
     clientMessageId: clientMessageId,
   );
+
+  @override
+  Future<ImMessage> sendDynamicUpdate({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required List<ImDynamicPatch> patches,
+    String? clientMessageId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, messageId, 'Dynamic update message');
+    final updated = await registration.repository.sendDynamicUpdate(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messageId: ImSourceAddress.localIdOf(messageId),
+      contentId: contentId,
+      patches: patches,
+      clientMessageId: clientMessageId,
+    );
+    return _scopeMessage(registration, updated);
+  }
+
+  @override
+  Future<ImMessage> replaceDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    required ImDynamicContent content,
+    String? clientMessageId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, messageId, 'Dynamic replace message');
+    final updated = await registration.repository.replaceDynamicContent(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messageId: ImSourceAddress.localIdOf(messageId),
+      contentId: contentId,
+      content: content,
+      clientMessageId: clientMessageId,
+    );
+    return _scopeMessage(registration, updated);
+  }
+
+  @override
+  Future<ImMessage> removeDynamicContent({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+    String? clientMessageId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(registration, messageId, 'Dynamic remove message');
+    final updated = await registration.repository.removeDynamicContent(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messageId: ImSourceAddress.localIdOf(messageId),
+      contentId: contentId,
+      clientMessageId: clientMessageId,
+    );
+    return _scopeMessage(registration, updated);
+  }
 
   @override
   Future<void> sendDynamicEvent({
@@ -1189,6 +1262,26 @@ class CompositeImRepository implements ImRepository {
     );
   }
 
+  ImDynamicUpdateEnvelope _scopeDynamicUpdate(
+    ImRepositoryRegistration registration,
+    ImDynamicUpdateEnvelope envelope,
+  ) {
+    final update = envelope.update;
+    return ImDynamicUpdateEnvelope(
+      conversationId: ImSourceAddress.scope(
+        registration.id,
+        envelope.conversationId,
+      ),
+      senderId: ImSourceAddress.scope(registration.id, envelope.senderId),
+      update: ImDynamicPatchSet(
+        messageId: ImSourceAddress.scope(registration.id, update.messageId),
+        contentId: update.contentId,
+        patches: update.patches,
+      ),
+      sentAt: envelope.sentAt,
+    );
+  }
+
   List<OneBotMessageSegment>? _scopeSegments(
     String sourceId,
     List<OneBotMessageSegment>? segments,
@@ -1303,6 +1396,9 @@ class CompositeImRepository implements ImRepository {
     for (final subscription in _dynamicEventSubscriptions) {
       unawaited(subscription.cancel());
     }
+    for (final subscription in _dynamicUpdateSubscriptions) {
+      unawaited(subscription.cancel());
+    }
     for (final subscription in _statusSubscriptions) {
       unawaited(subscription.cancel());
     }
@@ -1313,6 +1409,7 @@ class CompositeImRepository implements ImRepository {
     unawaited(_conversationController.close());
     unawaited(_friendRequestsController.close());
     unawaited(_dynamicEventsController.close());
+    unawaited(_dynamicUpdatesController.close());
     unawaited(_statusController.close());
   }
 }

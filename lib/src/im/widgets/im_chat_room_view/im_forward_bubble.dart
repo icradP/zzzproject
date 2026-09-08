@@ -11,8 +11,10 @@ import 'im_nsfw_guard.dart';
 
 /// Forward / combined message bubble — tap to open in a dialog.
 class ImForwardBubble extends StatefulWidget {
-  const ImForwardBubble({required this.message});
+  const ImForwardBubble({required this.message, this.onOpen, super.key});
+
   final ImMessage message;
+  final VoidCallback? onOpen;
 
   @override
   State<ImForwardBubble> createState() => _ImForwardBubbleState();
@@ -146,6 +148,7 @@ class _ImForwardBubbleState extends State<ImForwardBubble> {
   void _showForwardDialog(BuildContext context) {
     final id = _forwardId;
     if (id.isEmpty) return;
+    widget.onOpen?.call();
     showDialog(
       context: context,
       builder: (_) => ImForwardDialog(forwardId: id),

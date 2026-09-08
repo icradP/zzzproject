@@ -1,10 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:onebot_flutter/onebot_flutter.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:zzzproject/zzz_im_chat.dart';
 import 'package:zzzproject/src/im/data/im_message_store.dart';
-import 'package:zzzproject/src/im/models/im_models.dart';
 
 void main() {
   sqfliteFfiInit();
@@ -12,26 +11,21 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late ImMessageStore store;
-  late String dbPath;
+  late Directory dbDirectory;
 
   setUp(() async {
-    final tmpDir = Directory.systemTemp.createTempSync('im_test_');
-    dbPath = '${tmpDir.path}/im_test.db';
-    store = ImMessageStore(selfId: 'test_bot', debugDbPath: dbPath);
+    dbDirectory = Directory.systemTemp.createTempSync('im_test_');
+    store = ImMessageStore(selfId: 'test_bot', debugDbPath: dbDirectory.path);
     await store.open();
   });
 
   tearDown(() async {
     await store.close();
-    // Clean up temp db.
     try {
-      final db = File(dbPath);
-      if (await db.exists()) await db.delete();
+      if (await dbDirectory.exists()) {
+        await dbDirectory.delete(recursive: true);
+      }
     } catch (_) {}
-  });
-
-  tearDown(() async {
-    await store.close();
   });
 
   test('insert and read conversation', () async {
@@ -102,6 +96,62 @@ void main() {
     expect(read.segments!.length, 3);
     expect(read.segments![2].type, 'image');
   });
+
+  test(
+    'dynamic content schema survives closing and reopening history',
+    () async {
+      await store.upsertConversation(
+        ImConversation(
+          id: 'dm_dynamic',
+          type: ImConversationType.direct,
+          title: 'Dynamic history',
+          participantIds: ['test_bot', 'fairy'],
+        ),
+      );
+      const content = ImDynamicContent(
+        id: 'diagnosis-1',
+        version: '1.0',
+        source: ImDynamicContentSource.ai,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'status',
+          props: {'text': 'Complete'},
+        ),
+        fallback: ImDynamicFallback(type: 'text', content: 'Complete'),
+      );
+      final data = Map<String, dynamic>.from(content.toJson())..remove('type');
+      await store.insertMessage(
+        ImMessage(
+          id: 'dynamic-message-1',
+          conversationId: 'dm_dynamic',
+          senderId: 'fairy',
+          text: 'Complete',
+          sentAt: DateTime(2026, 9, 8),
+          kind: ImMessageKind.dynamicContent,
+          segments: [
+            const OneBotMessageSegment(
+              type: 'text',
+              data: {'text': 'Complete'},
+            ),
+            OneBotMessageSegment(type: 'dynamic_content', data: data),
+          ],
+        ),
+      );
+
+      await store.close();
+      store = ImMessageStore(selfId: 'test_bot', debugDbPath: dbDirectory.path);
+      await store.open();
+
+      final restored = (await store.getMessages('dm_dynamic')).single;
+      final dynamicSegment = restored.segments!.last;
+      final restoredContent = ImDynamicContent.fromSegmentData(
+        dynamicSegment.data,
+      );
+      expect(dynamicSegment.type, 'dynamic_content');
+      expect(restoredContent.toJson(), content.toJson());
+      expect(restoredContent.tree.props['text'], 'Complete');
+    },
+  );
 
   test('conversation list ordering', () async {
     final older = ImConversation(

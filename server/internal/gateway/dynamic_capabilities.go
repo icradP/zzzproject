@@ -82,11 +82,12 @@ func negotiateCapabilities(client protocol.Capabilities) protocol.Capabilities {
 		return result
 	}
 	result.DynamicContent = &protocol.DynamicContentCapabilities{
-		SchemaVersions:   schemas,
-		ComponentVersion: protocol.CurrentDynamicComponentVersion,
-		Components:       append([]string(nil), dynamic.Components...),
-		Events:           dynamic.Events,
-		NodeIDPatch:      dynamic.NodeIDPatch,
+		SchemaVersions:    schemas,
+		ComponentVersion:  protocol.CurrentDynamicComponentVersion,
+		Components:        append([]string(nil), dynamic.Components...),
+		Events:            dynamic.Events,
+		NodeIDPatch:       dynamic.NodeIDPatch,
+		ContentOperations: dynamic.ContentOperations,
 	}
 	return result
 }
@@ -157,7 +158,7 @@ func intersectCapabilityValues(left, right []string) []string {
 func hasCapabilitySensitiveSegment(segments []protocol.MessageSegment) bool {
 	for _, segment := range segments {
 		switch segment.Type {
-		case "dynamic_content", "dynamic_update", "dynamic_event":
+		case "dynamic_content", "dynamic_update", "dynamic_replace", "dynamic_remove", "dynamic_event":
 			return true
 		}
 	}
@@ -183,6 +184,20 @@ func segmentsForClient(capabilities protocol.Capabilities, segments []protocol.M
 				return nil, false
 			}
 			result = append(result, segment)
+		case "dynamic_replace":
+			if dynamic == nil || !dynamic.ContentOperations {
+				return nil, false
+			}
+			replacement, err := dynamicReplacementSegment(segment)
+			if err != nil || !supportsDynamicContentSegment(dynamic, replacement) {
+				return nil, false
+			}
+			result = append(result, segment)
+		case "dynamic_remove":
+			if dynamic == nil || !dynamic.ContentOperations {
+				return nil, false
+			}
+			result = append(result, segment)
 		case "dynamic_event":
 			if dynamic == nil || !dynamic.Events {
 				return nil, false
@@ -193,6 +208,14 @@ func segmentsForClient(capabilities protocol.Capabilities, segments []protocol.M
 		}
 	}
 	return result, true
+}
+
+func dynamicReplacementSegment(segment protocol.MessageSegment) (protocol.MessageSegment, error) {
+	_, _, content, err := parseDynamicReplaceData(segment.Data)
+	if err != nil {
+		return protocol.MessageSegment{}, err
+	}
+	return protocol.DynamicContentSegment(content), nil
 }
 
 func clientMessageSegments(client *Client, segments []protocol.MessageSegment) []protocol.MessageSegment {
