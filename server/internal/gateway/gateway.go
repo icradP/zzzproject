@@ -1225,7 +1225,11 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		return
 	}
 
-	// Broadcast message event to all clients in the conversation.
+	// Broadcast message event to all clients in the conversation. ZZZTerm is
+	// an execution device for the same account as ZZZ IM, so its local Agent
+	// messages and terminal results must also reach the account's other devices.
+	// Keep the normal sender exclusion for browser/mobile clients to avoid
+	// echoing a message that the initiating UI already inserted locally.
 	event := protocol.MessageEvent{
 		PostType:       "message",
 		MessageType:    convType,
@@ -1241,7 +1245,11 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 		Timestamp:   msg.Timestamp.Unix(),
 		TimestampMS: msg.Timestamp.UnixMilli(),
 	}
-	g.broadcastToConversation(convID, event, client.userID)
+	if isZZZTermDevice(client.deviceID) {
+		g.broadcastToConversationExceptClient(convID, event, client)
+	} else {
+		g.broadcastToConversation(convID, event, client.userID)
+	}
 	g.pushToConversation(convID, msg, client.userID, false)
 
 	log.Printf("[gateway] message %s sent to %s by %s", msg.ID, convID, client.userID)
