@@ -116,6 +116,9 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
       messageId: widget.messageId,
       contentId: content.id,
       onEvent: widget.onEvent,
+      onAction:
+          (source, event, definition, payload) =>
+              _applyLocalAction(_runtime!, source, event, definition, payload),
       state: <String, dynamic>{
         'lifecycle': state.lifecycle.name,
         ...state.values,
@@ -136,6 +139,65 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
       renderContext,
       content.fallback,
     );
+  }
+
+  void _applyLocalAction(
+    ImDynamicRuntime runtime,
+    ImDynamicNode source,
+    String event,
+    Map<String, dynamic> definition,
+    Map<String, dynamic> payload,
+  ) {
+    final action = definition['action']?.toString();
+    if (action == null || action.isEmpty) return;
+    final targetId =
+        definition['target']?.toString() ??
+        definition['target_node_id']?.toString();
+    if (targetId == null || targetId.isEmpty) return;
+    final property = definition['property']?.toString() ?? 'text';
+    final rawValue = definition['value'];
+    final value = _resolveActionValue(rawValue, payload);
+    if (value == null &&
+        !definition.containsKey('value') &&
+        action != 'toggle') {
+      return;
+    }
+
+    // Actions are declarative and constrained to the same patch surface used
+    // by server updates. This keeps a button from executing arbitrary code.
+    switch (action) {
+      case 'set_property':
+      case 'set_value':
+      case 'set_status':
+      case 'toggle':
+        final current = runtime.content.tree.findById(targetId);
+        if (current == null) return;
+        final nextValue =
+            action == 'toggle' ? !(current.props[property] == true) : value;
+        runtime.apply(
+          ImDynamicPatchSet(
+            messageId: widget.messageId,
+            contentId: runtime.content.id,
+            patches: [
+              ImDynamicPatch(
+                operation: ImDynamicPatchOperation.update,
+                nodeId: targetId,
+                props: {property: nextValue},
+              ),
+            ],
+          ),
+        );
+    }
+  }
+
+  Object? _resolveActionValue(Object? value, Map<String, dynamic> payload) {
+    if (value is String && value == r'$payload.value') {
+      return payload['value'];
+    }
+    if (value is String && value.startsWith(r'$payload.')) {
+      return payload[value.substring(r'$payload.'.length)];
+    }
+    return value;
   }
 
   Widget _buildNode(

@@ -50,6 +50,7 @@ class _ImHomePageState extends State<ImHomePage>
   final _conversationCache = <String, List<ImConversation>>{};
   final _messageCache = <String, List<ImMessage>>{};
   final _readMarksInFlight = <String>{};
+  final _dynamicCreationPermissions = <String, bool>{};
 
   @override
   void initState() {
@@ -59,6 +60,14 @@ class _ImHomePageState extends State<ImHomePage>
       vsync: this,
       duration: const Duration(seconds: 30),
     )..repeat();
+    final initialConversationId = widget.initialConversationId;
+    if (initialConversationId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _refreshDynamicCreationPermissionById(initialConversationId);
+        }
+      });
+    }
   }
 
   @override
@@ -66,6 +75,10 @@ class _ImHomePageState extends State<ImHomePage>
     super.didUpdateWidget(oldWidget);
     if (widget.initialConversationId != oldWidget.initialConversationId) {
       setState(() => _selectedConversationId = widget.initialConversationId);
+      final conversationId = widget.initialConversationId;
+      if (conversationId != null) {
+        _refreshDynamicCreationPermissionById(conversationId);
+      }
     }
   }
 
@@ -86,6 +99,52 @@ class _ImHomePageState extends State<ImHomePage>
     });
     ImScope.interactionsOf(context).onConversationOpened(conversation);
     _requestMarkRead(ImScope.repositoryOf(context), conversation.id);
+    _refreshDynamicCreationPermission(conversation);
+  }
+
+  /// Dynamic Content created from the IM composer is a privileged group
+  /// operation. The server remains authoritative; this cache only controls
+  /// whether the composer entry is shown while the group details load.
+  Future<void> _refreshDynamicCreationPermission(
+    ImConversation conversation,
+  ) async {
+    if (!conversation.isGroup) {
+      if (mounted) {
+        setState(() => _dynamicCreationPermissions[conversation.id] = false);
+      }
+      return;
+    }
+    if (mounted) {
+      setState(() => _dynamicCreationPermissions[conversation.id] = false);
+    }
+    try {
+      final details = await ImScope.repositoryOf(
+        context,
+      ).getGroupDetails(conversation.id);
+      if (!mounted) return;
+      setState(
+        () =>
+            _dynamicCreationPermissions[conversation.id] =
+                details.currentUserIsManager,
+      );
+    } catch (_) {
+      // Keep the privileged entry hidden when group permissions are unknown.
+    }
+  }
+
+  Future<void> _refreshDynamicCreationPermissionById(
+    String conversationId,
+  ) async {
+    try {
+      final conversation = await ImScope.repositoryOf(
+        context,
+      ).getConversation(conversationId);
+      if (conversation != null) {
+        await _refreshDynamicCreationPermission(conversation);
+      }
+    } catch (_) {
+      // An unavailable initial conversation keeps the privileged action hidden.
+    }
   }
 
   void _requestMarkRead(ImRepository repository, String conversationId) {
@@ -171,6 +230,7 @@ class _ImHomePageState extends State<ImHomePage>
             onLeft: _clearSelection,
           ),
     );
+    await _refreshDynamicCreationPermission(conversation);
   }
 
   Future<void> _openMemberProfile(
@@ -257,6 +317,12 @@ class _ImHomePageState extends State<ImHomePage>
     if (command.operation != ImDynamicCommandOperation.create ||
         content == null) {
       throw UnsupportedError('Bubble Editor did not produce create content.');
+    }
+    if (!conversation.isGroup ||
+        !(_dynamicCreationPermissions[conversation.id] ?? false)) {
+      throw StateError(
+        'Only group owners and administrators can send custom bubbles.',
+      );
     }
     await repository.sendDynamicContent(
       conversationId: conversation.id,
@@ -1023,8 +1089,10 @@ class _ImHomePageState extends State<ImHomePage>
                     );
                   },
                   onCreateDynamic:
-                      (command) =>
-                          _createDynamicContent(repository, conv, command),
+                      _dynamicCreationPermissions[conv.id] == true
+                          ? (command) =>
+                              _createDynamicContent(repository, conv, command)
+                          : null,
                   onEditDynamic:
                       (message, command) =>
                           _saveDynamicEdit(repository, conv, message, command),

@@ -140,8 +140,9 @@ class ImChatRoomView extends StatefulWidget {
   /// local operation.
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
 
-  /// Opens the Bubble Editor with a new user-authored Dynamic Schema. The
-  /// caller persists the resulting create command as a new message.
+  /// Opens the shared Dynamic Content creator from the composer. Callers must
+  /// only provide this callback when the current user is allowed to publish a
+  /// user-authored card (the ZZZ Server enforces the same policy).
   final Future<void> Function(ImDynamicCommand command)? onCreateDynamic;
 
   /// Opens the shared Dynamic Schema editor for a message. The caller owns
@@ -1079,74 +1080,27 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
     final callback = widget.onCreateDynamic;
     if (callback == null || _sending) return;
     final token = DateTime.now().microsecondsSinceEpoch.toString();
-    final content = ImDynamicContent(
-      id: 'user-content-$token',
-      version: '1.0',
-      source: ImDynamicContentSource.user,
-      tree: const ImDynamicNode(
-        id: 'root',
-        type: 'column',
-        children: [
-          ImDynamicNode(
-            id: 'body',
-            type: 'text',
-            props: {'text': 'New interactive content'},
-          ),
-        ],
-      ),
-      fallback: const ImDynamicFallback(
-        type: 'text',
-        content: 'Interactive content',
-      ),
-      metadata: const {'created_by': 'bubble_editor'},
-    );
-    final controller = ImDynamicEditorController(content: content)
-      ..selectNode('body');
-    var saving = false;
-    try {
-      await showZzzModalPanel<void>(
-        context: context,
-        builder:
-            (dialogContext) => ZzzModalPanel(
-              key: const ValueKey('dynamic-creator-panel'),
-              title: 'Create Dynamic Content',
-              subtitle: 'Bubble Editor',
-              icon: Icons.dashboard_customize_outlined,
-              maxWidth: 900,
-              maxHeight: 680,
-              child: ImDynamicEditor(
-                controller: controller,
-                messageId: 'draft-$token',
-                creating: true,
-                onSave: (command) {
-                  if (saving) return;
-                  saving = true;
-                  unawaited(() async {
-                    try {
-                      await callback(command);
-                      if (dialogContext.mounted) {
-                        Navigator.of(dialogContext).pop();
-                      }
-                    } catch (error) {
-                      saving = false;
-                      if (!dialogContext.mounted) return;
-                      ScaffoldMessenger.of(dialogContext).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            error.toString().replaceFirst('Exception: ', ''),
-                          ),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    }
-                  }());
-                },
-              ),
+    await showZzzModalPanel<void>(
+      context: context,
+      builder:
+          (dialogContext) => ZzzModalPanel(
+            key: const ValueKey('dynamic-creator-panel'),
+            title: 'Create Dynamic Content',
+            subtitle: 'Build an interactive message',
+            icon: Icons.dashboard_customize_outlined,
+            maxWidth: 900,
+            maxHeight: 680,
+            child: ImDynamicContentCreatorPanel(
+              messageId: 'draft-$token',
+              onCreate: (command) async {
+                await callback(command);
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+              },
             ),
-      );
-    } finally {
-      controller.dispose();
-    }
+          ),
+    );
   }
 
   Future<bool> _confirmDynamicContentRemoval(
@@ -2038,14 +1992,16 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                 ),
               ),
               if (widget.onCreateDynamic != null) ...[
-                const SizedBox(width: 4),
+                const SizedBox(width: 8),
                 SizedBox.square(
                   dimension: 44,
                   child: IconButton(
                     key: const ValueKey('create-dynamic-content'),
                     tooltip: 'Create interactive content',
                     onPressed:
-                        !widget.composerEnabled ? null : _showDynamicCreator,
+                        _sending || !widget.composerEnabled
+                            ? null
+                            : _showDynamicCreator,
                     icon: const Icon(
                       Icons.dashboard_customize_outlined,
                       color: Colors.white70,

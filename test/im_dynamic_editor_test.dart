@@ -62,4 +62,59 @@ void main() {
     expect(saved?.operation, ImDynamicCommandOperation.replace);
     expect(saved?.messageId, 'message-editor');
   });
+
+  testWidgets('dynamic editor switches to tabs on narrow surfaces', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(390, 720)
+      ..devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final controller = ImDynamicEditorController(
+      content: const ImDynamicContent(
+        id: 'mobile-editor-card',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'column',
+          children: [
+            ImDynamicNode(
+              id: 'title',
+              type: 'text',
+              props: {'text': 'Mobile preview'},
+            ),
+          ],
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 600,
+            child: ImDynamicEditor(
+              controller: controller,
+              messageId: 'mobile-editor-message',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TabBar), findsOneWidget);
+    expect(find.byType(Tab), findsNWidgets(3));
+    expect(find.text('Components'), findsWidgets);
+    expect(find.text('Properties'), findsWidgets);
+    expect(find.text('Preview'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
 }

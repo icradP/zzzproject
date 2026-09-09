@@ -1303,6 +1303,44 @@ void main() {
     },
   );
 
+  testWidgets('dynamic actions update a target component locally', (
+    tester,
+  ) async {
+    const content = ImDynamicContent(
+      id: 'action-card',
+      version: '1.0',
+      source: ImDynamicContentSource.user,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'column',
+        children: [
+          ImDynamicNode(id: 'status', type: 'status', props: {'text': 'Ready'}),
+          ImDynamicNode(
+            id: 'approve',
+            type: 'button',
+            props: {'text': 'Approve'},
+            events: {
+              'click': {
+                'action': 'set_status',
+                'target': 'status',
+                'property': 'text',
+                'value': 'Approved',
+              },
+            },
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: ImDynamicContentView(content: content))),
+    );
+    expect(find.text('Ready'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+    await tester.pump();
+    expect(find.text('Approved'), findsOneWidget);
+  });
+
   testWidgets('dynamic node IDs preserve local state across tree patches', (
     tester,
   ) async {

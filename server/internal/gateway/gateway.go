@@ -1079,6 +1079,26 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 				g.sendError(client, req.Echo, err.Error())
 				return
 			}
+			// User-authored cards exposed by the IM composer are privileged
+			// group content. AI, system, plugin, and server producers retain
+			// their existing delivery paths; the server remains authoritative
+			// when a client attempts to bypass the composer permission.
+			if convType == "group" {
+				schema, schemaErr := dynamicSchemaFromData(segment.Data)
+				if schemaErr != nil {
+					g.sendError(client, req.Echo, schemaErr.Error())
+					return
+				}
+				if source, _ := schema["source"].(string); source == "user" &&
+					!g.isGroupAdmin(convID, client.userID) {
+					g.sendError(
+						client,
+						req.Echo,
+						"only group owners and administrators can send custom bubbles",
+					)
+					return
+				}
+			}
 		case "dynamic_update":
 			if dynamicMutation != nil || len(segments) != 1 {
 				g.sendError(client, req.Echo, "dynamic_update must be the only message segment")

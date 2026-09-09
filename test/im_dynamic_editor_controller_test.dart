@@ -85,4 +85,45 @@ void main() {
     expect(controller.content, same(before));
     expect(controller.canUndo, isFalse);
   });
+
+  test(
+    'new components selected from a leaf are inserted into its layout parent',
+    () {
+      final controller = ImDynamicEditorController(content: aiContent)
+        ..selectNode('title');
+      addTearDown(controller.dispose);
+
+      expect(controller.insertionParent().id, 'root');
+      controller.addNode(
+        parentNodeId: controller.insertionParent().id,
+        node: const ImDynamicNode(id: 'status-1', type: 'status'),
+      );
+
+      expect(
+        controller.content.tree.children.map((node) => node.id),
+        containsAllInOrder(['title', 'status-1']),
+      );
+      expect(controller.content.tree.findById('title')?.children, isEmpty);
+    },
+  );
+
+  test('event definitions retain declarative action targets', () {
+    final controller = ImDynamicEditorController(content: aiContent);
+    addTearDown(controller.dispose);
+    controller.setNodeEvent(
+      nodeId: 'title',
+      event: 'click',
+      action: 'set_property',
+      targetNodeId: 'root',
+      property: 'text',
+      value: 'Done',
+    );
+
+    expect(controller.content.tree.findById('title')?.events['click'], {
+      'action': 'set_property',
+      'target': 'root',
+      'property': 'text',
+      'value': 'Done',
+    });
+  });
 }

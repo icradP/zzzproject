@@ -40,6 +40,40 @@ class ImDynamicEditorController extends ChangeNotifier {
   bool get canRedo => _historyIndex < _history.length - 1;
   ImDynamicValidationResult get validation => validator.validate(content);
 
+  /// Returns the direct parent of a node in the immutable schema tree.
+  ImDynamicNode? parentOf(String nodeId) {
+    ImDynamicNode? visit(ImDynamicNode node) {
+      for (final child in node.children) {
+        if (child.id == nodeId) return node;
+        final parent = visit(child);
+        if (parent != null) return parent;
+      }
+      return null;
+    }
+
+    return content.tree.id == nodeId ? null : visit(content.tree);
+  }
+
+  /// A node can host children only when it is a layout component.
+  bool canContainChildren(ImDynamicNode node) =>
+      const {'row', 'column', 'card', 'container'}.contains(node.type);
+
+  /// Resolves the actual insertion target for palette operations.
+  ///
+  /// Selecting a leaf is still useful for editing it, but a new component is
+  /// inserted beside that leaf in its nearest layout parent. This prevents
+  /// invisible children from being attached to text, button, or input nodes.
+  ImDynamicNode insertionParent() {
+    final selected = selectedNode;
+    if (selected == null) return content.tree;
+    if (canContainChildren(selected)) return selected;
+    var parent = parentOf(selected.id);
+    while (parent != null && !canContainChildren(parent)) {
+      parent = parentOf(parent.id);
+    }
+    return parent ?? content.tree;
+  }
+
   void selectNode(String? nodeId) {
     if (nodeId != null && content.tree.findById(nodeId) == null) {
       throw ImDynamicPatchException('Node $nodeId was not found');
@@ -54,6 +88,15 @@ class ImDynamicEditorController extends ChangeNotifier {
     required ImDynamicNode node,
     int? index,
   }) {
+    final parent = content.tree.findById(parentNodeId);
+    if (parent == null) {
+      throw ImDynamicPatchException('Parent node $parentNodeId was not found');
+    }
+    if (!canContainChildren(parent)) {
+      throw ImDynamicPatchException(
+        'Component ${parent.type} cannot contain children',
+      );
+    }
     _commitPatch(
       ImDynamicPatch(
         operation: ImDynamicPatchOperation.create,
@@ -93,6 +136,9 @@ class ImDynamicEditorController extends ChangeNotifier {
     required String nodeId,
     required String event,
     String? action,
+    String? targetNodeId,
+    String? property,
+    Object? value,
   }) {
     final current = content.tree.findById(nodeId);
     if (current == null) {
@@ -102,7 +148,14 @@ class ImDynamicEditorController extends ChangeNotifier {
     if (action == null || action.trim().isEmpty) {
       events.remove(event);
     } else {
-      events[event] = {'action': action};
+      events[event] = {
+        'action': action,
+        if (targetNodeId != null && targetNodeId.trim().isNotEmpty)
+          'target': targetNodeId.trim(),
+        if (property != null && property.trim().isNotEmpty)
+          'property': property.trim(),
+        if (value != null) 'value': value,
+      };
     }
     updateNode(nodeId: nodeId, events: events);
   }

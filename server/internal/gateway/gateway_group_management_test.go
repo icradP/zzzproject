@@ -7,8 +7,46 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+	"github.com/icradp/zzz-im-server/internal/protocol"
 	"github.com/icradp/zzz-im-server/internal/store"
 )
+
+func TestUserDynamicContentRequiresGroupManager(t *testing.T) {
+	database, websocketURL := newGroupManagementServer(t)
+	owner := authenticatedGroupClient(t, websocketURL, "owner")
+	member := authenticatedGroupClient(t, websocketURL, "member")
+	addTestFriend(t, database, "owner", "member")
+
+	created := request(t, owner, "create_group", map[string]interface{}{
+		"name": "Bubble permissions", "members": []string{"member"},
+	})
+	assertOK(t, created)
+	groupID := responseData(t, created)["group_id"].(string)
+	// Consume the group-increase notice before sending the permission probes.
+	_ = readJSON(t, member)
+
+	userContent := protocol.DynamicContentSegment(map[string]interface{}{
+		"id": "member-card", "version": "1.0", "source": "user",
+		"tree": map[string]interface{}{
+			"id": "root", "type": "text",
+			"props": map[string]interface{}{"text": "Member card"},
+		},
+	})
+	denied := request(t, member, "send_message", map[string]interface{}{
+		"conversation_id": groupID,
+		"message":         []protocol.MessageSegment{userContent},
+	})
+	if denied["status"] == "ok" {
+		t.Fatalf("ordinary member sent a user-authored dynamic card: %#v", denied)
+	}
+
+	setMemoryGroupRole(t, database, groupID, "member", "admin")
+	accepted := request(t, member, "send_message", map[string]interface{}{
+		"conversation_id": groupID,
+		"message":         []protocol.MessageSegment{userContent},
+	})
+	assertOK(t, accepted)
+}
 
 func TestGroupInvitationPermissionsAndRealtimeUpdates(t *testing.T) {
 	database, websocketURL := newGroupManagementServer(t)

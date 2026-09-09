@@ -9,6 +9,14 @@ typedef ImDynamicNodeBuilder =
       ImDynamicRenderContext renderContext,
     );
 
+typedef ImDynamicActionHandler =
+    void Function(
+      ImDynamicNode source,
+      String event,
+      Map<String, dynamic> definition,
+      Map<String, dynamic> payload,
+    );
+
 abstract class ImDynamicComponentRenderer {
   const ImDynamicComponentRenderer();
 
@@ -27,6 +35,7 @@ class ImDynamicRenderContext {
     required this.contentId,
     required this.renderNode,
     this.onEvent,
+    this.onAction,
     this.state = const <String, dynamic>{},
   });
 
@@ -34,6 +43,7 @@ class ImDynamicRenderContext {
   final String contentId;
   final Widget Function(BuildContext context, ImDynamicNode node) renderNode;
   final ValueChanged<ImDynamicEvent>? onEvent;
+  final ImDynamicActionHandler? onAction;
   final Map<String, dynamic> state;
 
   void emit(
@@ -41,9 +51,12 @@ class ImDynamicRenderContext {
     String event, {
     Map<String, dynamic> payload = const <String, dynamic>{},
   }) {
-    if (onEvent == null) return;
     final definition = node.events[event];
     final action = definition?['action']?.toString();
+    if (definition != null) {
+      onAction?.call(node, event, definition, payload);
+    }
+    if (onEvent == null) return;
     onEvent!(
       ImDynamicEvent(
         messageId: messageId,
@@ -187,14 +200,30 @@ class _RowRenderer extends ImDynamicComponentRenderer {
     ImDynamicNode node,
     ImDynamicRenderContext renderContext,
   ) {
-    return Wrap(
-      spacing: _number(node.props['spacing'], 8),
-      runSpacing: _number(node.props['runSpacing'], 8),
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children:
-          node.children
-              .map((child) => renderContext.renderNode(context, child))
-              .toList(),
+    final children =
+        node.children
+            .map((child) => renderContext.renderNode(context, child))
+            .toList();
+    final alignment = _mainAxisAlignment(node.props['mainAxisAlignment']);
+    final crossAxisAlignment = _crossAxisAlignment(
+      node.props['crossAxisAlignment'],
+    );
+    if (node.props['wrap'] == true) {
+      return Wrap(
+        spacing: _number(node.props['spacing'], 8),
+        runSpacing: _number(node.props['runSpacing'], 8),
+        alignment: _wrapAlignment(node.props['mainAxisAlignment']),
+        crossAxisAlignment: _wrapCrossAlignment(
+          node.props['crossAxisAlignment'],
+        ),
+        children: children,
+      );
+    }
+    return Row(
+      mainAxisSize: _mainAxisSize(node.props['mainAxisSize']),
+      mainAxisAlignment: alignment,
+      crossAxisAlignment: crossAxisAlignment,
+      children: _withSpacing(context, node, renderContext, Axis.horizontal),
     );
   }
 }
@@ -210,9 +239,10 @@ class _ColumnRenderer extends ImDynamicComponentRenderer {
     ImDynamicRenderContext renderContext,
   ) {
     return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: _withSpacing(context, node, renderContext),
+      mainAxisSize: _mainAxisSize(node.props['mainAxisSize']),
+      mainAxisAlignment: _mainAxisAlignment(node.props['mainAxisAlignment']),
+      crossAxisAlignment: _crossAxisAlignment(node.props['crossAxisAlignment']),
+      children: _withSpacing(context, node, renderContext, Axis.vertical),
     );
   }
 }
@@ -228,7 +258,7 @@ class _CardRenderer extends ImDynamicComponentRenderer {
     ImDynamicRenderContext renderContext,
   ) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: EdgeInsets.all(_number(node.props['padding'], 10)),
       decoration: BoxDecoration(
         color: Theme.of(
           context,
@@ -239,8 +269,12 @@ class _CardRenderer extends ImDynamicComponentRenderer {
         ),
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: _withSpacing(context, node, renderContext),
+        mainAxisSize: _mainAxisSize(node.props['mainAxisSize']),
+        mainAxisAlignment: _mainAxisAlignment(node.props['mainAxisAlignment']),
+        crossAxisAlignment: _crossAxisAlignment(
+          node.props['crossAxisAlignment'],
+        ),
+        children: _withSpacing(context, node, renderContext, Axis.vertical),
       ),
     );
   }
@@ -257,10 +291,14 @@ class _ContainerRenderer extends ImDynamicComponentRenderer {
     ImDynamicRenderContext renderContext,
   ) {
     return Container(
-      padding: EdgeInsets.all(_number(node.props['padding'], 0)),
+      padding: _padding(node.props['padding']),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: _withSpacing(context, node, renderContext),
+        mainAxisSize: _mainAxisSize(node.props['mainAxisSize']),
+        mainAxisAlignment: _mainAxisAlignment(node.props['mainAxisAlignment']),
+        crossAxisAlignment: _crossAxisAlignment(
+          node.props['crossAxisAlignment'],
+        ),
+        children: _withSpacing(context, node, renderContext, Axis.vertical),
       ),
     );
   }
@@ -604,15 +642,75 @@ List<Widget> _withSpacing(
   BuildContext context,
   ImDynamicNode node,
   ImDynamicRenderContext renderContext,
+  Axis axis,
 ) {
   final spacing = _number(node.props['spacing'], 6);
   final result = <Widget>[];
   for (var i = 0; i < node.children.length; i++) {
-    if (i > 0 && spacing > 0) result.add(SizedBox(height: spacing));
+    if (i > 0 && spacing > 0) {
+      result.add(
+        axis == Axis.horizontal
+            ? SizedBox(width: spacing)
+            : SizedBox(height: spacing),
+      );
+    }
     result.add(renderContext.renderNode(context, node.children[i]));
   }
   return result;
 }
+
+EdgeInsets _padding(Object? value) {
+  if (value is num) return EdgeInsets.all(_number(value, 0));
+  if (value is Map) {
+    return EdgeInsets.only(
+      left: _number(value['left'], 0),
+      top: _number(value['top'], 0),
+      right: _number(value['right'], 0),
+      bottom: _number(value['bottom'], 0),
+    );
+  }
+  return EdgeInsets.zero;
+}
+
+MainAxisSize _mainAxisSize(Object? value) =>
+    value?.toString() == 'max' ? MainAxisSize.max : MainAxisSize.min;
+
+MainAxisAlignment _mainAxisAlignment(Object? value) => switch (value
+    ?.toString()) {
+  'center' => MainAxisAlignment.center,
+  'end' => MainAxisAlignment.end,
+  'spaceBetween' => MainAxisAlignment.spaceBetween,
+  'spaceAround' => MainAxisAlignment.spaceAround,
+  'spaceEvenly' => MainAxisAlignment.spaceEvenly,
+  _ => MainAxisAlignment.start,
+};
+
+CrossAxisAlignment _crossAxisAlignment(Object? value) => switch (value
+    ?.toString()) {
+  'center' => CrossAxisAlignment.center,
+  'end' => CrossAxisAlignment.end,
+  'stretch' => CrossAxisAlignment.stretch,
+  // Baseline alignment requires a TextBaseline on Row/Column and is not
+  // exposed by the schema editor. Keep unknown legacy values safe.
+  'baseline' => CrossAxisAlignment.start,
+  _ => CrossAxisAlignment.start,
+};
+
+WrapAlignment _wrapAlignment(Object? value) => switch (value?.toString()) {
+  'center' => WrapAlignment.center,
+  'end' => WrapAlignment.end,
+  'spaceBetween' => WrapAlignment.spaceBetween,
+  'spaceAround' => WrapAlignment.spaceAround,
+  'spaceEvenly' => WrapAlignment.spaceEvenly,
+  _ => WrapAlignment.start,
+};
+
+WrapCrossAlignment _wrapCrossAlignment(Object? value) =>
+    value?.toString() == 'end'
+        ? WrapCrossAlignment.end
+        : value?.toString() == 'start'
+        ? WrapCrossAlignment.start
+        : WrapCrossAlignment.center;
 
 double _number(Object? value, double fallback) =>
     value is num ? value.toDouble().clamp(0, 1000) : fallback;
