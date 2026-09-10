@@ -1,0 +1,78 @@
+part of 'im_release_notes.dart';
+
+const _currentVersion = '1.6.0';
+const _currentId = '1.6.0';
+const _releases = <ImReleaseNote>[
+    ImReleaseNote(
+      id: '1.6.0',
+      version: '1.6.0',
+      title: 'Interactive messages and ZZZ Term',
+      items: [
+        'Send live group cards with buttons, votes, and progress that update in place.',
+        'Ask Fairy to list hosts or run a command on an online ZZZ Term client; command execution still needs local approval.',
+        'Bind a Zenless Zone Zero account to Fairy for gacha records and abyss summaries in chat.',
+        'Upload avatars and card backgrounds to ZZZ IM, keep avatar aspect ratio, and build group avatars from members.',
+        'Mention people with @ in groups, hide your account ID on your profile, and use the compact mobile navigation bar.',
+      ],
+    ),
+    ImReleaseNote(
+      id: '1.5.0',
+      version: '1.5.0',
+      title: 'Meet Fairy',
+      items: [
+        'Find Fairy in suggested contacts when the assistant is available on your server.',
+        'Add Fairy directly or open the profile card before sending a friend request.',
+        'Recognize bot accounts from a consistent badge across contacts and profiles.',
+      ],
+    ),
+    ImReleaseNote(
+      id: '1.4.0',
+      version: '1.4.0',
+      title: 'Titles and profile cards',
+      items: [
+        'Open responsive profile cards with bios, mutual groups, and scoped titles.',
+        'Upload compressed card backgrounds directly to your configured image host.',
+        'Message, add, block, or report people from their profile card.',
+      ],
+    ),
+    ImReleaseNote(
+      id: '1.3.0',
+      version: '1.3.0',
+      title: 'Group governance',
+      items: [
+        'Publish, edit, pin, read, and remove announcements from group history.',
+        'Manage group owners and administrators with server-enforced permissions.',
+        'Choose all messages, mentions and announcements, or muted notifications per conversation.',
+      ],
+    ),
+    ImReleaseNote(
+      id: '1.2.0',
+      version: '1.2.0',
+      title: 'Everyday messaging',
+      items: [
+        'Record, preview, and send voice messages on Web and desktop.',
+        'Share links and locations without server-side page or map fetching.',
+        'Forward one or more messages and send rate-limited pokes.',
+      ],
+    ),
+    ImReleaseNote(
+      id: '1.1.0',
+      version: '1.1.0',
+      title: 'Expression and clarity',
+      items: [
+        'Send built-in stickers without uploading the same image each time.',
+        'See compact platform icons in conversations and contacts.',
+        'Review version-by-version updates from Settings.',
+      ],
+    ),
+    ImReleaseNote(
+      id: '1.0.0',
+      version: '1.0.0',
+      title: 'PWA and media foundation',
+      items: [
+        'Added measurable PWA loading stages and improved offline caching.',
+        'Added client-managed image hosting and server-hosted thumbnails.',
+        'Added accounts, avatars, friend requests, groups, and notifications.',
+      ],
+    ),
+];

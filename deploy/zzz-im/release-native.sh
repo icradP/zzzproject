@@ -144,7 +144,10 @@ run_local_checks() {
   node --check "${release_server_root}/internal/admin/assets/app.js"
   bash -n \
     "${repo_root}/deploy/zzz-im/deploy-native.sh" \
-    "${repo_root}/deploy/zzz-im/deploy-fairy-native.sh"
+    "${repo_root}/deploy/zzz-im/deploy-fairy-native.sh" \
+    "${repo_root}/deploy/zzz-im/deploy-pwa.sh" \
+    "${repo_root}/deploy/zzz-im/release-pwa.sh" \
+    "${repo_root}/deploy/zzz-im/release.sh"
 }
 
 verify_artifact() {

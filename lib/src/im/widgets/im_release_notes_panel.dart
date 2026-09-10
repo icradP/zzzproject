@@ -21,8 +21,8 @@ Future<bool?> showImReleaseNotesPanel({
       title: startup ? 'What is new' : 'Update history',
       subtitle:
           startup
-              ? 'Version ${ImReleaseNotes.currentVersion}'
-              : 'Current version ${ImReleaseNotes.currentVersion}',
+              ? 'Version ${ImReleaseNotes.displayVersion}'
+              : 'Current version ${ImReleaseNotes.displayVersion}',
       icon: Icons.new_releases_outlined,
       maxWidth: 520,
       maxHeight: 600,

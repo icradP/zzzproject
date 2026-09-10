@@ -42,8 +42,11 @@ jobs:
           node --check web/push_client.js
           node --check web/push-sw.js
           node --check tool/generate_web_asset_manifest.mjs
+          node --check tool/generate_release_notes.mjs
           node --test tool/*_test.*
+          node tool/generate_release_notes.mjs --check
           node -e "JSON.parse(require('fs').readFileSync('web/manifest.json', 'utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('assets/data/im_release_notes.json', 'utf8'))"
 
       - name: Build Web release
         env:
@@ -112,12 +115,16 @@ jobs:
       - name: Validate admin console assets
         run: node --check internal/admin/assets/app.js
 
-      - name: Validate native release scripts
+      - name: Validate deploy scripts
         run: |
           bash -n \
+            ../deploy/zzz-im/release.sh \
             ../deploy/zzz-im/release-native.sh \
+            ../deploy/zzz-im/release-pwa.sh \
             ../deploy/zzz-im/deploy-native.sh \
-            ../deploy/zzz-im/deploy-fairy-native.sh
+            ../deploy/zzz-im/deploy-fairy-native.sh \
+            ../deploy/zzz-im/deploy-pwa.sh \
+            ../deploy/zzz-im/deploy.sh
 
       - name: Build server container
         run: docker build -t zzz-im-server:test .

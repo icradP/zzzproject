@@ -103,6 +103,13 @@ Fairy 的建群、邀请成员、设置公告和处理好友申请仍通过普�
 
 # 提交已推送且 CI/CD 成功后，上传产物并部署；生产机不会编译源码。
 ./deploy/zzz-im/release-native.sh deploy root@server.example
+
+# 本机构建 PWA 并在生产机原子切换 /srv/www/zzz-im/current。
+# 构建时会写入本次更新公告；生产机不运行 Flutter。
+./deploy/zzz-im/release-pwa.sh deploy root@server.example
+
+# 先部署 IM/Fairy，再切换 PWA。生产机不编译 Go 或 Flutter。
+./deploy/zzz-im/release.sh deploy root@server.example
 ```
 
 统一发布脚本在远端调用底层安装脚本，创建独立的 `zzz-fairy` 系统用户、`/var/lib/zzz-fairy` 数据目录、`/etc/zzz-im/fairy.env` 密钥文件和 `zzz-fairy.service`。`http://127.0.0.1:18081/health` 是进程存活探针，只要 HTTP 服务仍在运行就返回 `200`；`http://127.0.0.1:18081/ready` 是就绪探针，仅在 Fairy 已登录 IM 且 Scheduler 仍接纳新 Turn 时返回 `200`。部署和切流只使用 `/ready`。远端切换前会备份 IM/Fairy 二进制、环境文件和 systemd 单元；任一就绪检查失败都会回滚。

@@ -28,7 +28,15 @@ void main() {
       pubspec,
       contains('version: ${ImReleaseNotes.currentVersion}+'),
     );
-    expect(ImReleaseNotes.releases.first.version, ImReleaseNotes.currentVersion);
+    expect(ImReleaseNotes.current.version, ImReleaseNotes.currentVersion);
+    expect(ImReleaseNotes.current.id, ImReleaseNotes.currentId);
+    expect(ImReleaseNotes.releases.first.id, ImReleaseNotes.currentId);
+    expect(
+      ImReleaseNotes.releases.any(
+        (release) => release.version == ImReleaseNotes.currentVersion,
+      ),
+      isTrue,
+    );
   });
 
   test('dismissing release notes is scoped to the current version', () async {

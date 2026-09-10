@@ -53,12 +53,10 @@ export ZZZ_INVITE_CODE='<account-registration invite code>'
 go run ./cmd/server -addr :8080
 ```
 
-For a small HTTPS test deployment, build and run the hardened container with
-`deploy/zzz-im/deploy.sh`, then install `deploy/zzz-im/nginx.conf`. The script
-stores SQLite data and uploaded media under `/var/lib/zzz-im`, and generates
-VAPID credentials, an invite code, and a shared test token in
-`/etc/zzz-im/server.env`. The Go port binds only to `127.0.0.1:18080`; Nginx is
-the public HTTPS/WSS boundary.
+Production on `icrad.ltd` is native systemd binaries plus a versioned PWA
+root, with Nginx as the public HTTPS/WSS boundary. `deploy/zzz-im/nginx.conf`
+is installed on the host by hand. `deploy/zzz-im/deploy.sh` is a Docker test
+installer only; do not compile server source on the production host.
 
 Users register with the deployment's invite code and then sign in with
 account-specific passwords. Registration is disabled when `ZZZ_INVITE_CODE`
@@ -67,20 +65,28 @@ SHA-256 digest so a server restart does not sign out every device. The shared
 token remains only for legacy test clients and should be disabled for
 untrusted deployments.
 
-To serve the PWA from the same `icrad.ltd` origin, build with a root base path,
-package `build/web`, and activate it with the versioned deployment script:
+To serve the PWA from the same `icrad.ltd` origin, build and activate it from
+the local workstation. Flutter stays on this machine; the host only receives
+the archive and `deploy-pwa.sh`:
 
 ```bash
-flutter build web --release --base-href / --no-web-resources-cdn \
-  --dart-define=ZZZ_SERVER_URL=wss://icrad.ltd/im/ws
-node tool/generate_web_asset_manifest.mjs build/web
-tar -czf /tmp/zzz-pwa.tar.gz -C build/web .
-sudo ./deploy/zzz-im/deploy-pwa.sh /tmp/zzz-pwa.tar.gz <release-id>
+./deploy/zzz-im/release-pwa.sh validate
+./deploy/zzz-im/release-pwa.sh build
+./deploy/zzz-im/release-pwa.sh deploy root@server.example
 ```
 
 Each release is stored below `/srv/www/zzz-im/releases`; `current` is switched
 atomically, so rollback only requires repointing that symlink and reloading is
-not needed for ordinary PWA updates.
+not needed for ordinary PWA updates. The remote installer is
+`deploy/zzz-im/deploy-pwa.sh`; do not run it as a local build command.
+
+What's New is generated at PWA build time from
+`assets/data/im_release_notes.json`. Edit that catalog when the marketing
+version changes, then run `node tool/generate_release_notes.mjs --apply`.
+`release-pwa.sh` stamps the current git subjects onto that catalog for the
+production archive and restores the committed generated Dart file afterwards.
+The in-app prompt is keyed by `version+release-id`, so each production deploy
+can show the new build once.
 
 The server admin console is available at `/im/admin/` when
 `ZZZ_ADMIN_TOKEN` is configured. The token is exchanged for a 12-hour,
@@ -110,13 +116,12 @@ only cold/warm aggregates in the authenticated admin overview. The targets are
 results using a fixed device, browser, network profile, and cache state.
 
 Native production releases are built and pushed from the local workstation.
-The release entrypoint checks out the committed `HEAD` in a temporary local
-workspace, runs Go tests, cross-compiles static Linux x86_64 artifacts, boots
-the server with a temporary SQLite database inside a Linux container, and only
-then uploads binaries to the host. The production server never receives source
-code or a compiler. Remote installation backs up the current binaries,
-environment, and systemd units and restores them if either service fails its
-health check.
+The native entrypoint uses the committed local worktree, runs Go tests,
+cross-compiles static Linux x86_64 artifacts, boots the server with a
+temporary SQLite database inside a Linux container, and only then uploads
+binaries to the host. The production server never receives source code or a
+compiler. Remote installation backs up the current binaries, environment, and
+systemd units and restores them if either service fails its health check.
 
 ```bash
 # Validate uncommitted server/Fairy changes without publishing artifacts.
@@ -127,31 +132,31 @@ health check.
 
 # After HEAD is pushed and CI/CD succeeds, upload artifacts and deploy.
 ./deploy/zzz-im/release-native.sh deploy root@server.example
+
+# Build native services and the PWA, then install native first.
+./deploy/zzz-im/release.sh deploy root@server.example
 ```
 
-The local machine needs Go, Docker, and `x86_64-linux-musl-gcc` (provided by
-Homebrew `musl-cross` on macOS). `validate` uses the current worktree and removes
-its temporary artifacts after the smoke test; `build` uses committed `HEAD` and
-keeps generated binaries in `dist/`. `deploy` also requires the target commit to
-be the remote `master` head with a successful `CI/CD` workflow. The lower-level
-`deploy-native.sh` and `deploy-fairy-native.sh` scripts are invoked remotely by
-the release entrypoint; they are not production build commands.
+The local machine needs Go, Docker, Flutter 3.44, Node, and
+`x86_64-linux-musl-gcc` (provided by Homebrew `musl-cross` on macOS).
+`validate` uses the current worktree and removes its temporary artifacts after
+the smoke test; `build` uses committed `HEAD` and keeps artifacts under
+`/Volumes/ssd01/tmp/codex/zzz-native-release/artifacts` and
+`/Volumes/ssd01/tmp/codex/zzz-pwa-release/artifacts`. `deploy` also requires
+the target commit to be the remote `master` head with a successful `CI/CD`
+workflow. That check is a gate, not a source of production artifacts. The
+lower-level `deploy-native.sh`, `deploy-fairy-native.sh`, and `deploy-pwa.sh`
+scripts are invoked remotely by the release entrypoints; they are not
+production build commands.
 
-Build the PWA for GitHub Pages:
+GitHub Actions tests Flutter and Go on pull requests and publishes the PWA to
+GitHub Pages after a successful push to `master`. Pages uses `--base-href
+/zzzproject/` and does not update `icrad.ltd`. Set the repository Actions
+variable `ZZZ_SERVER_URL` for that preview; production PWA releases default to
+`wss://icrad.ltd/im/ws`. The server endpoint is build-time configuration and is
+not shown or editable on the login page.
 
-```bash
-flutter build web --release \
-  --base-href /zzzproject/ \
-  --no-web-resources-cdn \
-  --dart-define=ZZZ_SERVER_URL=wss://im.example.com/ws
-node tool/generate_web_asset_manifest.mjs build/web
-```
-
-The server endpoint is build-time configuration and is not shown or editable
-on the login page. For GitHub Actions, set the repository Actions variable
-`ZZZ_SERVER_URL`; local builds fall back to `ws://localhost:8080/ws`.
-
-Web Push on iOS requires iOS 16.4 or later, HTTPS, and installation to the Home Screen. The GitHub Actions workflow tests Flutter and Go on pull requests and deploys the PWA after a successful push to `master`. Deploying the Go server requires a separate HTTPS/WSS hosting target.
+Web Push on iOS requires iOS 16.4 or later, HTTPS, and installation to the Home Screen.
 
 Fairy runs as a separate process and ordinary ZZZ account. Its plugin registry
 and service boundaries follow the MaiBot-inspired roadmap without loading

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Test-only Docker installer. icrad.ltd production uses
+# ./deploy/zzz-im/release.sh (native systemd binaries + PWA archive).
+# Do not build or compile server source on the production host.
 set -euo pipefail
 
 if [[ ${EUID} -ne 0 ]]; then

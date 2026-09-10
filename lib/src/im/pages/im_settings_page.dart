@@ -606,7 +606,7 @@ class _ImSettingsPageState extends State<ImSettingsPage>
         contentPadding: EdgeInsets.zero,
         leading: const Icon(Icons.new_releases_outlined),
         title: const Text('Update history'),
-        subtitle: const Text('Version ${ImReleaseNotes.currentVersion}'),
+        subtitle: Text('Version ${ImReleaseNotes.displayVersion}'),
         trailing: const Icon(Icons.chevron_right_rounded),
         onTap: () => showImReleaseNotesPanel(context: context),
       ),
