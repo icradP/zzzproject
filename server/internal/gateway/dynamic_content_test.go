@@ -126,6 +126,56 @@ func TestDynamicContentValidationRejectsUnsafeAndMalformedTrees(t *testing.T) {
 	}
 }
 
+func TestDynamicActionSetStatusAdvancesAdjacentProgress(t *testing.T) {
+	schema := map[string]interface{}{
+		"id": "status-card",
+		"tree": map[string]interface{}{
+			"id":   "root",
+			"type": "column",
+			"children": []interface{}{
+				map[string]interface{}{
+					"id":    "status",
+					"type":  "text",
+					"props": map[string]interface{}{"text": "Pending"},
+				},
+				map[string]interface{}{
+					"id":    "progress",
+					"type":  "progress",
+					"props": map[string]interface{}{"value": 0.0, "text": "0%"},
+				},
+				map[string]interface{}{
+					"id":   "approve",
+					"type": "button",
+					"events": map[string]interface{}{
+						"click": map[string]interface{}{
+							"action": "set_status",
+							"target": "status",
+							"value":  "Approved",
+						},
+					},
+				},
+			},
+		},
+	}
+	updated, changed, err := applyDynamicActionToSchema(schema, "click", "set_status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("set_status did not change the card")
+	}
+	root := updated["tree"].(map[string]interface{})
+	children := root["children"].([]interface{})
+	status := children[0].(map[string]interface{})["props"].(map[string]interface{})
+	if status["text"] != "Approved" {
+		t.Fatalf("status props = %#v", status)
+	}
+	progress := children[1].(map[string]interface{})["props"].(map[string]interface{})
+	if progress["value"] != 0.1 || progress["text"] != "10%" {
+		t.Fatalf("progress props = %#v", progress)
+	}
+}
+
 func TestDynamicEventTargetAcceptsLegacyTerminalAdapterIdentity(t *testing.T) {
 	segments := []protocol.MessageSegment{{
 		Type: "terminal_request",
@@ -741,17 +791,6 @@ func TestDynamicEventDispatchesTransientlyAndValidatesSchema(t *testing.T) {
 	if secondDeviceEvent := readJSON(t, aliceSecondDevice); secondDeviceEvent["message_id"] != messageID {
 		t.Fatalf("same-account device did not receive transient event: %#v", secondDeviceEvent)
 	}
-	for name, connection := range map[string]*websocket.Conn{
-		"Alice":        alice,
-		"Alice device": aliceSecondDevice,
-		"Bob":          bob,
-	} {
-		audit := readJSON(t, connection)
-		if audit["dynamic_event_audit"] != true {
-			t.Fatalf("%s did not receive the durable interaction audit: %#v", name, audit)
-		}
-	}
-
 	invalid := protocol.DynamicEventSegment(
 		messageID,
 		"event-card-1",
@@ -783,16 +822,12 @@ func TestDynamicEventDispatchesTransientlyAndValidatesSchema(t *testing.T) {
 		"conversation_id": conversationID,
 		"limit":           100,
 	}))
-	if len(history) != 2 {
-		t.Fatalf("dynamic event audit created %d history messages", len(history))
-	}
-	auditSegments := history[1].(map[string]interface{})["message"].([]interface{})
-	if auditSegments[1].(map[string]interface{})["type"] != "dynamic_event_result" {
-		t.Fatalf("dynamic event audit segment = %#v", auditSegments)
+	if len(history) != 1 {
+		t.Fatalf("dynamic event created %d history messages", len(history))
 	}
 }
 
-func TestDynamicInteractionVotePersistsStateAndBroadcastsAudit(t *testing.T) {
+func TestDynamicInteractionVotePersistsStateWithoutAuditBubble(t *testing.T) {
 	database := store.NewMemoryStore()
 	gateway := NewGateway(database)
 	server := httptest.NewServer(gateway)
@@ -861,12 +896,6 @@ func TestDynamicInteractionVotePersistsStateAndBroadcastsAudit(t *testing.T) {
 			t.Fatalf("%s did not receive vote state replacement: %#v", name, value)
 		}
 	}
-	for name, connection := range map[string]*websocket.Conn{"alice": alice, "bob": bob} {
-		audit := readJSON(t, connection)
-		if audit["dynamic_event_audit"] != true {
-			t.Fatalf("%s did not receive vote audit: %#v", name, audit)
-		}
-	}
 	aggregate := request(t, bob, "get_dynamic_interactions", map[string]interface{}{
 		"conversation_id": conversationID,
 		"message_id":      messageID,
@@ -880,8 +909,8 @@ func TestDynamicInteractionVotePersistsStateAndBroadcastsAudit(t *testing.T) {
 		"conversation_id": conversationID,
 		"limit":           100,
 	}))
-	if len(history) != 2 {
-		t.Fatalf("vote history length = %d, want original plus audit", len(history))
+	if len(history) != 1 {
+		t.Fatalf("vote history length = %d, want original only", len(history))
 	}
 	updated := history[0].(map[string]interface{})["message"].([]interface{})[0].(map[string]interface{})
 	updatedTree := updated["data"].(map[string]interface{})["tree"].(map[string]interface{})

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strconv"
@@ -336,6 +337,295 @@ func applyDynamicInteraction(
 		return updatedSegments, protocol.DynamicReplaceSegment(target.ID, contentID, schema), result, true, nil
 	}
 	return append([]protocol.MessageSegment(nil), target.Segments...), protocol.MessageSegment{}, result, false, nil
+}
+
+// applyDynamicActionProjection handles cards that use declarative component
+// actions without opting into an interaction reducer. The same action is
+// applied locally for instant feedback and persisted here so the card remains
+// convergent after history reload or on another device.
+func applyDynamicActionProjection(
+	target *store.Message,
+	contentID, eventName, action string,
+	payload map[string]interface{},
+) ([]protocol.MessageSegment, protocol.MessageSegment, bool, error) {
+	if target == nil {
+		return nil, protocol.MessageSegment{}, false, nil
+	}
+	for index, segment := range target.Segments {
+		if segment.Type != "dynamic_content" {
+			continue
+		}
+		schema, err := dynamicSchemaFromData(segment.Data)
+		if err != nil {
+			return nil, protocol.MessageSegment{}, false, err
+		}
+		if schema["id"] != contentID {
+			continue
+		}
+		updated, changed, err := applyDynamicActionToSchema(schema, eventName, action, payload)
+		if err != nil {
+			return nil, protocol.MessageSegment{}, false, err
+		}
+		if !changed {
+			return append([]protocol.MessageSegment(nil), target.Segments...), protocol.MessageSegment{}, false, nil
+		}
+		if err := validateDynamicSchema(updated); err != nil {
+			return nil, protocol.MessageSegment{}, false, err
+		}
+		segments := append([]protocol.MessageSegment(nil), target.Segments...)
+		segments[index] = protocol.DynamicContentSegment(updated)
+		return segments, protocol.DynamicReplaceSegment(target.ID, contentID, updated), true, nil
+	}
+	return append([]protocol.MessageSegment(nil), target.Segments...), protocol.MessageSegment{}, false, nil
+}
+
+func applyDynamicActionToSchema(
+	schema map[string]interface{},
+	eventName, action string,
+	payload map[string]interface{},
+) (map[string]interface{}, bool, error) {
+	updated := cloneDynamicMap(schema)
+	root, ok := updated["tree"].(map[string]interface{})
+	if !ok {
+		return nil, false, fmt.Errorf("dynamic content tree is missing")
+	}
+	node, _, _, found := findDynamicNodeByEvent(root, eventName, action)
+	if !found {
+		return updated, false, nil
+	}
+	events, _ := node["events"].(map[string]interface{})
+	definition, _ := events[eventName].(map[string]interface{})
+	actionName := strings.ToLower(strings.TrimSpace(action))
+	targetID, _ := definition["target"].(string)
+	if targetID == "" {
+		switch actionName {
+		case "set_progress", "increment_progress":
+			targetID = firstDynamicNodeID(root, "progress")
+		case "set_status":
+			targetID = firstDynamicNodeID(root, "status")
+			if targetID == "" {
+				targetID = firstDynamicNodeID(root, "progress")
+			}
+		case "approve", "approved", "allow", "confirm", "confirmed", "yes", "complete", "completed", "reject", "rejected", "deny", "denied", "no", "cancel", "cancelled":
+			targetID = firstDynamicNodeID(root, "status")
+			if targetID == "" {
+				targetID = firstDynamicNodeID(root, "progress")
+			}
+		}
+	}
+	if targetID == "" {
+		return updated, false, nil
+	}
+	target, _, _, found := findDynamicNode(root, targetID)
+	if !found {
+		if actionName == "set_status" || strings.HasPrefix(actionName, "approve") || strings.HasPrefix(actionName, "reject") {
+			targetID = firstDynamicNodeID(root, "progress")
+			target, _, _, found = findDynamicNode(root, targetID)
+		}
+		if !found {
+			return nil, false, fmt.Errorf("dynamic action target %q was not found", targetID)
+		}
+	}
+	props := cloneDynamicMap(asDynamicMap(target["props"]))
+	target["props"] = props
+	changed := false
+	set := func(key string, value interface{}) {
+		if !reflect.DeepEqual(props[key], value) {
+			props[key] = value
+			changed = true
+		}
+	}
+	value, hasValue := definition["value"]
+	if !hasValue {
+		value, hasValue = payload["value"]
+	}
+	switch actionName {
+	case "toggle":
+		property := dynamicString(definition["property"], "value")
+		set(property, props[property] != true)
+	case "set_property", "set_value", "set_status":
+		if !hasValue {
+			value = true
+			hasValue = true
+		}
+		property := dynamicString(definition["property"], "text")
+		if actionName == "set_value" {
+			property = dynamicString(definition["property"], "value")
+		}
+		if nodeType, _ := target["type"].(string); nodeType == "progress" && actionName == "set_status" {
+			progress, ok := dynamicActionNumber(value)
+			if !ok {
+				current, _ := dynamicActionNumber(props["value"])
+				progress = current + 0.1
+			}
+			if progress > 1 {
+				progress /= 100
+			}
+			progress = math.Max(0, math.Min(1, progress))
+			set("value", progress)
+			if _, exists := props["text"]; exists {
+				set("text", fmt.Sprintf("%.0f%%", progress*100))
+			}
+		} else {
+			set(property, value)
+		}
+	case "set_progress", "increment_progress":
+		progress, ok := dynamicActionNumber(value)
+		if !ok {
+			return updated, false, nil
+		}
+		if actionName == "increment_progress" {
+			current, _ := dynamicActionNumber(props["value"])
+			progress += current
+		}
+		if progress > 1 {
+			progress /= 100
+		}
+		progress = math.Max(0, math.Min(1, progress))
+		set("value", progress)
+		if _, exists := props["text"]; exists {
+			set("text", fmt.Sprintf("%.0f%%", progress*100))
+		}
+	case "approve", "approved", "allow", "confirm", "confirmed", "yes", "complete", "completed", "reject", "rejected", "deny", "denied", "no", "cancel", "cancelled":
+		label := "Approved"
+		if isNegativeInteractionAction(actionName) {
+			label = "Rejected"
+		}
+		set("text", label)
+	}
+	// Status and approval actions commonly target a separate status label. Keep
+	// an adjacent progress node convergent as well, even when the action does
+	// not explicitly name it. This is intentionally a small declarative step,
+	// not a second event or a hidden command execution.
+	if actionName == "set_status" || isPositiveInteractionAction(actionName) || isNegativeInteractionAction(actionName) {
+		if targetType, _ := target["type"].(string); targetType != "progress" {
+			if progressID := firstDynamicNodeID(root, "progress"); progressID != "" {
+				progressNode, _, _, found := findDynamicNode(root, progressID)
+				if found {
+					progressProps := cloneDynamicMap(asDynamicMap(progressNode["props"]))
+					progressNode["props"] = progressProps
+					current, _ := dynamicActionNumber(progressProps["value"])
+					step, hasStep := dynamicActionNumber(definition["progress"])
+					if !hasStep {
+						step, hasStep = dynamicActionNumber(definition["progress_value"])
+					}
+					if !hasStep && actionName == "set_status" {
+						// A numeric status value is an explicit progress target;
+						// textual statuses advance one unit (or one of total).
+						step, hasStep = dynamicActionNumber(value)
+					}
+					if !hasStep || actionName != "set_status" {
+						step, hasStep = dynamicActionNumber(definition["increment"])
+					}
+					if hasStep && actionName != "set_status" {
+						step += current
+					} else if hasStep && actionName == "set_status" {
+						if _, numericStatus := dynamicActionNumber(value); !numericStatus {
+							step += current
+						}
+					} else {
+						step = current + 0.1
+						if total, ok := dynamicActionNumber(definition["total"]); ok && total > 0 {
+							step = current + 1/total
+						}
+					}
+					if step > 1 {
+						step /= 100
+					}
+					step = math.Max(0, math.Min(1, step))
+					if !reflect.DeepEqual(progressProps["value"], step) {
+						progressProps["value"] = step
+						changed = true
+					}
+					if _, exists := progressProps["text"]; exists {
+						text := fmt.Sprintf("%.0f%%", step*100)
+						if !reflect.DeepEqual(progressProps["text"], text) {
+							progressProps["text"] = text
+							changed = true
+						}
+					}
+				}
+			}
+		}
+	}
+	return updated, changed, nil
+}
+
+func findDynamicNodeByEvent(root map[string]interface{}, eventName, action string) (map[string]interface{}, map[string]interface{}, int, bool) {
+	if events, ok := root["events"].(map[string]interface{}); ok {
+		if definition, ok := events[eventName].(map[string]interface{}); ok {
+			if expected, _ := definition["action"].(string); expected == action {
+				return root, nil, -1, true
+			}
+		}
+	}
+	children, _ := root["children"].([]interface{})
+	for index, child := range children {
+		childMap, ok := child.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if foundNode, parent, childIndex, found := findDynamicNodeByEvent(childMap, eventName, action); found {
+			if parent == nil {
+				return foundNode, root, index, true
+			}
+			return foundNode, parent, childIndex, true
+		}
+	}
+	return nil, nil, -1, false
+}
+
+func firstDynamicNodeID(root map[string]interface{}, typeName string) string {
+	if nodeType, _ := root["type"].(string); nodeType == typeName {
+		id, _ := root["id"].(string)
+		return id
+	}
+	children, _ := root["children"].([]interface{})
+	for _, child := range children {
+		childMap, ok := child.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if id := firstDynamicNodeID(childMap, typeName); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func asDynamicMap(value interface{}) map[string]interface{} {
+	if result, ok := value.(map[string]interface{}); ok {
+		return result
+	}
+	return map[string]interface{}{}
+}
+
+func dynamicString(value interface{}, fallback string) string {
+	if result, ok := value.(string); ok && strings.TrimSpace(result) != "" {
+		return strings.TrimSpace(result)
+	}
+	return fallback
+}
+
+func dynamicActionNumber(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, !math.IsNaN(typed) && !math.IsInf(typed, 0)
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func reduceSetByActor(ctx dynamicInteractionReduceContext) (dynamicInteractionReduction, error) {

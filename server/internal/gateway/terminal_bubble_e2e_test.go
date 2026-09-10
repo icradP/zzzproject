@@ -103,24 +103,10 @@ func TestTerminalBubbleLifecycleAcrossDevices(t *testing.T) {
 	if segment := termEvent["message"].([]interface{})[0].(map[string]interface{}); segment["type"] != "dynamic_event" {
 		t.Fatalf("approval was not delivered as dynamic_event: %#v", segment)
 	}
-	// The interaction result is now a durable, immediately broadcast audit row.
-	// Consume it on every device before the command result is sent.
-	for name, connection := range map[string]*websocket.Conn{
-		"ZZZ IM":  zzzIM,
-		"ZZZTerm": zzzTerm,
-		"Fairy":   fairy,
-	} {
-		if name == "Fairy" {
-			// Fairy receives the transient event before the durable audit row.
-			transient := readJSON(t, connection)
-			if transient["message_id"] != proposalID {
-				t.Fatalf("Fairy did not receive approval event before audit: %#v", transient)
-			}
-		}
-		audit := readJSON(t, connection)
-		if audit["dynamic_event_audit"] != true {
-			t.Fatalf("%s did not receive approval audit: %#v", name, audit)
-		}
+	// Fairy receives the transient event too. There is deliberately no extra
+	// durable audit bubble; the event ledger and the proposal card are enough.
+	if transient := readJSON(t, fairy); transient["message_id"] != proposalID {
+		t.Fatalf("Fairy did not receive approval event: %#v", transient)
 	}
 
 	// The local execution device publishes the result. Its other same-account
@@ -151,21 +137,18 @@ func TestTerminalBubbleLifecycleAcrossDevices(t *testing.T) {
 	_ = readJSON(t, fairy)
 
 	// The transient approval is absent, and the canonical history contains the
-	// prompt, proposal, durable approval audit, and result exactly once.
+	// prompt, proposal, and result exactly once.
 	history := responseDataList(t, request(t, zzzIM, "get_messages", map[string]interface{}{
 		"conversation_id": conversationID,
 		"limit":           100,
 	}))
-	if len(history) != 4 {
+	if len(history) != 3 {
 		t.Fatalf("terminal bubble lifecycle created %d history messages: %#v", len(history), history)
 	}
 	if history[0].(map[string]interface{})["message_id"] != promptID ||
 		history[1].(map[string]interface{})["message_id"] != proposalID ||
-		history[3].(map[string]interface{})["message_id"] != resultID {
+		history[2].(map[string]interface{})["message_id"] != resultID {
 		t.Fatalf("history order changed: %#v", history)
-	}
-	if history[2].(map[string]interface{})["message"].([]interface{})[1].(map[string]interface{})["type"] != "dynamic_event_result" {
-		t.Fatalf("approval audit was not persisted: %#v", history[2])
 	}
 }
 

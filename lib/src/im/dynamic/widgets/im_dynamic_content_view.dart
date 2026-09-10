@@ -317,44 +317,196 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
   ) {
     final action = definition['action']?.toString();
     if (action == null || action.isEmpty) return;
-    final targetId =
+    var targetId =
         definition['target']?.toString() ??
         definition['target_node_id']?.toString();
+    final actionName = action.toLowerCase();
+    targetId ??= _firstNodeId(
+      runtime.content.tree,
+      actionName == 'set_progress' || actionName == 'increment_progress'
+          ? 'progress'
+          : 'status',
+    );
     if (targetId == null || targetId.isEmpty) return;
     final property = definition['property']?.toString() ?? 'text';
     final rawValue = definition['value'];
-    final value = _resolveActionValue(rawValue, payload);
+    var value = _resolveActionValue(rawValue, payload);
+    final target = runtime.content.tree.findById(targetId);
+    if (target == null &&
+        (actionName == 'set_status' ||
+            actionName.startsWith('approve') ||
+            actionName.startsWith('reject'))) {
+      targetId = _firstNodeId(runtime.content.tree, 'progress');
+    }
+    final resolvedTargetId = targetId;
+    if (resolvedTargetId == null || resolvedTargetId.isEmpty) return;
+    final resolvedTarget = runtime.content.tree.findById(resolvedTargetId);
+    if (resolvedTarget == null) return;
+    if (!definition.containsKey('value') &&
+        (actionName == 'set_status' ||
+            actionName.startsWith('approve') ||
+            actionName.startsWith('reject'))) {
+      value = true;
+    }
     if (value == null &&
         !definition.containsKey('value') &&
-        action != 'toggle') {
+        actionName != 'toggle' &&
+        actionName != 'increment_progress') {
       return;
     }
 
     // Actions are declarative and constrained to the same patch surface used
     // by server updates. This keeps a button from executing arbitrary code.
-    switch (action) {
+    switch (actionName) {
       case 'set_property':
       case 'set_value':
       case 'set_status':
       case 'toggle':
-        final current = runtime.content.tree.findById(targetId);
-        if (current == null) return;
+      case 'set_progress':
+      case 'increment_progress':
+      case 'approve':
+      case 'approved':
+      case 'allow':
+      case 'confirm':
+      case 'confirmed':
+      case 'yes':
+      case 'complete':
+      case 'completed':
+      case 'reject':
+      case 'rejected':
+      case 'deny':
+      case 'denied':
+      case 'no':
+      case 'cancel':
+      case 'cancelled':
+        final current = resolvedTarget;
         final nextValue =
-            action == 'toggle' ? !(current.props[property] == true) : value;
+            actionName == 'toggle' ? !(current.props[property] == true) : value;
+        final props = <String, dynamic>{};
+        if (current.type == 'progress' &&
+            (actionName == 'set_status' ||
+                actionName == 'set_progress' ||
+                actionName == 'increment_progress' ||
+                actionName.startsWith('approve') ||
+                actionName.startsWith('reject'))) {
+          var progress = _number(nextValue);
+          if (actionName == 'increment_progress' ||
+              (actionName == 'set_status' && nextValue is bool)) {
+            progress =
+                _number(current.props['value']) +
+                (nextValue is num && actionName == 'increment_progress'
+                    ? _number(nextValue)
+                    : 0.1);
+          }
+          if (progress > 1) progress /= 100;
+          props['value'] = progress.clamp(0.0, 1.0);
+          if (current.props.containsKey('text')) {
+            props['text'] = '${(props['value'] * 100).round()}%';
+          }
+        } else if (actionName.startsWith('approve') ||
+            actionName.startsWith('allow') ||
+            actionName.startsWith('confirm') ||
+            actionName == 'yes' ||
+            actionName.startsWith('complete') ||
+            actionName.startsWith('reject') ||
+            actionName.startsWith('deny') ||
+            actionName == 'no' ||
+            actionName.startsWith('cancel')) {
+          props['text'] =
+              actionName.startsWith('reject') ||
+                      actionName.startsWith('deny') ||
+                      actionName == 'no' ||
+                      actionName.startsWith('cancel')
+                  ? 'Rejected'
+                  : 'Approved';
+        } else {
+          props[property] = nextValue;
+        }
+        final patches = <ImDynamicPatch>[
+          ImDynamicPatch(
+            operation: ImDynamicPatchOperation.update,
+            nodeId: resolvedTargetId,
+            props: props,
+          ),
+        ];
+        if (resolvedTarget.type != 'progress' &&
+            (actionName == 'set_status' ||
+                actionName.startsWith('approve') ||
+                actionName.startsWith('allow') ||
+                actionName.startsWith('confirm') ||
+                actionName == 'yes' ||
+                actionName.startsWith('complete') ||
+                actionName.startsWith('reject') ||
+                actionName.startsWith('deny') ||
+                actionName == 'no' ||
+                actionName.startsWith('cancel'))) {
+          final progressNode = runtime.content.tree.findById(
+            _firstNodeId(runtime.content.tree, 'progress') ?? '',
+          );
+          if (progressNode != null) {
+            final current = _number(progressNode.props['value']);
+            final total = _number(definition['total']);
+            var next = _number(
+              definition['progress'] ?? definition['progress_value'],
+            );
+            final hasExplicitProgress =
+                definition.containsKey('progress') ||
+                definition.containsKey('progress_value');
+            final statusNumber = _number(value);
+            final hasNumericStatus =
+                value is num ||
+                (value is String && double.tryParse(value.trim()) != null);
+            if (!hasExplicitProgress &&
+                actionName == 'set_status' &&
+                hasNumericStatus) {
+              next = statusNumber;
+            } else {
+              if (!hasExplicitProgress) {
+                next = _number(definition['increment']);
+              }
+              if (next == 0) {
+                next = total == 0 ? 0.1 : 1 / total;
+              } else if (actionName != 'set_status' || !hasNumericStatus) {
+                next += current;
+              }
+            }
+            if (next > 1) next /= 100;
+            next = next.clamp(0.0, 1.0);
+            final progressProps = <String, dynamic>{'value': next};
+            if (progressNode.props.containsKey('text')) {
+              progressProps['text'] = '${(next * 100).round()}%';
+            }
+            patches.add(
+              ImDynamicPatch(
+                operation: ImDynamicPatchOperation.update,
+                nodeId: progressNode.id,
+                props: progressProps,
+              ),
+            );
+          }
+        }
         runtime.apply(
           ImDynamicPatchSet(
             messageId: widget.messageId,
             contentId: runtime.content.id,
-            patches: [
-              ImDynamicPatch(
-                operation: ImDynamicPatchOperation.update,
-                nodeId: targetId,
-                props: {property: nextValue},
-              ),
-            ],
+            patches: patches,
           ),
         );
     }
+  }
+
+  String? _firstNodeId(ImDynamicNode node, String type) {
+    if (node.type == type) return node.id;
+    for (final child in node.children) {
+      final found = _firstNodeId(child, type);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  double _number(Object? value) {
+    if (value is num && value.isFinite) return value.toDouble();
+    return double.tryParse('${value ?? ''}') ?? 0;
   }
 
   Object? _resolveActionValue(Object? value, Map<String, dynamic> payload) {

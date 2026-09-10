@@ -1696,11 +1696,9 @@ class ZzzServerSource implements ImMessageSource {
     switch (json['post_type']) {
       case 'message':
         if (json['dynamic_event_audit'] == true) {
-          // Dynamic interaction results are durable messages with an explicit
-          // marker. Render them immediately like history, but never route the
-          // audit row back into a Fairy turn.
-          final audit = _parseMessage(json);
-          if (audit != null) _addMessageToStream(audit);
+          // Legacy servers emitted a separate visible audit bubble for every
+          // dynamic event. The event ledger and in-place card projection are
+          // now the source of truth, so never re-add that legacy row.
           break;
         }
         if (_dynamicEventData(json) != null) {
@@ -2472,6 +2470,14 @@ class ZzzServerSource implements ImMessageSource {
               .map((segment) => Map<String, dynamic>.from(segment))
               .toList() ??
           const <Map<String, dynamic>>[];
+      // Servers before the event-ledger migration persisted a separate
+      // dynamic_event_result message. It has no user-facing content and would
+      // otherwise reappear as a plain text bubble after history reload.
+      if (segments.any(
+        (segment) => segment['type'] == 'dynamic_event_result',
+      )) {
+        return null;
+      }
       final first = _firstSegmentWhere(segments, (segment) {
         return segment['type'] != 'reply';
       });
@@ -2599,7 +2605,9 @@ class ZzzServerSource implements ImMessageSource {
       'dynamic_replace' => '',
       'dynamic_remove' => '',
       'dynamic_event' => '',
-      'dynamic_event_result' => '${data['summary'] ?? '[交互结果]'}',
+      // Kept empty for compatibility with locally queued legacy frames. The
+      // parser filters persisted result messages before they reach the UI.
+      'dynamic_event_result' => '',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',

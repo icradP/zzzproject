@@ -1367,6 +1367,11 @@ void main() {
         children: [
           ImDynamicNode(id: 'status', type: 'status', props: {'text': 'Ready'}),
           ImDynamicNode(
+            id: 'progress',
+            type: 'progress',
+            props: {'value': 0.0, 'text': '0%'},
+          ),
+          ImDynamicNode(
             id: 'approve',
             type: 'button',
             props: {'text': 'Approve'},
@@ -1390,6 +1395,10 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
     await tester.pump();
     expect(find.text('Approved'), findsOneWidget);
+    final progress = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(progress.value, 0.1);
   });
 
   testWidgets('dynamic node IDs preserve local state across tree patches', (

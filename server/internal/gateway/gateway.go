@@ -1525,7 +1525,7 @@ func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conv
 		g.sendError(client, req.Echo, err.Error())
 		return
 	}
-	schema, config, configured, err := dynamicInteractionSchema(target, contentID)
+	_, config, configured, err := dynamicInteractionSchema(target, contentID)
 	if err != nil {
 		g.sendError(client, req.Echo, err.Error())
 		return
@@ -1602,6 +1602,22 @@ func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conv
 		updatedSegments = nextSegments
 		stateChanged, replacement, reduction = changed, nextReplacement, nextReduction
 	}
+	if !configured || config.reducer == "none" {
+		nextSegments, nextReplacement, changed, actionErr := applyDynamicActionProjection(
+			target,
+			contentID,
+			fmt.Sprint(segment.Data["event"]),
+			fmt.Sprint(segment.Data["action"]),
+			payload,
+		)
+		if actionErr != nil {
+			g.sendError(client, req.Echo, "failed to update dynamic action state")
+			return
+		}
+		if changed {
+			updatedSegments, replacement, stateChanged = nextSegments, nextReplacement, true
+		}
+	}
 	duplicate := false
 	if committer, ok := g.store.(store.DynamicInteractionCommitter); ok {
 		duplicate, err = committer.CommitDynamicInteractionEvent(candidate, updatedSegments)
@@ -1652,26 +1668,6 @@ func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conv
 			Message:        []protocol.MessageSegment{replacement}, Timestamp: nowUnix, TimestampMS: nowMS,
 		}, "")
 	}
-	// Legacy cards retain the old visible audit row. Generic cards use the
-	// interaction ledger and a shared aggregate projection instead.
-	if dynamicInteractionUsesLegacyAudit(schema, configured) {
-		resultData := cloneDynamicMap(segment.Data)
-		resultData["event_id"] = eventID
-		resultData["actor_id"], resultData["actor_nickname"] = client.userID, nickname
-		resultData["actor_kind"] = actorKind
-		resultData["summary"] = dynamicEventResultSummary(nickname, segment.Data)
-		auditSegments := []protocol.MessageSegment{protocol.TextSegment(resultData["summary"].(string)), protocol.DynamicEventResultSegment(resultData)}
-		auditID := "dynamic-event-" + hexDigest(fmt.Sprintf("%s\x00%s\x00%s", conversationID, client.userID, eventID))
-		audit, auditDuplicate, auditErr := g.store.StoreMessageIdempotent(conversationID, client.userID, nickname, auditID, auditSegments)
-		if auditErr != nil || audit == nil {
-			g.sendError(client, req.Echo, "failed to record dynamic event audit")
-			return
-		}
-		if !auditDuplicate {
-			g.broadcastToConversation(conversationID, protocol.MessageEvent{PostType: "message", MessageType: conversationType, MessageID: audit.ID, ConversationID: conversationID, Sender: protocol.Sender{UserID: client.userID, Nickname: nickname, Avatar: avatar}, Message: audit.Segments, Timestamp: audit.Timestamp.Unix(), TimestampMS: audit.Timestamp.UnixMilli(), DynamicEventAudit: true}, "")
-			g.pushToConversation(conversationID, audit, "", false)
-		}
-	}
 }
 
 func dynamicEventShouldRouteToFairy(config dynamicInteractionConfig, configured bool, reduction dynamicInteractionReduction) bool {
@@ -1688,36 +1684,6 @@ func dynamicEventShouldRouteToFairy(config dynamicInteractionConfig, configured 
 	default:
 		return false
 	}
-}
-
-func dynamicInteractionUsesLegacyAudit(schema map[string]interface{}, configured bool) bool {
-	if !configured {
-		// Cards created before the interaction contract (including legacy
-		// terminal_request approvals) still need a durable visible result.
-		return true
-	}
-	metadata, _ := schema["metadata"].(map[string]interface{})
-	interaction, _ := metadata["interaction"].(map[string]interface{})
-	_, hasReducer := interaction["reducer"]
-	_, hasPolicy := interaction["policy"]
-	return !hasReducer && !hasPolicy
-}
-
-func dynamicEventResultSummary(nickname string, data map[string]interface{}) string {
-	event, _ := data["event"].(string)
-	action, _ := data["action"].(string)
-	if event == "" {
-		event = "interaction"
-	}
-	if action == "" {
-		return fmt.Sprintf("%s performed %s", nickname, event)
-	}
-	return fmt.Sprintf("%s performed %s (%s)", nickname, event, action)
-}
-
-func hexDigest(value string) string {
-	digest := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(digest[:])
 }
 
 func (g *Gateway) handleGetDynamicInteractions(client *Client, req *protocol.Request) {
