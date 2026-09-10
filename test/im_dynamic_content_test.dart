@@ -1401,6 +1401,61 @@ void main() {
     expect(progress.value, 0.1);
   });
 
+  testWidgets('non-approval actions can declare a progress projection', (
+    tester,
+  ) async {
+    const content = ImDynamicContent(
+      id: 'generic-action-card',
+      version: '1.0',
+      source: ImDynamicContentSource.user,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'column',
+        children: [
+          ImDynamicNode(
+            id: 'status',
+            type: 'status',
+            props: {'text': 'Queued'},
+          ),
+          ImDynamicNode(
+            id: 'progress',
+            type: 'progress',
+            props: {'value': 0.25, 'text': '25%'},
+          ),
+          ImDynamicNode(
+            id: 'index',
+            type: 'button',
+            props: {'text': 'Index'},
+            events: {
+              'click': {
+                'action': 'set_property',
+                'target': 'status',
+                'property': 'text',
+                'value': 'Indexed',
+                'projection': {
+                  'progress_delta': 0.25,
+                  'progress_node_id': 'progress',
+                },
+              },
+            },
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: ImDynamicContentView(content: content))),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Index'));
+    await tester.pump();
+
+    expect(find.text('Indexed'), findsOneWidget);
+    final progress = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(progress.value, 0.5);
+  });
+
   testWidgets('dynamic node IDs preserve local state across tree patches', (
     tester,
   ) async {

@@ -176,6 +176,104 @@ func TestDynamicActionSetStatusAdvancesAdjacentProgress(t *testing.T) {
 	}
 }
 
+func TestDynamicActionProjectionIsNotApprovalSpecific(t *testing.T) {
+	schema := map[string]interface{}{
+		"id": "generic-action-card",
+		"tree": map[string]interface{}{
+			"id":   "root",
+			"type": "column",
+			"children": []interface{}{
+				map[string]interface{}{
+					"id":    "status",
+					"type":  "text",
+					"props": map[string]interface{}{"text": "Queued"},
+				},
+				map[string]interface{}{
+					"id":    "progress",
+					"type":  "progress",
+					"props": map[string]interface{}{"value": 0.25, "text": "25%"},
+				},
+				map[string]interface{}{
+					"id":   "index",
+					"type": "button",
+					"events": map[string]interface{}{
+						"click": map[string]interface{}{
+							"action":   "set_property",
+							"target":   "status",
+							"property": "text",
+							"value":    "Indexed",
+							"projection": map[string]interface{}{
+								"progress_delta":   0.25,
+								"progress_node_id": "progress",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	updated, changed, err := applyDynamicActionToSchema(schema, "click", "set_property", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("set_property projection did not change the card")
+	}
+	root := updated["tree"].(map[string]interface{})
+	children := root["children"].([]interface{})
+	status := children[0].(map[string]interface{})["props"].(map[string]interface{})
+	if status["text"] != "Indexed" {
+		t.Fatalf("status props = %#v", status)
+	}
+	progress := children[1].(map[string]interface{})["props"].(map[string]interface{})
+	if progress["value"] != 0.5 || progress["text"] != "50%" {
+		t.Fatalf("progress props = %#v", progress)
+	}
+}
+
+func TestDynamicActionCustomNameCanProjectProgress(t *testing.T) {
+	schema := map[string]interface{}{
+		"id": "custom-action-card",
+		"tree": map[string]interface{}{
+			"id":   "root",
+			"type": "column",
+			"children": []interface{}{
+				map[string]interface{}{
+					"id":    "progress",
+					"type":  "progress",
+					"props": map[string]interface{}{"value": 0.1, "text": "10%"},
+				},
+				map[string]interface{}{
+					"id":   "read",
+					"type": "button",
+					"events": map[string]interface{}{
+						"click": map[string]interface{}{
+							"action":     "mark_read",
+							"projection": map[string]interface{}{"progress_delta": 0.2},
+						},
+					},
+				},
+			},
+		},
+	}
+	updated, changed, err := applyDynamicActionToSchema(schema, "click", "mark_read", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("custom action projection did not change the card")
+	}
+	progress, _, _, found := findDynamicNode(updated["tree"].(map[string]interface{}), "progress")
+	if !found {
+		t.Fatal("progress node was not found")
+	}
+	props := progress["props"].(map[string]interface{})
+	value, _ := props["value"].(float64)
+	if value < 0.299 || value > 0.301 || props["text"] != "30%" {
+		t.Fatalf("progress props = %#v", props)
+	}
+}
+
 func TestDynamicEventTargetAcceptsLegacyTerminalAdapterIdentity(t *testing.T) {
 	segments := []protocol.MessageSegment{{
 		Type: "terminal_request",

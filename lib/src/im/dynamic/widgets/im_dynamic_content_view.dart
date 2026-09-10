@@ -317,26 +317,34 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
   ) {
     final action = definition['action']?.toString();
     if (action == null || action.isEmpty) return;
+    final actionName = action.toLowerCase();
+    final hasProgressProjection = _hasProgressProjection(definition);
     var targetId =
         definition['target']?.toString() ??
         definition['target_node_id']?.toString();
-    final actionName = action.toLowerCase();
-    targetId ??= _firstNodeId(
-      runtime.content.tree,
-      actionName == 'set_progress' || actionName == 'increment_progress'
-          ? 'progress'
-          : 'status',
-    );
-    if (targetId == null || targetId.isEmpty) return;
+    if (targetId == null || targetId.isEmpty) {
+      targetId =
+          hasProgressProjection
+              ? _progressNodeId(runtime.content.tree, definition)
+              : _firstNodeId(
+                runtime.content.tree,
+                actionName == 'set_progress' ||
+                        actionName == 'increment_progress'
+                    ? 'progress'
+                    : 'status',
+              );
+    }
     final property = definition['property']?.toString() ?? 'text';
     final rawValue = definition['value'];
     var value = _resolveActionValue(rawValue, payload);
-    final target = runtime.content.tree.findById(targetId);
+    final target =
+        targetId == null ? null : runtime.content.tree.findById(targetId);
     if (target == null &&
-        (actionName == 'set_status' ||
+        (hasProgressProjection ||
+            actionName == 'set_status' ||
             actionName.startsWith('approve') ||
             actionName.startsWith('reject'))) {
-      targetId = _firstNodeId(runtime.content.tree, 'progress');
+      targetId = _progressNodeId(runtime.content.tree, definition);
     }
     final resolvedTargetId = targetId;
     if (resolvedTargetId == null || resolvedTargetId.isEmpty) return;
@@ -351,7 +359,81 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
     if (value == null &&
         !definition.containsKey('value') &&
         actionName != 'toggle' &&
-        actionName != 'increment_progress') {
+        actionName != 'increment_progress' &&
+        !hasProgressProjection) {
+      return;
+    }
+
+    // A producer may use a domain-specific action name (for example
+    // `mark_read` or `complete_step`). The server does not need to know that
+    // name to project progress: declared projection fields are sufficient.
+    const supportedActions = {
+      'set_property',
+      'set_value',
+      'set_status',
+      'toggle',
+      'set_progress',
+      'increment_progress',
+      'approve',
+      'approved',
+      'allow',
+      'confirm',
+      'confirmed',
+      'yes',
+      'complete',
+      'completed',
+      'reject',
+      'rejected',
+      'deny',
+      'denied',
+      'no',
+      'cancel',
+      'cancelled',
+    };
+    if (!supportedActions.contains(actionName)) {
+      if (!hasProgressProjection) return;
+      final progressNode =
+          resolvedTarget.type == 'progress'
+              ? resolvedTarget
+              : runtime.content.tree.findById(
+                _progressNodeId(runtime.content.tree, definition) ?? '',
+              );
+      if (progressNode == null) return;
+      final currentValue = _number(progressNode.props['value']);
+      final absoluteValue =
+          _projectionValue(definition, 'progress') ??
+          _projectionValue(definition, 'progress_value');
+      final deltaValue =
+          _projectionValue(definition, 'progress_delta') ??
+          _projectionValue(definition, 'increment');
+      var next = _number(absoluteValue);
+      if (_numberValue(absoluteValue) == null) {
+        if (_numberValue(deltaValue) != null) {
+          next = currentValue + _number(deltaValue);
+        } else {
+          final total = _number(_projectionValue(definition, 'total'));
+          next = currentValue + (total > 0 ? 1 / total : 0.1);
+        }
+      }
+      if (next > 1) next /= 100;
+      next = next.clamp(0.0, 1.0);
+      final props = <String, dynamic>{'value': next};
+      if (progressNode.props.containsKey('text')) {
+        props['text'] = '${(next * 100).round()}%';
+      }
+      runtime.apply(
+        ImDynamicPatchSet(
+          messageId: widget.messageId,
+          contentId: runtime.content.id,
+          patches: [
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: progressNode.id,
+              props: props,
+            ),
+          ],
+        ),
+      );
       return;
     }
 
@@ -383,27 +465,7 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
         final nextValue =
             actionName == 'toggle' ? !(current.props[property] == true) : value;
         final props = <String, dynamic>{};
-        if (current.type == 'progress' &&
-            (actionName == 'set_status' ||
-                actionName == 'set_progress' ||
-                actionName == 'increment_progress' ||
-                actionName.startsWith('approve') ||
-                actionName.startsWith('reject'))) {
-          var progress = _number(nextValue);
-          if (actionName == 'increment_progress' ||
-              (actionName == 'set_status' && nextValue is bool)) {
-            progress =
-                _number(current.props['value']) +
-                (nextValue is num && actionName == 'increment_progress'
-                    ? _number(nextValue)
-                    : 0.1);
-          }
-          if (progress > 1) progress /= 100;
-          props['value'] = progress.clamp(0.0, 1.0);
-          if (current.props.containsKey('text')) {
-            props['text'] = '${(props['value'] * 100).round()}%';
-          }
-        } else if (actionName.startsWith('approve') ||
+        if (actionName.startsWith('approve') ||
             actionName.startsWith('allow') ||
             actionName.startsWith('confirm') ||
             actionName == 'yes' ||
@@ -419,56 +481,69 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
                       actionName.startsWith('cancel')
                   ? 'Rejected'
                   : 'Approved';
-        } else {
+        } else if (actionName == 'set_progress' ||
+            actionName == 'increment_progress') {
+          props['value'] = nextValue;
+        } else if (actionName != 'set_status' || current.type != 'progress') {
           props[property] = nextValue;
         }
-        final patches = <ImDynamicPatch>[
-          ImDynamicPatch(
-            operation: ImDynamicPatchOperation.update,
-            nodeId: resolvedTargetId,
-            props: props,
-          ),
-        ];
-        if (resolvedTarget.type != 'progress' &&
-            (actionName == 'set_status' ||
-                actionName.startsWith('approve') ||
-                actionName.startsWith('allow') ||
-                actionName.startsWith('confirm') ||
-                actionName == 'yes' ||
-                actionName.startsWith('complete') ||
-                actionName.startsWith('reject') ||
-                actionName.startsWith('deny') ||
-                actionName == 'no' ||
-                actionName.startsWith('cancel'))) {
-          final progressNode = runtime.content.tree.findById(
-            _firstNodeId(runtime.content.tree, 'progress') ?? '',
+        final patches = <ImDynamicPatch>[];
+        if (props.isNotEmpty) {
+          patches.add(
+            ImDynamicPatch(
+              operation: ImDynamicPatchOperation.update,
+              nodeId: resolvedTargetId,
+              props: props,
+            ),
           );
+        }
+        final isLegacyProgressAction =
+            actionName == 'set_status' ||
+            actionName == 'set_progress' ||
+            actionName == 'increment_progress' ||
+            actionName.startsWith('approve') ||
+            actionName.startsWith('allow') ||
+            actionName.startsWith('confirm') ||
+            actionName == 'yes' ||
+            actionName.startsWith('complete') ||
+            actionName.startsWith('reject') ||
+            actionName.startsWith('deny') ||
+            actionName == 'no' ||
+            actionName.startsWith('cancel');
+        if (hasProgressProjection || isLegacyProgressAction) {
+          final progressNode =
+              resolvedTarget.type == 'progress'
+                  ? resolvedTarget
+                  : runtime.content.tree.findById(
+                    _progressNodeId(runtime.content.tree, definition) ?? '',
+                  );
           if (progressNode != null) {
-            final current = _number(progressNode.props['value']);
-            final total = _number(definition['total']);
-            var next = _number(
-              definition['progress'] ?? definition['progress_value'],
-            );
-            final hasExplicitProgress =
-                definition.containsKey('progress') ||
-                definition.containsKey('progress_value');
-            final statusNumber = _number(value);
-            final hasNumericStatus =
-                value is num ||
-                (value is String && double.tryParse(value.trim()) != null);
-            if (!hasExplicitProgress &&
+            final currentValue = _number(progressNode.props['value']);
+            final absoluteValue =
+                _projectionValue(definition, 'progress') ??
+                _projectionValue(definition, 'progress_value');
+            final deltaValue =
+                _projectionValue(definition, 'progress_delta') ??
+                _projectionValue(definition, 'increment');
+            var next = _number(absoluteValue);
+            final hasAbsolute = _numberValue(absoluteValue) != null;
+            final hasDelta = _numberValue(deltaValue) != null;
+            final numericStatus = _numberValue(value);
+            if (!hasAbsolute && hasDelta) {
+              next = currentValue + _number(deltaValue);
+            } else if (!hasAbsolute && actionName == 'set_progress') {
+              next = _number(value);
+            } else if (!hasAbsolute && actionName == 'increment_progress') {
+              next = currentValue + _number(value);
+            } else if (!hasAbsolute &&
                 actionName == 'set_status' &&
-                hasNumericStatus) {
-              next = statusNumber;
-            } else {
-              if (!hasExplicitProgress) {
-                next = _number(definition['increment']);
-              }
-              if (next == 0) {
-                next = total == 0 ? 0.1 : 1 / total;
-              } else if (actionName != 'set_status' || !hasNumericStatus) {
-                next += current;
-              }
+                numericStatus != null) {
+              next = numericStatus;
+            } else if (!hasAbsolute && !hasDelta && isLegacyProgressAction) {
+              final total = _number(_projectionValue(definition, 'total'));
+              next = currentValue + (total > 0 ? 1 / total : 0.1);
+            } else if (!hasAbsolute && !hasDelta && !hasProgressProjection) {
+              next = currentValue;
             }
             if (next > 1) next /= 100;
             next = next.clamp(0.0, 1.0);
@@ -476,15 +551,35 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
             if (progressNode.props.containsKey('text')) {
               progressProps['text'] = '${(next * 100).round()}%';
             }
-            patches.add(
-              ImDynamicPatch(
-                operation: ImDynamicPatchOperation.update,
-                nodeId: progressNode.id,
-                props: progressProps,
-              ),
-            );
+            if (progressNode.id == resolvedTargetId) {
+              props.addAll(progressProps);
+              if (patches.isEmpty) {
+                patches.add(
+                  ImDynamicPatch(
+                    operation: ImDynamicPatchOperation.update,
+                    nodeId: resolvedTargetId,
+                    props: props,
+                  ),
+                );
+              } else {
+                patches[0] = ImDynamicPatch(
+                  operation: ImDynamicPatchOperation.update,
+                  nodeId: resolvedTargetId,
+                  props: props,
+                );
+              }
+            } else {
+              patches.add(
+                ImDynamicPatch(
+                  operation: ImDynamicPatchOperation.update,
+                  nodeId: progressNode.id,
+                  props: progressProps,
+                ),
+              );
+            }
           }
         }
+        if (patches.isEmpty) return;
         runtime.apply(
           ImDynamicPatchSet(
             messageId: widget.messageId,
@@ -502,6 +597,56 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
       if (found != null) return found;
     }
     return null;
+  }
+
+  Object? _projectionValue(Map<String, dynamic> definition, String key) {
+    if (definition.containsKey(key)) return definition[key];
+    final projection = definition['projection'];
+    if (projection is Map && projection.containsKey(key)) {
+      return projection[key];
+    }
+    return null;
+  }
+
+  bool _hasProgressProjection(Map<String, dynamic> definition) {
+    for (final key in const [
+      'progress',
+      'progress_value',
+      'progress_delta',
+      'increment',
+      'progress_node_id',
+      'progress_target',
+      'total',
+    ]) {
+      final value = _projectionValue(definition, key);
+      if (value == null) continue;
+      if (key == 'progress_node_id' || key == 'progress_target') {
+        if ('$value'.trim().isNotEmpty) return true;
+      } else if (_numberValue(value) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String? _progressNodeId(ImDynamicNode root, Map<String, dynamic> definition) {
+    for (final key in const ['progress_node_id', 'progress_target']) {
+      final value = _projectionValue(definition, key);
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+    }
+    final progress = _projectionValue(definition, 'progress');
+    if (progress is String &&
+        progress.trim().isNotEmpty &&
+        root.findById(progress.trim()) != null) {
+      return progress.trim();
+    }
+    return _firstNodeId(root, 'progress');
+  }
+
+  double? _numberValue(Object? value) {
+    if (value is num && value.isFinite) return value.toDouble();
+    final parsed = double.tryParse('${value ?? ''}'.trim());
+    return parsed != null && parsed.isFinite ? parsed : null;
   }
 
   double _number(Object? value) {

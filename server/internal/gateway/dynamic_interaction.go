@@ -396,6 +396,7 @@ func applyDynamicActionToSchema(
 	events, _ := node["events"].(map[string]interface{})
 	definition, _ := events[eventName].(map[string]interface{})
 	actionName := strings.ToLower(strings.TrimSpace(action))
+	progressProjection := dynamicActionHasProgressProjection(definition)
 	targetID, _ := definition["target"].(string)
 	if targetID == "" {
 		switch actionName {
@@ -411,6 +412,10 @@ func applyDynamicActionToSchema(
 			if targetID == "" {
 				targetID = firstDynamicNodeID(root, "progress")
 			}
+		default:
+			if progressProjection {
+				targetID = dynamicActionProgressNodeID(definition, root)
+			}
 		}
 	}
 	if targetID == "" {
@@ -418,8 +423,8 @@ func applyDynamicActionToSchema(
 	}
 	target, _, _, found := findDynamicNode(root, targetID)
 	if !found {
-		if actionName == "set_status" || strings.HasPrefix(actionName, "approve") || strings.HasPrefix(actionName, "reject") {
-			targetID = firstDynamicNodeID(root, "progress")
+		if progressProjection || actionName == "set_status" || strings.HasPrefix(actionName, "approve") || strings.HasPrefix(actionName, "reject") {
+			targetID = dynamicActionProgressNodeID(definition, root)
 			target, _, _, found = findDynamicNode(root, targetID)
 		}
 		if !found {
@@ -497,35 +502,51 @@ func applyDynamicActionToSchema(
 	// an adjacent progress node convergent as well, even when the action does
 	// not explicitly name it. This is intentionally a small declarative step,
 	// not a second event or a hidden command execution.
-	if actionName == "set_status" || isPositiveInteractionAction(actionName) || isNegativeInteractionAction(actionName) {
-		if targetType, _ := target["type"].(string); targetType != "progress" {
-			if progressID := firstDynamicNodeID(root, "progress"); progressID != "" {
+	if progressProjection || actionName == "set_status" || isPositiveInteractionAction(actionName) || isNegativeInteractionAction(actionName) {
+		targetType, _ := target["type"].(string)
+		if targetType != "progress" || progressProjection {
+			progressID := dynamicActionProgressNodeID(definition, root)
+			if targetType == "progress" {
+				progressID, _ = target["id"].(string)
+			}
+			if progressID != "" {
 				progressNode, _, _, found := findDynamicNode(root, progressID)
 				if found {
 					progressProps := cloneDynamicMap(asDynamicMap(progressNode["props"]))
 					progressNode["props"] = progressProps
 					current, _ := dynamicActionNumber(progressProps["value"])
-					step, hasStep := dynamicActionNumber(definition["progress"])
-					if !hasStep {
-						step, hasStep = dynamicActionNumber(definition["progress_value"])
+					step, absolute := dynamicActionProjectionNumber(definition, "progress")
+					if !absolute {
+						step, absolute = dynamicActionProjectionNumber(definition, "progress_value")
 					}
-					if !hasStep && actionName == "set_status" {
-						// A numeric status value is an explicit progress target;
-						// textual statuses advance one unit (or one of total).
-						step, hasStep = dynamicActionNumber(value)
-					}
-					if !hasStep || actionName != "set_status" {
-						step, hasStep = dynamicActionNumber(definition["increment"])
-					}
-					if hasStep && actionName != "set_status" {
-						step += current
-					} else if hasStep && actionName == "set_status" {
-						if _, numericStatus := dynamicActionNumber(value); !numericStatus {
-							step += current
+					if absolute {
+						// Explicit progress values are absolute, regardless of the
+						// business action that produced them.
+					} else if delta, ok := dynamicActionProjectionNumber(definition, "progress_delta"); ok {
+						step = current + delta
+					} else if delta, ok := dynamicActionProjectionNumber(definition, "increment"); ok {
+						step = current + delta
+					} else if actionName == "set_progress" {
+						step, _ = dynamicActionNumber(value)
+					} else if actionName == "increment_progress" {
+						delta, _ := dynamicActionNumber(value)
+						step = current + delta
+					} else if actionName == "set_status" {
+						// Legacy status cards may omit a projection field. Preserve
+						// their old one-step behavior until they are upgraded.
+						if numericStatus, ok := dynamicActionNumber(value); ok {
+							step = numericStatus
+						} else {
+							step = current + 0.1
+							if total, ok := dynamicActionProjectionNumber(definition, "total"); ok && total > 0 {
+								step = current + 1/total
+							}
 						}
 					} else {
+						// Explicit projection metadata without a value means one
+						// logical unit, optionally normalized by total.
 						step = current + 0.1
-						if total, ok := dynamicActionNumber(definition["total"]); ok && total > 0 {
+						if total, ok := dynamicActionProjectionNumber(definition, "total"); ok && total > 0 {
 							step = current + 1/total
 						}
 					}
@@ -626,6 +647,73 @@ func dynamicActionNumber(value interface{}) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// dynamicActionProjectionMap returns the optional nested projection block.
+// Top-level fields remain supported so older cards can be upgraded without a
+// schema migration.
+func dynamicActionProjectionMap(definition map[string]interface{}) map[string]interface{} {
+	projection, _ := definition["projection"].(map[string]interface{})
+	return projection
+}
+
+func dynamicActionProjectionValue(definition map[string]interface{}, key string) (interface{}, bool) {
+	if value, ok := definition[key]; ok {
+		return value, true
+	}
+	projection := dynamicActionProjectionMap(definition)
+	value, ok := projection[key]
+	return value, ok
+}
+
+func dynamicActionProjectionNumber(definition map[string]interface{}, key string) (float64, bool) {
+	value, ok := dynamicActionProjectionValue(definition, key)
+	if !ok {
+		return 0, false
+	}
+	return dynamicActionNumber(value)
+}
+
+func dynamicActionHasProgressProjection(definition map[string]interface{}) bool {
+	for _, key := range []string{
+		"progress", "progress_value", "progress_delta", "increment",
+		"progress_node_id", "progress_target", "total",
+	} {
+		value, ok := dynamicActionProjectionValue(definition, key)
+		if !ok || value == nil {
+			continue
+		}
+		if key == "progress_node_id" || key == "progress_target" {
+			if strings.TrimSpace(dynamicString(value, "")) != "" {
+				return true
+			}
+			continue
+		}
+		if _, ok := dynamicActionNumber(value); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func dynamicActionProgressNodeID(definition map[string]interface{}, root map[string]interface{}) string {
+	for _, key := range []string{"progress_node_id", "progress_target"} {
+		if value, ok := dynamicActionProjectionValue(definition, key); ok {
+			if id := dynamicString(value, ""); id != "" {
+				return id
+			}
+		}
+	}
+	// A string progress field is also accepted as a node ID when it names an
+	// existing progress node; numeric progress values remain absolute values.
+	if value, ok := dynamicActionProjectionValue(definition, "progress"); ok {
+		if id := dynamicString(value, ""); id != "" {
+			if _, _, _, found := findDynamicNode(root, id); found {
+				return id
+			}
+		}
+	}
+	return firstDynamicNodeID(root, "progress")
 }
 
 func reduceSetByActor(ctx dynamicInteractionReduceContext) (dynamicInteractionReduction, error) {

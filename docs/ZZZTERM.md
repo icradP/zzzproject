@@ -179,6 +179,8 @@ ZZZTerm 的聊天输入框不提供“创建自定义气泡”入口。ZZZTerm �
 
 卡片行为在 `metadata.interaction` 中声明：`reducer` 可取 `set_by_actor`、`append`、`counter`、`checklist`、`form`、`approval_quorum`、`state_machine` 或 `none`；`policy` 支持 `response`、`allow_change`、`visibility`、`expires_at_ms`、`audience`、`allow_agent`、`total`、`quorum`、`veto` 和状态转换；`routing.fairy` 可取 `manual`、`each_event`、`on_close`、`on_threshold`；`projection` 指定进度和状态节点。旧版 `kind/total/progress_node_id/status_node_id/close_on_response` 字段继续兼容。
 
+动作进度投影是通用能力，不属于审批专属。事件定义可以在顶层或 `projection` 中声明：`progress`/`progress_value` 为绝对进度，`progress_delta`/`increment` 为增量，`progress_node_id`/`progress_target` 指定目标进度节点，`total` 用于把一次动作归一化为 `1/total`。因此 `set_property`、`toggle`、`mark_read`、业务自定义动作以及 `set_status`/审批动作都可以推进进度；动作名称本身不会触发进度。未声明这些字段的旧 `set_status` 和审批卡片继续按旧规则推进一步。客户端和服务端使用相同的声明计算投影，保证即时反馈与持久化结果一致。
+
 详情通过 `get_dynamic_interactions` 查询。服务端按 `visibility` 过滤参与者、payload 和事件明细后才返回客户端：`public_aggregate`、`anonymous_aggregate` 只返回聚合状态，`public_detail` 返回公开明细，`admin_detail` 只对群主/管理员和卡片作者开放，`actor_only` 只返回当前用户的记录。客户端不得根据隐藏字段自行推断参与者。
 
 这样所有成员看到的是同一个持久化 Bubble 状态，而不是各设备各自的临时按钮状态。交互结果可以由 Fairy、ZZZTerm 本地 Agent 或管理员继续消费；命令执行仍必须回到 ZZZTerm 本地 Allow/Deny 审批边界，服务器不执行命令。
