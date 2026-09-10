@@ -514,12 +514,14 @@ class ImDynamicEvent extends ImContentEvent {
     required this.nodeId,
     required this.event,
     required this.action,
+    this.eventId,
     super.payload = const <String, dynamic>{},
   }) : super(type: event);
 
   final String nodeId;
   final String event;
   final String? action;
+  final String? eventId;
 
   factory ImDynamicEvent.fromJson(Map<String, dynamic> json) {
     final event = _stringField(json, 'event');
@@ -540,6 +542,7 @@ class ImDynamicEvent extends ImContentEvent {
       nodeId: _identifierField(json, 'node_id'),
       event: event,
       action: action,
+      eventId: _stringField(json, 'event_id'),
       payload:
           rawPayload is Map
               ? Map.unmodifiable(Map<String, dynamic>.from(rawPayload))
@@ -578,6 +581,7 @@ class ImDynamicEvent extends ImContentEvent {
     'message_id': messageId,
     'content_id': contentId,
     'node_id': nodeId,
+    if (eventId != null && eventId!.isNotEmpty) 'event_id': eventId,
     'event': event,
     if (action != null && action!.isNotEmpty) 'action': action,
     'payload': payload,
@@ -599,6 +603,143 @@ class ImDynamicEventEnvelope {
   final String senderId;
   final ImDynamicEvent event;
   final DateTime sentAt;
+}
+
+/// One immutable interaction record returned by the server-side event ledger.
+/// The server already applies visibility filtering before this model is built;
+/// clients must therefore render these fields as-is and never infer hidden
+/// actor or payload data.
+class ImDynamicInteractionEvent {
+  const ImDynamicInteractionEvent({
+    required this.eventId,
+    required this.nodeId,
+    required this.event,
+    required this.action,
+    required this.payload,
+    required this.actorId,
+    required this.actorNickname,
+    required this.actorKind,
+    required this.createdAt,
+  });
+
+  final String eventId;
+  final String nodeId;
+  final String event;
+  final String? action;
+  final Map<String, dynamic> payload;
+  final String? actorId;
+  final String? actorNickname;
+  final String? actorKind;
+  final DateTime? createdAt;
+
+  factory ImDynamicInteractionEvent.fromJson(Map<String, dynamic> json) {
+    final rawPayload = json['payload'];
+    final createdAtMS = (json['created_at_ms'] as num?)?.toInt();
+    DateTime? createdAt;
+    if (createdAtMS != null && createdAtMS > 0) {
+      createdAt = DateTime.fromMillisecondsSinceEpoch(createdAtMS);
+    } else if (json['created_at'] is String) {
+      createdAt = DateTime.tryParse(json['created_at'] as String);
+    }
+    return ImDynamicInteractionEvent(
+      eventId: '${json['event_id'] ?? ''}',
+      nodeId: '${json['node_id'] ?? ''}',
+      event: '${json['event'] ?? ''}',
+      action: _optionalString(json['action']),
+      payload:
+          rawPayload is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawPayload))
+              : const <String, dynamic>{},
+      actorId: _optionalString(json['actor_id']),
+      actorNickname: _optionalString(json['actor_nickname']),
+      actorKind: _optionalString(json['actor_kind']),
+      createdAt: createdAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'event_id': eventId,
+    'node_id': nodeId,
+    'event': event,
+    if (action != null) 'action': action,
+    if (payload.isNotEmpty) 'payload': payload,
+    if (actorId != null) 'actor_id': actorId,
+    if (actorNickname != null) 'actor_nickname': actorNickname,
+    if (actorKind != null) 'actor_kind': actorKind,
+    if (createdAt != null) 'created_at_ms': createdAt!.millisecondsSinceEpoch,
+  };
+}
+
+/// Aggregate state plus the visibility-filtered event records for one card.
+class ImDynamicInteractionSnapshot {
+  const ImDynamicInteractionSnapshot({
+    required this.conversationId,
+    required this.messageId,
+    required this.contentId,
+    required this.visibility,
+    required this.state,
+    required this.events,
+  });
+
+  final String conversationId;
+  final String messageId;
+  final String contentId;
+  final String visibility;
+  final Map<String, dynamic> state;
+  final List<ImDynamicInteractionEvent> events;
+
+  factory ImDynamicInteractionSnapshot.fromJson(
+    Map<String, dynamic> json, {
+    String? conversationId,
+  }) {
+    final rawState = json['state'];
+    final rawEvents = json['events'];
+    return ImDynamicInteractionSnapshot(
+      conversationId: '${json['conversation_id'] ?? conversationId ?? ''}',
+      messageId: '${json['message_id'] ?? ''}',
+      contentId: '${json['content_id'] ?? ''}',
+      visibility: '${json['visibility'] ?? 'public_aggregate'}',
+      state:
+          rawState is Map
+              ? Map.unmodifiable(Map<String, dynamic>.from(rawState))
+              : const <String, dynamic>{},
+      events:
+          rawEvents is List
+              ? List.unmodifiable(
+                rawEvents.whereType<Map>().map(
+                  (event) => ImDynamicInteractionEvent.fromJson(
+                    Map<String, dynamic>.from(event),
+                  ),
+                ),
+              )
+              : const <ImDynamicInteractionEvent>[],
+    );
+  }
+
+  int get responded => _stateInt('responded');
+  int get total => _stateInt('total');
+  bool get closed => state['closed'] == true;
+  String get status => '${state['status'] ?? 'active'}';
+  double get progress {
+    if (total <= 0) return 0;
+    return (responded / total).clamp(0.0, 1.0);
+  }
+
+  int _stateInt(String key) => (state[key] as num?)?.toInt() ?? 0;
+
+  Map<String, dynamic> toJson() => {
+    'conversation_id': conversationId,
+    'message_id': messageId,
+    'content_id': contentId,
+    'visibility': visibility,
+    'state': state,
+    'events': events.map((event) => event.toJson()).toList(growable: false),
+  };
+}
+
+String? _optionalString(Object? value) {
+  if (value is! String || value.trim().isEmpty) return null;
+  return value;
 }
 
 String? _stringField(Map<String, dynamic> json, String key) {

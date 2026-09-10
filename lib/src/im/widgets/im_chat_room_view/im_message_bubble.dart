@@ -109,6 +109,7 @@ class ImMessageBubble extends StatelessWidget {
     this.contentRendererRegistry,
     this.onContentEvent,
     this.onDynamicEvent,
+    this.onLoadDynamicInteractions,
     super.key,
   });
 
@@ -155,6 +156,11 @@ class ImMessageBubble extends StatelessWidget {
   final ImContentRendererRegistry? contentRendererRegistry;
   final ValueChanged<ImContentEvent>? onContentEvent;
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
+  final Future<ImDynamicInteractionSnapshot> Function(
+    String messageId,
+    String contentId,
+  )?
+  onLoadDynamicInteractions;
 
   @override
   Widget build(BuildContext context) {
@@ -468,6 +474,10 @@ class ImMessageBubble extends StatelessWidget {
         registry: dynamicContentRegistry,
         runtimeStore: dynamicRuntimeStore,
         onEvent: _emitDynamicEvent,
+        onLoadInteractions:
+            onLoadDynamicInteractions == null
+                ? null
+                : () => onLoadDynamicInteractions!(message.id, content.id),
       );
     }
     if (_isDynamicPrimitive(node.type)) {
@@ -482,6 +492,10 @@ class ImMessageBubble extends StatelessWidget {
         registry: dynamicContentRegistry,
         runtimeStore: dynamicRuntimeStore,
         onEvent: _emitDynamicEvent,
+        onLoadInteractions:
+            onLoadDynamicInteractions == null
+                ? null
+                : () => onLoadDynamicInteractions!(message.id, node.id),
       );
     }
     if (!hasStructuredContent) {

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zzzproject/zzz_im_chat.dart';
+import 'package:zzzproject/src/im/widgets/im_chat_room_view/im_message_content_view.dart';
 
 void main() {
   final message = ImMessage(
@@ -54,6 +55,32 @@ void main() {
         ImContentNodeType.status,
       );
       expect(nodes[2].wireType, 'legacy_card');
+    },
+  );
+
+  test(
+    'internal Agent routing metadata is not rendered as message content',
+    () {
+      final routed = ImMessage(
+        id: 'local-agent-message',
+        conversationId: 'private-alice-fairy',
+        senderId: 'fairy',
+        text: 'Ready',
+        sentAt: DateTime(2026),
+        segments: const [
+          OneBotMessageSegment(
+            type: 'agent_route',
+            data: {'route': 'local', 'role': 'assistant'},
+          ),
+          OneBotMessageSegment(type: 'text', data: {'text': 'Ready'}),
+        ],
+      );
+
+      final tree = resolveImMessageContentTree(message: routed);
+
+      expect(tree.children, hasLength(1));
+      expect(tree.children.single.type, ImContentNodeType.text);
+      expect(tree.children.single.data['text'], 'Ready');
     },
   );
 

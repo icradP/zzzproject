@@ -321,13 +321,16 @@ func (c *Client) closeError() error {
 }
 
 type messageEvent struct {
-	PostType       string                    `json:"post_type"`
-	MessageType    string                    `json:"message_type"`
-	MessageID      string                    `json:"message_id"`
-	ConversationID string                    `json:"conversation_id"`
-	Sender         protocol.Sender           `json:"sender"`
-	Message        []protocol.MessageSegment `json:"message"`
-	Timestamp      int64                     `json:"timestamp"`
+	PostType          string                    `json:"post_type"`
+	MessageType       string                    `json:"message_type"`
+	MessageID         string                    `json:"message_id"`
+	ConversationID    string                    `json:"conversation_id"`
+	Sender            protocol.Sender           `json:"sender"`
+	Message           []protocol.MessageSegment `json:"message"`
+	Timestamp         int64                     `json:"timestamp"`
+	LocalAgent        bool                      `json:"local_agent"`
+	FairyOwned        bool                      `json:"fairy_owned"`
+	DynamicEventAudit bool                      `json:"dynamic_event_audit"`
 }
 
 type requestEvent struct {

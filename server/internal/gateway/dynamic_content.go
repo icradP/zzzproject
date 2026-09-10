@@ -56,6 +56,12 @@ func validateDynamicEventSegment(segment protocol.MessageSegment) error {
 			return fmt.Errorf("dynamic event %s is invalid", key)
 		}
 	}
+	if eventID, exists := segment.Data["event_id"]; exists {
+		value, ok := eventID.(string)
+		if !ok || !validDynamicIdentifier(value) {
+			return fmt.Errorf("dynamic event event_id is invalid")
+		}
+	}
 	event, _ := segment.Data["event"].(string)
 	if _, ok := allowedDynamicEvents[event]; !ok {
 		return fmt.Errorf("dynamic event type is not allowed")

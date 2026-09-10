@@ -179,6 +179,25 @@ class ImDynamicEditorController extends ChangeNotifier {
     }
   }
 
+  /// Updates the generic interaction contract without coupling the editor to
+  /// any particular component type. The server validates the same contract
+  /// again before accepting a message.
+  void updateInteractionConfig(Map<String, dynamic> interaction) {
+    final normalized = <String, dynamic>{...interaction}
+      ..removeWhere((key, value) => value == null);
+    replaceContent(
+      content.copyWith(
+        metadata: {
+          ...content.metadata,
+          if (normalized.isEmpty)
+            'interaction': null
+          else
+            'interaction': normalized,
+        }..removeWhere((key, value) => value == null),
+      ),
+    );
+  }
+
   void undo() {
     if (!canUndo) return;
     _historyIndex--;

@@ -86,6 +86,8 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 
 `role` 可为 `user` 或 `assistant`。该标记只用于历史归属和防止服务端 Fairy 重复处理，不是服务端命令路由；消息仍按普通 IM 消息保存和投递。
 
+ZZZTerm 的聊天输入框不提供“创建自定义气泡”入口。ZZZTerm 本地 Agent 根据模型输出选择普通文本或受控 `dynamic_content`：Markdown 节点可承载表格、代码块和长文本，`card`、`column`、`row`、`progress` 等节点用于结构化和可折叠的展示。只有 Fairy（远端 Fairy 或 ZZZTerm 本地 Agent）可以在 Agent 会话中产生这类卡片；ZZZ IM 仍允许群主和群管理员通过自己的气泡编辑器创建 `source: "user"` 卡片。
+
 ### 2.1 Dynamic Content 气泡
 
 聊天消息可以包含一个受控的 `dynamic_content` 段。它不是新的消息系统，而是现有气泡中的一种内容：
@@ -165,7 +167,21 @@ ZZZTerm 的本地 Agent 设置保存在客户端：协议可选 OpenAI-compatibl
 
 `dynamic_update`、`dynamic_replace` 和 `dynamic_remove` 都是对已有消息的变更，不会创建新的历史消息。服务端会把变更广播给具备相应能力的实时客户端，并把变更后的完整消息用于历史读取；不支持 Dynamic Content Operations 的旧客户端不会收到无法解释的变更段。
 
-服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，`payload` 必须是 JSON 对象，业务层决定是否将其作为审计消息保存。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
+服务端校验并持久化更新后的原消息，然后向会话中的所有设备广播该 patch；离线客户端在历史加载时直接得到更新后的完整 `dynamic_content`。`dynamic_event` 仅携带组件交互事件，`payload` 必须是 JSON 对象。事件经过服务端校验后只向实时连接分发，不会产生空白历史消息；发送设备本身不重复收到，但同一账号的其他设备仍会收到，因此 ZZZ IM 可以把交互交给在线的 ZZZTerm 执行端。事件必须匹配目标 Bubble 中已声明的节点和 action，不能伪造任意工具调用。
+
+交互卡片采用“事件账本与状态投影分离”的持久化约定：
+
+1. 客户端提交 `dynamic_event`，服务端校验目标节点/action、权限和策略，并把事件写入独立账本；通用卡片不会额外产生普通聊天审计气泡。
+2. 事件账本按 `(actor_id, event_id)` 幂等。客户端应为每次点击生成稳定的 `event_id`，网络重试复用同一个 ID；`counter`、`append` 等允许多次响应的 reducer 不会因为内容相同而丢弃合法事件。
+3. 服务端根据 reducer 从账本重算 `metadata.interaction_state`，通过 `dynamic_replace` 更新原 Bubble。投票更新选项计数和 `progress.value`，群通知更新已阅人数，命令审批更新 `approved`、`denied` 或 `modified`；Fairy 路由由 `routing.fairy` 明确控制。
+
+事件账本和原 Bubble 的状态投影由服务端在同一存储事务中提交；如果投影校验或数据库更新失败，事件不会单独落库。这样客户端可以安全地复用同一个 `event_id` 重试，不会出现“响应已记录但卡片仍显示旧状态”的半完成结果。
+
+卡片行为在 `metadata.interaction` 中声明：`reducer` 可取 `set_by_actor`、`append`、`counter`、`checklist`、`form`、`approval_quorum`、`state_machine` 或 `none`；`policy` 支持 `response`、`allow_change`、`visibility`、`expires_at_ms`、`audience`、`allow_agent`、`total`、`quorum`、`veto` 和状态转换；`routing.fairy` 可取 `manual`、`each_event`、`on_close`、`on_threshold`；`projection` 指定进度和状态节点。旧版 `kind/total/progress_node_id/status_node_id/close_on_response` 字段继续兼容。
+
+详情通过 `get_dynamic_interactions` 查询。服务端按 `visibility` 过滤参与者、payload 和事件明细后才返回客户端：`public_aggregate`、`anonymous_aggregate` 只返回聚合状态，`public_detail` 返回公开明细，`admin_detail` 只对群主/管理员和卡片作者开放，`actor_only` 只返回当前用户的记录。客户端不得根据隐藏字段自行推断参与者。
+
+这样所有成员看到的是同一个持久化 Bubble 状态，而不是各设备各自的临时按钮状态。交互结果可以由 Fairy、ZZZTerm 本地 Agent 或管理员继续消费；命令执行仍必须回到 ZZZTerm 本地 Allow/Deny 审批边界，服务器不执行命令。
 
 需要支持网络重试的动态更新应额外携带 `client_message_id`（沿用发送者维度的 1-128 位客户端请求 ID）：
 

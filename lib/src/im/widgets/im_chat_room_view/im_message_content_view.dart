@@ -30,7 +30,8 @@ ImContentTree resolveImMessageContentTree({
     messageId: message.id,
     children: [
       for (var index = 0; index < segments.length; index++)
-        _contentNodeForSegment(registry, message, segments[index], index),
+        if (!_isInternalRoutingSegment(segments[index]))
+          _contentNodeForSegment(registry, message, segments[index], index),
     ],
   );
 }
@@ -150,3 +151,6 @@ bool _isDynamicPrimitive(ImContentNodeType type) {
     _ => false,
   };
 }
+
+bool _isInternalRoutingSegment(OneBotMessageSegment segment) =>
+    segment.type == 'agent_route';

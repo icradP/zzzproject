@@ -67,6 +67,7 @@ class ImChatRoomView extends StatefulWidget {
     this.dynamicUpdates,
     this.onContentEvent,
     this.onDynamicEvent,
+    this.onLoadDynamicInteractions,
     this.onCreateDynamic,
     this.onEditDynamic,
     this.composerEnabled = true,
@@ -139,6 +140,14 @@ class ImChatRoomView extends StatefulWidget {
   /// code decides whether an action calls an API, updates a message, or runs a
   /// local operation.
   final ValueChanged<ImDynamicEvent>? onDynamicEvent;
+
+  /// Loads server-filtered interaction details for a dynamic card. The chat
+  /// room keeps this callback optional so local/mock sources remain usable.
+  final Future<ImDynamicInteractionSnapshot> Function(
+    String messageId,
+    String contentId,
+  )?
+  onLoadDynamicInteractions;
 
   /// Opens the shared Dynamic Content creator from the composer. Callers must
   /// only provide this callback when the current user is allowed to publish a
@@ -1696,6 +1705,8 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
                                   widget.contentRendererRegistry,
                               onContentEvent: widget.onContentEvent,
                               onDynamicEvent: widget.onDynamicEvent,
+                              onLoadDynamicInteractions:
+                                  widget.onLoadDynamicInteractions,
                               resolveQuote: widget.resolveMessage,
                               onQuoteTap:
                                   currentMessage.isReply

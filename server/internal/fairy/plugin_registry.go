@@ -18,6 +18,13 @@ type PluginStatus struct {
 
 var builtinPluginDescriptors = []PluginDescriptor{
 	{
+		ID:             DynamicContentPluginID,
+		Name:           "Dynamic Content bubbles",
+		Description:    "Lets Fairy choose a validated visual or interactive message bubble for its response.",
+		Command:        "Model tool: dynamic_content.create",
+		DefaultEnabled: true,
+	},
+	{
 		ID:             TerminalBridgePluginID,
 		Name:           "ZZZ Term bridge",
 		Description:    "Creates short-lived terminal operations that require approval on an online same-account ZZZ Term client.",
@@ -73,7 +80,7 @@ func BuiltinPluginStatuses(cfg Config) []PluginStatus {
 }
 
 func NewBuiltinPlugins(cfg Config) []Plugin {
-	return []Plugin{NewTerminalBridgePlugin(), NewZZZPlugin(cfg), NewZZZAccountPlugin(cfg)}
+	return []Plugin{NewDynamicContentPlugin(), NewTerminalBridgePlugin(), NewZZZPlugin(cfg), NewZZZAccountPlugin(cfg)}
 }
 
 const (

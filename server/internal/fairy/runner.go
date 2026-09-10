@@ -234,10 +234,24 @@ func (r *Runner) dispatch(ctx context.Context, client *Client, payload json.RawM
 	case "message":
 		var event messageEvent
 		if json.Unmarshal(payload, &event) == nil {
+			if event.DynamicEventAudit {
+				// Legacy cards may still emit a readable audit row. It is history
+				// only and must not start another Fairy turn.
+				return
+			}
 			// A terminal result belongs to the in-flight Planner tool call. Consume
 			// it before the normal message gate so it is never treated as a new
 			// user prompt or echoed back as a duplicate Fairy turn.
 			if r.engine.handleTerminalResult(event) {
+				return
+			}
+			if dynamicEvent, ok := dynamicEventFromMessage(event); ok {
+				// Local Agent cards are handled by the connected ZZZTerm client;
+				// ordinary user-authored cards have no implicit Fairy owner.
+				if event.LocalAgent || !event.FairyOwned {
+					return
+				}
+				r.submitDynamicEvent(ctx, event, dynamicEvent)
 				return
 			}
 			decision := r.engine.PreviewGate(event)
@@ -266,6 +280,34 @@ func (r *Runner) dispatch(ctx context.Context, client *Client, payload json.RawM
 		if json.Unmarshal(payload, &event) == nil {
 			r.handleFeedbackNotice(ctx, event)
 		}
+	}
+}
+
+func dynamicEventFromMessage(event messageEvent) (protocol.MessageSegment, bool) {
+	if len(event.Message) != 1 || event.Message[0].Type != "dynamic_event" {
+		return protocol.MessageSegment{}, false
+	}
+	return event.Message[0], true
+}
+
+func (r *Runner) submitDynamicEvent(ctx context.Context, event messageEvent, segment protocol.MessageSegment) {
+	eventID, err := newRuntimeID("dynamic-event")
+	if err != nil {
+		log.Printf("[fairy] create dynamic event ID: %v", err)
+		return
+	}
+	accepted, err := r.scheduler.Submit(ctx, scheduledTurn{
+		source:         "zzz-dynamic-event",
+		eventID:        eventID,
+		conversationID: event.ConversationID,
+		run: func(turnContext context.Context) {
+			r.engine.HandleDynamicEvent(turnContext, r.messenger, event, segment)
+		},
+	})
+	if err != nil {
+		log.Printf("[fairy] dynamic event admission rejected: %v", err)
+	} else if !accepted {
+		log.Printf("[fairy] duplicate dynamic event ignored")
 	}
 }
 

@@ -7,6 +7,57 @@ import 'package:zzzproject/zzz_im_chat.dart';
 import 'package:zzzproject/src/im/adapters/nonebot/nonebot_mapper.dart';
 
 void main() {
+  test('dynamic interaction events and snapshots round-trip safely', () {
+    final event = ImDynamicEvent(
+      messageId: 'message-1',
+      contentId: 'card-1',
+      nodeId: 'approve',
+      event: 'click',
+      action: 'approve',
+      eventId: 'dynamic-event-123-0',
+      payload: const {'value': 'yes'},
+    );
+    final decodedEvent = ImDynamicEvent.fromJson(event.toJson());
+    expect(decodedEvent.eventId, event.eventId);
+    expect(decodedEvent.payload['value'], 'yes');
+
+    final snapshot = ImDynamicInteractionSnapshot.fromJson({
+      'conversation_id': 'conversation-1',
+      'message_id': 'message-1',
+      'content_id': 'card-1',
+      'visibility': 'public_detail',
+      'state': {
+        'responded': 1,
+        'total': 2,
+        'closed': false,
+        'status': 'active',
+      },
+      'events': [
+        {
+          'event_id': event.eventId,
+          'node_id': event.nodeId,
+          'event': event.event,
+          'action': event.action,
+          'payload': event.payload,
+          'actor_id': 'alice',
+          'actor_nickname': 'Alice',
+          'actor_kind': 'user',
+          'created_at_ms': 1760000000000,
+        },
+      ],
+    });
+    expect(snapshot.responded, 1);
+    expect(snapshot.total, 2);
+    expect(snapshot.progress, 0.5);
+    expect(snapshot.events.single.actorNickname, 'Alice');
+    expect(
+      ImDynamicInteractionSnapshot.fromJson(
+        snapshot.toJson(),
+      ).events.single.eventId,
+      event.eventId,
+    );
+  });
+
   test(
     'dynamic capabilities keep protocol, schema, and component versions',
     () {

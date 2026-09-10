@@ -142,6 +142,26 @@ func (s *PostgresStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_dynamic_update_idempotency_message
 		ON dynamic_update_idempotency(message_id);
 
+	CREATE TABLE IF NOT EXISTS dynamic_interaction_events (
+		event_id TEXT NOT NULL,
+		conversation_id VARCHAR(64) NOT NULL,
+		message_id VARCHAR(64) NOT NULL,
+		content_id VARCHAR(128) NOT NULL,
+		node_id VARCHAR(128) NOT NULL,
+		event VARCHAR(32) NOT NULL,
+		action VARCHAR(128) NOT NULL DEFAULT '',
+		payload JSONB NOT NULL DEFAULT '{}',
+		actor_id VARCHAR(128) NOT NULL,
+		actor_nickname VARCHAR(128) NOT NULL DEFAULT '',
+		actor_kind VARCHAR(16) NOT NULL DEFAULT 'user',
+		request_fingerprint TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		PRIMARY KEY (actor_id, event_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_dynamic_interaction_target
+		ON dynamic_interaction_events(conversation_id, message_id, content_id, created_at);
+
 	CREATE TABLE IF NOT EXISTS message_reactions (
 		message_id VARCHAR(32) NOT NULL REFERENCES messages(id),
 		emoji_id VARCHAR(64) NOT NULL,
@@ -595,6 +615,9 @@ func (s *PostgresStore) DeleteConversation(id string) error {
 	if _, err := s.db.Exec("DELETE FROM dynamic_update_idempotency WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = $1)", id); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec("DELETE FROM dynamic_interaction_events WHERE conversation_id = $1", id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec("DELETE FROM messages WHERE conversation_id = $1", id)
 	if err != nil {
 		return err
@@ -702,6 +725,176 @@ func (s *PostgresStore) UpdateMessageSegments(msgID string, segments []protocol.
 		return nil, nil
 	}
 	return s.GetMessage(msgID)
+}
+
+func (s *PostgresStore) AppendDynamicInteractionEvent(event *DynamicInteractionEvent) (bool, error) {
+	if event == nil || event.EventID == "" || event.ActorID == "" {
+		return false, fmt.Errorf("dynamic interaction event identity is required")
+	}
+	payload, err := json.Marshal(event.Payload)
+	if err != nil {
+		return false, err
+	}
+	fingerprint, err := dynamicInteractionFingerprint(event)
+	if err != nil {
+		return false, err
+	}
+	createdAt := event.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	result, err := s.db.Exec(`INSERT INTO dynamic_interaction_events
+		(event_id, conversation_id, message_id, content_id, node_id, event, action, payload,
+		 actor_id, actor_nickname, actor_kind, request_fingerprint, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT(actor_id, event_id) DO NOTHING`,
+		event.EventID, event.ConversationID, event.MessageID, event.ContentID,
+		event.NodeID, event.Event, event.Action, string(payload), event.ActorID,
+		event.ActorNickname, event.ActorKind, fingerprint, createdAt,
+	)
+	if err != nil {
+		return false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if inserted > 0 {
+		return false, nil
+	}
+	var existing string
+	if err := s.db.QueryRow(
+		"SELECT request_fingerprint FROM dynamic_interaction_events WHERE actor_id = $1 AND event_id = $2",
+		event.ActorID, event.EventID,
+	).Scan(&existing); err != nil {
+		return false, err
+	}
+	if existing != fingerprint {
+		return false, ErrDynamicInteractionIdempotencyConflict
+	}
+	return true, nil
+}
+
+func (s *PostgresStore) CommitDynamicInteractionEvent(event *DynamicInteractionEvent, segments []protocol.MessageSegment) (bool, error) {
+	if event == nil || event.EventID == "" || event.ActorID == "" {
+		return false, fmt.Errorf("dynamic interaction event identity is required")
+	}
+	payload, err := json.Marshal(event.Payload)
+	if err != nil {
+		return false, err
+	}
+	segmentsJSON, err := json.Marshal(segments)
+	if err != nil {
+		return false, err
+	}
+	fingerprint, err := dynamicInteractionFingerprint(event)
+	if err != nil {
+		return false, err
+	}
+	createdAt := event.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var existing string
+	err = tx.QueryRow(
+		"SELECT request_fingerprint FROM dynamic_interaction_events WHERE actor_id = $1 AND event_id = $2",
+		event.ActorID, event.EventID,
+	).Scan(&existing)
+	if err == nil {
+		if existing != fingerprint {
+			return false, ErrDynamicInteractionIdempotencyConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err != sql.ErrNoRows {
+		return false, err
+	}
+	result, err := tx.Exec("UPDATE messages SET segments = $1 WHERE id = $2", string(segmentsJSON), event.MessageID)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if updated == 0 {
+		return false, fmt.Errorf("dynamic interaction target message not found")
+	}
+	result, err = tx.Exec(`INSERT INTO dynamic_interaction_events
+		(event_id, conversation_id, message_id, content_id, node_id, event, action, payload,
+		 actor_id, actor_nickname, actor_kind, request_fingerprint, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		event.EventID, event.ConversationID, event.MessageID, event.ContentID,
+		event.NodeID, event.Event, event.Action, string(payload), event.ActorID,
+		event.ActorNickname, event.ActorKind, fingerprint, createdAt,
+	)
+	if err != nil {
+		return false, err
+	}
+	if inserted, err := result.RowsAffected(); err != nil {
+		return false, err
+	} else if inserted == 0 {
+		var committed string
+		if err := tx.QueryRow(
+			"SELECT request_fingerprint FROM dynamic_interaction_events WHERE actor_id = $1 AND event_id = $2",
+			event.ActorID, event.EventID,
+		).Scan(&committed); err != nil {
+			return false, err
+		}
+		if committed != fingerprint {
+			return false, ErrDynamicInteractionIdempotencyConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func (s *PostgresStore) GetDynamicInteractionEvents(conversationID, messageID, contentID string, limit int) ([]*DynamicInteractionEvent, error) {
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
+	}
+	rows, err := s.db.Query(`SELECT event_id, conversation_id, message_id, content_id,
+		node_id, event, action, payload, actor_id, actor_nickname, actor_kind, created_at
+		FROM dynamic_interaction_events
+		WHERE conversation_id = $1 AND message_id = $2 AND content_id = $3
+		ORDER BY created_at ASC, event_id ASC LIMIT $4`,
+		conversationID, messageID, contentID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]*DynamicInteractionEvent, 0)
+	for rows.Next() {
+		event := &DynamicInteractionEvent{}
+		var payload []byte
+		if err := rows.Scan(
+			&event.EventID, &event.ConversationID, &event.MessageID, &event.ContentID,
+			&event.NodeID, &event.Event, &event.Action, &payload, &event.ActorID,
+			&event.ActorNickname, &event.ActorKind, &event.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(payload, &event.Payload); err != nil {
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, rows.Err()
 }
 
 func (s *PostgresStore) LookupDynamicUpdateIdempotency(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
@@ -918,6 +1111,9 @@ func (s *PostgresStore) DeleteMessage(msgID string) (bool, error) {
 		return false, err
 	}
 	if _, err := tx.Exec("DELETE FROM dynamic_update_idempotency WHERE message_id = $1", msgID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec("DELETE FROM dynamic_interaction_events WHERE message_id = $1", msgID); err != nil {
 		return false, err
 	}
 	result, err := tx.Exec("DELETE FROM messages WHERE id = $1", msgID)

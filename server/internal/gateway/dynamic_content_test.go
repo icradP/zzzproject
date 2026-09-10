@@ -741,6 +741,16 @@ func TestDynamicEventDispatchesTransientlyAndValidatesSchema(t *testing.T) {
 	if secondDeviceEvent := readJSON(t, aliceSecondDevice); secondDeviceEvent["message_id"] != messageID {
 		t.Fatalf("same-account device did not receive transient event: %#v", secondDeviceEvent)
 	}
+	for name, connection := range map[string]*websocket.Conn{
+		"Alice":        alice,
+		"Alice device": aliceSecondDevice,
+		"Bob":          bob,
+	} {
+		audit := readJSON(t, connection)
+		if audit["dynamic_event_audit"] != true {
+			t.Fatalf("%s did not receive the durable interaction audit: %#v", name, audit)
+		}
+	}
 
 	invalid := protocol.DynamicEventSegment(
 		messageID,
@@ -773,7 +783,217 @@ func TestDynamicEventDispatchesTransientlyAndValidatesSchema(t *testing.T) {
 		"conversation_id": conversationID,
 		"limit":           100,
 	}))
+	if len(history) != 2 {
+		t.Fatalf("dynamic event audit created %d history messages", len(history))
+	}
+	auditSegments := history[1].(map[string]interface{})["message"].([]interface{})
+	if auditSegments[1].(map[string]interface{})["type"] != "dynamic_event_result" {
+		t.Fatalf("dynamic event audit segment = %#v", auditSegments)
+	}
+}
+
+func TestDynamicInteractionVotePersistsStateAndBroadcastsAudit(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	const conversationID = "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+	content := protocol.DynamicContentSegment(map[string]interface{}{
+		"id": "vote-card-1", "version": "1.0", "source": "user",
+		"metadata": map[string]interface{}{
+			"interaction": map[string]interface{}{
+				"kind": "vote", "total": 2, "progress_node_id": "progress",
+			},
+		},
+		"tree": map[string]interface{}{
+			"id": "root", "type": "column",
+			"children": []interface{}{
+				map[string]interface{}{
+					"id": "progress", "type": "progress",
+					"props": map[string]interface{}{"value": 0.0, "text": "0/2"},
+				},
+				map[string]interface{}{
+					"id": "yes", "type": "button",
+					"props":  map[string]interface{}{"option": "yes", "text": "Yes ({{count}})"},
+					"events": map[string]interface{}{"click": map[string]interface{}{"action": "yes"}},
+				},
+			},
+		},
+	})
+	initial := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{content},
+	})
+	assertOK(t, initial)
+	messageID := responseData(t, initial)["message_id"].(string)
+	_ = readJSON(t, bob)
+	event := protocol.DynamicEventSegment(messageID, "vote-card-1", "yes", "click", "yes", nil)
+	dispatched := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{event},
+	})
+	assertOK(t, dispatched)
+	if responseData(t, dispatched)["duplicate"] != false {
+		t.Fatalf("first vote was marked duplicate: %#v", dispatched)
+	}
+	if got := readJSON(t, alice)["message"].([]interface{})[0].(map[string]interface{})["type"]; got != "dynamic_event" {
+		t.Fatalf("alice did not receive transient vote event: %#v", got)
+	}
+	aliceReplacement := readJSON(t, alice)
+	bobReplacement := readJSON(t, bob)
+	for name, value := range map[string]map[string]interface{}{"alice": aliceReplacement, "bob": bobReplacement} {
+		if value["message"].([]interface{})[0].(map[string]interface{})["type"] != "dynamic_replace" {
+			t.Fatalf("%s did not receive vote state replacement: %#v", name, value)
+		}
+	}
+	for name, connection := range map[string]*websocket.Conn{"alice": alice, "bob": bob} {
+		audit := readJSON(t, connection)
+		if audit["dynamic_event_audit"] != true {
+			t.Fatalf("%s did not receive vote audit: %#v", name, audit)
+		}
+	}
+	aggregate := request(t, bob, "get_dynamic_interactions", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message_id":      messageID,
+		"content_id":      "vote-card-1",
+	})
+	assertOK(t, aggregate)
+	if events, _ := responseData(t, aggregate)["events"].([]interface{}); len(events) != 0 {
+		t.Fatalf("aggregate visibility leaked event details: %#v", events)
+	}
+	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
+	if len(history) != 2 {
+		t.Fatalf("vote history length = %d, want original plus audit", len(history))
+	}
+	updated := history[0].(map[string]interface{})["message"].([]interface{})[0].(map[string]interface{})
+	updatedTree := updated["data"].(map[string]interface{})["tree"].(map[string]interface{})
+	children := updatedTree["children"].([]interface{})
+	progress := children[0].(map[string]interface{})["props"].(map[string]interface{})
+	if progress["value"] != 0.5 || progress["text"] != "1/2" {
+		t.Fatalf("vote progress = %#v", progress)
+	}
+	duplicate := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{event},
+	})
+	assertOK(t, duplicate)
+	if responseData(t, duplicate)["duplicate"] != true {
+		t.Fatalf("duplicate vote was not idempotent: %#v", duplicate)
+	}
+}
+
+func TestGenericDynamicInteractionLedgerQueryUsesEventIDAndNoAudit(t *testing.T) {
+	database := store.NewMemoryStore()
+	gateway := NewGateway(database)
+	server := httptest.NewServer(gateway)
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	alice := dialWebSocket(t, websocketURL)
+	bob := dialWebSocket(t, websocketURL)
+	t.Cleanup(func() { _ = alice.Close() })
+	t.Cleanup(func() { _ = bob.Close() })
+	authenticate(t, alice, "alice")
+	authenticate(t, bob, "bob")
+	if _, err := database.AddFriend("alice", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	const conversationID = "private_alice_bob"
+	assertOK(t, request(t, alice, "ensure_conversation", map[string]interface{}{
+		"conversation_id": conversationID,
+		"type":            "private",
+		"participants":    []string{"alice", "bob"},
+	}))
+	content := protocol.DynamicContentSegment(map[string]interface{}{
+		"id": "counter-card-1", "version": "1.0", "source": "ai",
+		"metadata": map[string]interface{}{
+			"interaction": map[string]interface{}{
+				"reducer": "counter",
+				"policy": map[string]interface{}{
+					"response": "many", "visibility": "public_detail", "total": 2,
+				},
+				"routing": map[string]interface{}{"fairy": "manual"},
+			},
+		},
+		"tree": map[string]interface{}{
+			"id": "root", "type": "button",
+			"props": map[string]interface{}{"text": "Add"},
+			"events": map[string]interface{}{
+				"click": map[string]interface{}{"action": "increment"},
+			},
+		},
+	})
+	initial := request(t, alice, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{content},
+	})
+	assertOK(t, initial)
+	messageID := responseData(t, initial)["message_id"].(string)
+	_ = readJSON(t, bob)
+	event := protocol.DynamicEventSegmentWithID(
+		"counter-event-1", messageID, "counter-card-1", "root", "click", "increment", nil,
+	)
+	dispatched := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{event},
+	})
+	assertOK(t, dispatched)
+	if responseData(t, dispatched)["duplicate"] != false {
+		t.Fatalf("first generic event was marked duplicate: %#v", dispatched)
+	}
+	// Drain the transient event and in-place projection broadcast before the
+	// next request; the test websocket helper intentionally reads one frame.
+	_ = readJSON(t, alice)
+	_ = readJSON(t, alice)
+	_ = readJSON(t, bob)
+	query := request(t, alice, "get_dynamic_interactions", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message_id":      messageID,
+		"content_id":      "counter-card-1",
+	})
+	assertOK(t, query)
+	data := responseData(t, query)
+	if data["visibility"] != "public_detail" {
+		t.Fatalf("visibility = %#v", data["visibility"])
+	}
+	state := data["state"].(map[string]interface{})
+	if state["responded"] != float64(1) || state["total"] != float64(2) {
+		t.Fatalf("state = %#v", state)
+	}
+	events := data["events"].([]interface{})
+	if len(events) != 1 || events[0].(map[string]interface{})["event_id"] != "counter-event-1" {
+		t.Fatalf("events = %#v", events)
+	}
+	history := responseDataList(t, request(t, alice, "get_messages", map[string]interface{}{
+		"conversation_id": conversationID,
+		"limit":           100,
+	}))
 	if len(history) != 1 {
-		t.Fatalf("dynamic event created %d history messages", len(history))
+		t.Fatalf("generic interaction created %d history messages", len(history))
+	}
+	duplicate := request(t, bob, "send_message", map[string]interface{}{
+		"conversation_id": conversationID,
+		"message":         []protocol.MessageSegment{event},
+	})
+	assertOK(t, duplicate)
+	if responseData(t, duplicate)["duplicate"] != true {
+		t.Fatalf("event_id retry was not idempotent: %#v", duplicate)
 	}
 }

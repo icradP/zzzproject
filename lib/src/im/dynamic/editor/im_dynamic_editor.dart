@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -376,6 +377,8 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
             label: const Text('Remove component'),
           ),
         ],
+        const SizedBox(height: 18),
+        ImDynamicInteractionPolicyPanel(controller: controller),
       ],
     );
   }
@@ -654,6 +657,354 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
     visit(root);
     return result;
   }
+}
+
+/// Standalone low-code editor for the behavior of an interactive card.
+/// Layout and component actions remain in [ImDynamicEditor]; this panel only
+/// edits the transport-safe interaction contract under `metadata.interaction`.
+class ImDynamicInteractionPolicyPanel extends StatelessWidget {
+  const ImDynamicInteractionPolicyPanel({required this.controller, super.key});
+
+  final ImDynamicEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = controller.content.metadata['interaction'];
+    final interaction =
+        raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+    final policy =
+        interaction['policy'] is Map
+            ? Map<String, dynamic>.from(interaction['policy'] as Map)
+            : <String, dynamic>{};
+    final routing =
+        interaction['routing'] is Map
+            ? Map<String, dynamic>.from(interaction['routing'] as Map)
+            : <String, dynamic>{};
+    final projection =
+        interaction['projection'] is Map
+            ? Map<String, dynamic>.from(interaction['projection'] as Map)
+            : <String, dynamic>{};
+
+    void update({
+      String? reducer,
+      String? response,
+      String? visibility,
+      String? fairyRoute,
+      int? total,
+      int? quorum,
+      bool? allowChange,
+      bool? allowAgent,
+      bool? veto,
+      String? initialState,
+      int? expiresAtMS,
+      int? maxResponsesPerActor,
+      List<String>? audience,
+      Map<String, dynamic>? transitions,
+      int? threshold,
+      String? progressNodeId,
+      String? statusNodeId,
+      String? progressText,
+    }) {
+      final nextPolicy = <String, dynamic>{...policy};
+      if (response != null) nextPolicy['response'] = response;
+      if (visibility != null) nextPolicy['visibility'] = visibility;
+      if (total != null) nextPolicy['total'] = total;
+      if (quorum != null) nextPolicy['quorum'] = quorum;
+      if (allowChange != null) nextPolicy['allow_change'] = allowChange;
+      if (allowAgent != null) nextPolicy['allow_agent'] = allowAgent;
+      if (veto != null) nextPolicy['veto'] = veto;
+      if (initialState != null) nextPolicy['initial_state'] = initialState;
+      if (expiresAtMS != null) nextPolicy['expires_at_ms'] = expiresAtMS;
+      if (maxResponsesPerActor != null) {
+        nextPolicy['max_responses_per_actor'] = maxResponsesPerActor;
+      }
+      if (audience != null) nextPolicy['audience'] = audience;
+      if (transitions != null) nextPolicy['transitions'] = transitions;
+      final nextRouting = <String, dynamic>{...routing};
+      if (fairyRoute != null) nextRouting['fairy'] = fairyRoute;
+      if (threshold != null) nextRouting['threshold'] = threshold;
+      final nextProjection = <String, dynamic>{...projection};
+      if (progressNodeId != null) {
+        nextProjection['progress_node_id'] = progressNodeId;
+      }
+      if (statusNodeId != null) nextProjection['status_node_id'] = statusNodeId;
+      if (progressText != null) nextProjection['progress_text'] = progressText;
+      controller.updateInteractionConfig({
+        ...interaction,
+        if (reducer != null) 'reducer': reducer,
+        'policy': nextPolicy,
+        'routing': nextRouting,
+        'projection': nextProjection,
+      });
+    }
+
+    return ExpansionTile(
+      key: const ValueKey('dynamic-interaction-policy-panel'),
+      initiallyExpanded: interaction.isNotEmpty,
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.tune_outlined),
+      title: const Text('Interaction policy'),
+      subtitle: Text(
+        interaction.isEmpty
+            ? 'Optional response, visibility and Fairy routing'
+            : '${interaction['reducer'] ?? 'none'} · ${policy['visibility'] ?? 'public_aggregate'}',
+      ),
+      children: [
+        DropdownButtonFormField<String>(
+          key: const ValueKey('dynamic-policy-reducer'),
+          initialValue:
+              const {
+                    'set_by_actor',
+                    'append',
+                    'counter',
+                    'checklist',
+                    'form',
+                    'approval_quorum',
+                    'state_machine',
+                    'none',
+                  }.contains(interaction['reducer'])
+                  ? interaction['reducer'] as String
+                  : 'none',
+          decoration: const InputDecoration(labelText: 'Reducer'),
+          items: const [
+            DropdownMenuItem(value: 'none', child: Text('None')),
+            DropdownMenuItem(
+              value: 'set_by_actor',
+              child: Text('Set by actor'),
+            ),
+            DropdownMenuItem(value: 'append', child: Text('Append events')),
+            DropdownMenuItem(value: 'counter', child: Text('Counter')),
+            DropdownMenuItem(value: 'checklist', child: Text('Checklist')),
+            DropdownMenuItem(value: 'form', child: Text('Form')),
+            DropdownMenuItem(
+              value: 'approval_quorum',
+              child: Text('Approval quorum'),
+            ),
+            DropdownMenuItem(
+              value: 'state_machine',
+              child: Text('State machine'),
+            ),
+          ],
+          onChanged: (value) => update(reducer: value),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          key: const ValueKey('dynamic-policy-response'),
+          initialValue: policy['response'] == 'many' ? 'many' : 'once',
+          decoration: const InputDecoration(labelText: 'Responses per actor'),
+          items: const [
+            DropdownMenuItem(value: 'once', child: Text('One response')),
+            DropdownMenuItem(value: 'many', child: Text('Multiple responses')),
+          ],
+          onChanged: (value) => update(response: value),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          key: const ValueKey('dynamic-policy-visibility'),
+          initialValue:
+              const {
+                    'public_aggregate',
+                    'public_detail',
+                    'admin_detail',
+                    'actor_only',
+                    'anonymous_aggregate',
+                  }.contains(policy['visibility'])
+                  ? policy['visibility'] as String
+                  : 'public_aggregate',
+          decoration: const InputDecoration(labelText: 'Response visibility'),
+          items: const [
+            DropdownMenuItem(
+              value: 'public_aggregate',
+              child: Text('Everyone: aggregate'),
+            ),
+            DropdownMenuItem(
+              value: 'public_detail',
+              child: Text('Everyone: details'),
+            ),
+            DropdownMenuItem(
+              value: 'admin_detail',
+              child: Text('Admins: details'),
+            ),
+            DropdownMenuItem(value: 'actor_only', child: Text('Actor only')),
+            DropdownMenuItem(
+              value: 'anonymous_aggregate',
+              child: Text('Anonymous aggregate'),
+            ),
+          ],
+          onChanged: (value) => update(visibility: value),
+        ),
+        const SizedBox(height: 8),
+        _InteractionIntField(
+          key: const ValueKey('dynamic-policy-total'),
+          label: 'Expected participants',
+          value: (policy['total'] as num?)?.toInt() ?? 0,
+          onChanged: (value) => update(total: value),
+        ),
+        _InteractionIntField(
+          key: const ValueKey('dynamic-policy-quorum'),
+          label: 'Approval quorum',
+          value: (policy['quorum'] as num?)?.toInt() ?? 0,
+          onChanged: (value) => update(quorum: value),
+        ),
+        _InteractionIntField(
+          key: const ValueKey('dynamic-policy-max-responses'),
+          label: 'Max responses per actor (0 = unlimited)',
+          value: (policy['max_responses_per_actor'] as num?)?.toInt() ?? 0,
+          onChanged: (value) => update(maxResponsesPerActor: value),
+        ),
+        _InteractionIntField(
+          key: const ValueKey('dynamic-policy-expires-at'),
+          label: 'Expires at (Unix milliseconds, 0 = never)',
+          value: (policy['expires_at_ms'] as num?)?.toInt() ?? 0,
+          onChanged: (value) => update(expiresAtMS: value),
+        ),
+        TextFormField(
+          key: const ValueKey('dynamic-policy-audience'),
+          initialValue:
+              (policy['audience'] as List?)
+                  ?.map((item) => '$item')
+                  .join(', ') ??
+              '',
+          decoration: const InputDecoration(
+            labelText: 'Audience roles (all, users, agents, admins, owner)',
+          ),
+          onFieldSubmitted:
+              (value) => update(
+                audience: value
+                    .split(',')
+                    .map((item) => item.trim())
+                    .where((item) => item.isNotEmpty)
+                    .toList(growable: false),
+              ),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Allow response changes'),
+          value: policy['allow_change'] != false,
+          onChanged: (value) => update(allowChange: value),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Allow Fairy / Agent responses'),
+          value: policy['allow_agent'] == true,
+          onChanged: (value) => update(allowAgent: value),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Reject on veto'),
+          value: policy['veto'] != false,
+          onChanged: (value) => update(veto: value),
+        ),
+        DropdownButtonFormField<String>(
+          key: const ValueKey('dynamic-policy-fairy-route'),
+          initialValue:
+              const {
+                    'manual',
+                    'each_event',
+                    'on_close',
+                    'on_threshold',
+                  }.contains(routing['fairy'])
+                  ? routing['fairy'] as String
+                  : 'manual',
+          decoration: const InputDecoration(labelText: 'Fairy routing'),
+          items: const [
+            DropdownMenuItem(value: 'manual', child: Text('Manual')),
+            DropdownMenuItem(
+              value: 'each_event',
+              child: Text('Every response'),
+            ),
+            DropdownMenuItem(value: 'on_close', child: Text('When closed')),
+            DropdownMenuItem(
+              value: 'on_threshold',
+              child: Text('At threshold'),
+            ),
+          ],
+          onChanged: (value) => update(fairyRoute: value),
+        ),
+        _InteractionIntField(
+          key: const ValueKey('dynamic-policy-threshold'),
+          label: 'Fairy threshold',
+          value: (routing['threshold'] as num?)?.toInt() ?? 0,
+          onChanged: (value) => update(threshold: value),
+        ),
+        if (interaction['reducer'] == 'state_machine')
+          TextFormField(
+            key: const ValueKey('dynamic-policy-initial-state'),
+            initialValue: policy['initial_state']?.toString() ?? 'open',
+            decoration: const InputDecoration(labelText: 'Initial state'),
+            onFieldSubmitted: (value) => update(initialState: value.trim()),
+          ),
+        if (interaction['reducer'] == 'state_machine')
+          TextFormField(
+            key: const ValueKey('dynamic-policy-transitions'),
+            initialValue: jsonEncode(policy['transitions'] ?? const {}),
+            minLines: 2,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'Transitions JSON (state -> allowed states)',
+            ),
+            onFieldSubmitted: (value) {
+              try {
+                final decoded = jsonDecode(value);
+                if (decoded is Map) {
+                  update(transitions: Map<String, dynamic>.from(decoded));
+                }
+              } on FormatException {
+                // Leave the previous transition map intact until valid JSON
+                // is submitted again.
+              }
+            },
+          ),
+        const SizedBox(height: 8),
+        Text('Projection nodes', style: Theme.of(context).textTheme.labelLarge),
+        TextFormField(
+          key: const ValueKey('dynamic-policy-progress-node'),
+          initialValue: projection['progress_node_id']?.toString() ?? '',
+          decoration: const InputDecoration(labelText: 'Progress node ID'),
+          onFieldSubmitted: (value) => update(progressNodeId: value.trim()),
+        ),
+        TextFormField(
+          key: const ValueKey('dynamic-policy-status-node'),
+          initialValue: projection['status_node_id']?.toString() ?? '',
+          decoration: const InputDecoration(labelText: 'Status node ID'),
+          onFieldSubmitted: (value) => update(statusNodeId: value.trim()),
+        ),
+        TextFormField(
+          key: const ValueKey('dynamic-policy-progress-text'),
+          initialValue: projection['progress_text']?.toString() ?? '',
+          decoration: const InputDecoration(
+            labelText: 'Progress text template',
+          ),
+          onFieldSubmitted: (value) => update(progressText: value),
+        ),
+      ],
+    );
+  }
+}
+
+class _InteractionIntField extends StatelessWidget {
+  const _InteractionIntField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    initialValue: value == 0 ? '' : value.toString(),
+    keyboardType: TextInputType.number,
+    decoration: InputDecoration(labelText: label),
+    onFieldSubmitted: (raw) {
+      final parsed = int.tryParse(raw.trim());
+      if (parsed != null && parsed >= 0) onChanged(parsed);
+    },
+  );
 }
 
 /// Standalone creation surface. Hosts can place it in a modal, side panel, or

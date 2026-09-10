@@ -150,6 +150,17 @@ class SourceBackedRepository implements ImRepository {
   }) => _source.sendDynamicEvent(conversationId: conversationId, event: event);
 
   @override
+  Future<ImDynamicInteractionSnapshot> getDynamicInteractions({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+  }) => _source.getDynamicInteractions(
+    conversationId: conversationId,
+    messageId: messageId,
+    contentId: contentId,
+  );
+
+  @override
   Future<ImMessage> sendComposedTextMessage({
     required String conversationId,
     required ImComposedText message,

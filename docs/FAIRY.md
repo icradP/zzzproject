@@ -46,6 +46,8 @@ ZZZ Term 客户端的完整 WebSocket、消息段、审批、结果和 terminal 
 
 Fairy 可通过普通私聊向同账号在线的 ZZZ Term 客户端发出受限终端请求。首版命令为 `/term hosts`、`/term info <主机ID>` 和 `/term run <主机ID> <命令>`；请求有效期为 2 分钟。主机列表和主机公开信息查询是只读操作，可由在线 ZZZ Term 自动响应；只有 `/term run` 触发命令执行审批。ZZZ Server 只保存并实时投递消息，终端段仅做结构和大小边界检查；它不理解 Agent 路由、不执行命令，也不接触 SSH 凭据。
 
+Fairy 生成的动态气泡可以声明通用交互策略。ZZZ Server 将每次 `dynamic_event` 与原气泡状态投影在同一存储事务中写入独立事件账本，并按 reducer 投影回原气泡；`get_dynamic_interactions` 返回经过 visibility 过滤的状态和明细，避免把参与者或表单内容泄露给无权用户。Fairy 是否接收后续交互必须由卡片的 `routing.fairy` 显式选择，默认不自动路由。
+
 ZZZ Term 只对 `run_command` 显示 Allow/Deny 审批卡，只有用户明确允许后才执行命令。`run_command` 只能使用当前客户端中已经连接且主机 ID 匹配的 SSH 会话；它不能让 Fairy 新建连接、选择凭据或跳过主机密钥校验。客户端会回传 `completed`、`failed`、`denied` 或 `expired` 状态以及有界输出。
 
 ZZZ Term 内嵌的 Fairy 面板是本地 Agent 入口：用户在本地设置中选择 OpenAI-compatible 或 Anthropic-compatible 厂商并保存 API Key，Chat 进行普通对话，Plan 在本地完成需求理解、计划和工具调用。若本地模型可用，面板会在发送前询问是否改用远程 Fairy；远程入口只通过消息段请求在线 ZZZTerm。两条入口共享同一套 `terminal_request` / `terminal_result` 桥接协议，审批始终发生在实际执行命令的 ZZZ Term 客户端。

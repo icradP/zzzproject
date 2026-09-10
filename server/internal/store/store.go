@@ -12,6 +12,7 @@ import (
 
 var ErrMessageIdempotencyConflict = errors.New("client_message_id was already used for a different message")
 var ErrDynamicUpdateIdempotencyConflict = errors.New("dynamic update client_message_id was already used for a different request")
+var ErrDynamicInteractionIdempotencyConflict = errors.New("dynamic interaction event_id was already used for a different request")
 var ErrTerminalVaultConflict = errors.New("terminal vault revision conflict")
 
 // Store defines the storage interface for the IM server.
@@ -74,6 +75,8 @@ type Store interface {
 	GetConversationRead(conversationID, userID string) (*ReadState, error)
 	GetConversationReadStates(conversationID string) ([]*ReadState, error)
 	CountUnreadMessages(conversationID, userID string) (int, error)
+	AppendDynamicInteractionEvent(event *DynamicInteractionEvent) (bool, error)
+	GetDynamicInteractionEvents(conversationID, messageID, contentID string, limit int) ([]*DynamicInteractionEvent, error)
 
 	// ---- Group operations ----
 	CreateGroup(id, name, avatar, ownerID string) (*Group, error)
@@ -125,6 +128,13 @@ type Store interface {
 	Close() error
 }
 
+// DynamicInteractionCommitter is implemented by stores that can record an
+// interaction and update the projected message content in one transaction.
+// Keeping this optional preserves compatibility with external Store adapters.
+type DynamicInteractionCommitter interface {
+	CommitDynamicInteractionEvent(event *DynamicInteractionEvent, segments []protocol.MessageSegment) (bool, error)
+}
+
 // TerminalVault is an opaque client-encrypted envelope. The IM server never
 // parses payload and therefore never has access to host addresses or secrets.
 type TerminalVault struct {
@@ -169,6 +179,49 @@ type Message struct {
 	Timestamp      time.Time                 `json:"timestamp"`
 	Recalled       bool                      `json:"recalled"`
 	Reactions      []protocol.Reaction       `json:"reactions,omitempty"`
+}
+
+// DynamicInteractionEvent is the immutable event ledger behind an
+// interactive message. Aggregated card state is derived from these records;
+// it is not the audit source of truth.
+type DynamicInteractionEvent struct {
+	EventID        string                 `json:"event_id"`
+	ConversationID string                 `json:"conversation_id"`
+	MessageID      string                 `json:"message_id"`
+	ContentID      string                 `json:"content_id"`
+	NodeID         string                 `json:"node_id"`
+	Event          string                 `json:"event"`
+	Action         string                 `json:"action,omitempty"`
+	Payload        map[string]interface{} `json:"payload,omitempty"`
+	ActorID        string                 `json:"actor_id"`
+	ActorNickname  string                 `json:"actor_nickname,omitempty"`
+	ActorKind      string                 `json:"actor_kind"`
+	CreatedAt      time.Time              `json:"created_at"`
+}
+
+func dynamicInteractionFingerprint(event *DynamicInteractionEvent) (string, error) {
+	encoded, err := json.Marshal(struct {
+		ConversationID string                 `json:"conversation_id"`
+		MessageID      string                 `json:"message_id"`
+		ContentID      string                 `json:"content_id"`
+		NodeID         string                 `json:"node_id"`
+		Event          string                 `json:"event"`
+		Action         string                 `json:"action"`
+		Payload        map[string]interface{} `json:"payload"`
+	}{
+		ConversationID: event.ConversationID,
+		MessageID:      event.MessageID,
+		ContentID:      event.ContentID,
+		NodeID:         event.NodeID,
+		Event:          event.Event,
+		Action:         event.Action,
+		Payload:        event.Payload,
+	})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // ReadState stores a user's durable read cursor within a conversation.

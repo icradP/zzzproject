@@ -17,6 +17,14 @@ typedef ImDynamicActionHandler =
       Map<String, dynamic> payload,
     );
 
+int _dynamicEventSequence = 0;
+
+String _newDynamicEventId() {
+  final timestamp = DateTime.now().microsecondsSinceEpoch;
+  final sequence = _dynamicEventSequence++;
+  return 'dynamic-event-$timestamp-$sequence';
+}
+
 abstract class ImDynamicComponentRenderer {
   const ImDynamicComponentRenderer();
 
@@ -64,6 +72,7 @@ class ImDynamicRenderContext {
         nodeId: node.id,
         event: event,
         action: action,
+        eventId: _newDynamicEventId(),
         payload: payload,
       ),
     );
@@ -125,9 +134,7 @@ class _TextRenderer extends ImDynamicComponentRenderer {
     ImDynamicNode node,
     ImDynamicRenderContext renderContext,
   ) {
-    return Text(
-      node.props['text']?.toString() ?? node.props['content']?.toString() ?? '',
-    );
+    return Text(_dynamicText(node, 'text', 'content'));
   }
 }
 
@@ -141,9 +148,15 @@ class _MarkdownRenderer extends ImDynamicComponentRenderer {
     ImDynamicNode node,
     ImDynamicRenderContext renderContext,
   ) {
-    return SelectableText(
-      node.props['content']?.toString() ?? node.props['text']?.toString() ?? '',
-    );
+    final content = _dynamicText(node, 'content', 'text');
+    if (node.props['collapsible'] == true) {
+      return _ExpandableMarkdown(
+        title: node.props['title']?.toString() ?? 'Details',
+        content: content,
+        initiallyExpanded: node.props['expanded'] == true,
+      );
+    }
+    return _MarkdownDocument(content: content);
   }
 }
 
@@ -326,10 +339,7 @@ class _ButtonRenderer extends ImDynamicComponentRenderer {
     ImDynamicNode node,
     ImDynamicRenderContext renderContext,
   ) {
-    final label =
-        node.props['text']?.toString() ??
-        node.props['label']?.toString() ??
-        'Action';
+    final label = _dynamicText(node, 'text', 'label', 'Action');
     return FilledButton(
       onPressed:
           _isClosed(renderContext)
@@ -409,13 +419,13 @@ class _ProgressRenderer extends ImDynamicComponentRenderer {
     ImDynamicRenderContext renderContext,
   ) {
     final value = _number(node.props['value'], 0).clamp(0.0, 1.0);
-    final label = node.props['text']?.toString();
+    final label = _dynamicText(node, 'text');
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         LinearProgressIndicator(value: value),
-        if (label != null && label.isNotEmpty) ...[
+        if (label.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(label, style: Theme.of(context).textTheme.bodySmall),
         ],
@@ -434,8 +444,7 @@ class _StatusRenderer extends ImDynamicComponentRenderer {
     ImDynamicNode node,
     ImDynamicRenderContext renderContext,
   ) {
-    final text =
-        node.props['text']?.toString() ?? node.props['label']?.toString() ?? '';
+    final text = _dynamicText(node, 'text', 'label');
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -457,12 +466,221 @@ class _BadgeRenderer extends ImDynamicComponentRenderer {
     ImDynamicNode node,
     ImDynamicRenderContext renderContext,
   ) {
-    return Chip(
-      label: Text(
-        node.props['text']?.toString() ?? node.props['label']?.toString() ?? '',
-      ),
+    return Chip(label: Text(_dynamicText(node, 'text', 'label')));
+  }
+}
+
+String _dynamicText(
+  ImDynamicNode node,
+  String primary, [
+  String? secondary,
+  String fallback = '',
+]) {
+  final raw =
+      node.props[primary] ??
+      (secondary == null ? null : node.props[secondary]) ??
+      fallback;
+  final text = raw.toString();
+  return text.replaceAllMapped(RegExp(r'\{\{([A-Za-z0-9_.-]+)\}\}'), (match) {
+    final value = node.props[match.group(1)];
+    return value == null ? match.group(0)! : value.toString();
+  });
+}
+
+class _ExpandableMarkdown extends StatelessWidget {
+  const _ExpandableMarkdown({
+    required this.title,
+    required this.content,
+    required this.initiallyExpanded,
+  });
+
+  final String title;
+  final String content;
+  final bool initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: EdgeInsets.zero,
+    child: ExpansionTile(
+      title: Text(title),
+      initiallyExpanded: initiallyExpanded,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+      childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      children: [_MarkdownDocument(content: content)],
+    ),
+  );
+}
+
+class _MarkdownDocument extends StatelessWidget {
+  const _MarkdownDocument({required this.content});
+
+  final String content;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = _markdownBlocks(content);
+    if (blocks.length == 1 && blocks.single.kind == _MarkdownBlockKind.text) {
+      return SelectableText(blocks.single.value);
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < blocks.length; index++) ...[
+          if (index > 0) const SizedBox(height: 8),
+          _MarkdownBlockView(block: blocks[index]),
+        ],
+      ],
     );
   }
+}
+
+enum _MarkdownBlockKind { text, code, table }
+
+class _MarkdownBlock {
+  const _MarkdownBlock(this.kind, this.value);
+
+  final _MarkdownBlockKind kind;
+  final String value;
+}
+
+class _MarkdownBlockView extends StatelessWidget {
+  const _MarkdownBlockView({required this.block});
+
+  final _MarkdownBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (block.kind) {
+      case _MarkdownBlockKind.text:
+        return SelectableText(block.value);
+      case _MarkdownBlockKind.code:
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SelectableText(
+              block.value,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+        );
+      case _MarkdownBlockKind.table:
+        final rows = _parseMarkdownTable(block.value);
+        if (rows.isEmpty) return const SizedBox.shrink();
+        final columnCount = rows.fold<int>(
+          0,
+          (count, row) => row.length > count ? row.length : count,
+        );
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Table(
+            defaultColumnWidth: const IntrinsicColumnWidth(),
+            border: TableBorder.all(color: Theme.of(context).dividerColor),
+            children: [
+              for (final row in rows)
+                TableRow(
+                  children: [
+                    for (var index = 0; index < columnCount; index++)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        child: SelectableText(
+                          index < row.length ? row[index] : '',
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        );
+    }
+  }
+}
+
+List<_MarkdownBlock> _markdownBlocks(String source) {
+  final lines = source.replaceAll('\r\n', '\n').split('\n');
+  final blocks = <_MarkdownBlock>[];
+  final text = <String>[];
+  void flushText() {
+    final value = text.join('\n').trim();
+    if (value.isNotEmpty) {
+      blocks.add(_MarkdownBlock(_MarkdownBlockKind.text, value));
+    }
+    text.clear();
+  }
+  var inCode = false;
+  final code = <String>[];
+  final table = <String>[];
+  void flushTable() {
+    if (table.isNotEmpty) {
+      blocks.add(_MarkdownBlock(_MarkdownBlockKind.table, table.join('\n')));
+      table.clear();
+    }
+  }
+
+  for (final line in lines) {
+    if (line.trimLeft().startsWith('```')) {
+      if (inCode) {
+        blocks.add(_MarkdownBlock(_MarkdownBlockKind.code, code.join('\n')));
+        code.clear();
+      } else {
+        flushText();
+        flushTable();
+      }
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      code.add(line);
+      continue;
+    }
+    if (line.contains('|')) {
+      flushText();
+      table.add(line);
+    } else {
+      flushTable();
+      text.add(line);
+    }
+  }
+  if (inCode && code.isNotEmpty) {
+    blocks.add(_MarkdownBlock(_MarkdownBlockKind.code, code.join('\n')));
+  }
+  flushTable();
+  flushText();
+  return blocks.isEmpty
+      ? const [_MarkdownBlock(_MarkdownBlockKind.text, '')]
+      : blocks;
+}
+
+List<List<String>> _parseMarkdownTable(String source) {
+  final rows = <List<String>>[];
+  for (final line in source.split('\n')) {
+    final trimmed = line.trim();
+    if (!trimmed.contains('|') ||
+        RegExp(
+          r'^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$',
+        ).hasMatch(trimmed)) {
+      continue;
+    }
+    final value = trimmed.startsWith('|') ? trimmed.substring(1) : trimmed;
+    final withoutTrailing =
+        value.endsWith('|') ? value.substring(0, value.length - 1) : value;
+    rows.add(
+      withoutTrailing
+          .split('|')
+          .map((cell) => cell.trim())
+          .toList(growable: false),
+    );
+  }
+  return rows;
 }
 
 class _DynamicInput extends StatefulWidget {
@@ -718,7 +936,8 @@ double? _optionalNumber(Object? value) =>
     value is num ? value.toDouble().clamp(0, 2000) : null;
 
 bool _isClosed(ImDynamicRenderContext context) =>
-    context.state['lifecycle'] == ImDynamicLifecycle.closed.name;
+    context.state['lifecycle'] == ImDynamicLifecycle.closed.name ||
+    context.state['interaction_closed'] == true;
 
 const _icons = <String, IconData>{
   'check': Icons.check,

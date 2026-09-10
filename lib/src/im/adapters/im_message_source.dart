@@ -137,6 +137,18 @@ abstract class ImMessageSource {
     );
   }
 
+  /// Loads the server-filtered event ledger and aggregate projection for one
+  /// dynamic interaction card.
+  Future<ImDynamicInteractionSnapshot> getDynamicInteractions({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+  }) async {
+    throw UnsupportedError(
+      'Dynamic interaction history is not supported by this source.',
+    );
+  }
+
   Future<ImMessage> sendComposedTextMessage({
     required String conversationId,
     required ImComposedText message,

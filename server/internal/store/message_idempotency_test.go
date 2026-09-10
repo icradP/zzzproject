@@ -106,6 +106,89 @@ func TestDynamicContentUpdatePersistsWithoutCreatingMessage(t *testing.T) {
 	}
 }
 
+func TestDynamicInteractionCommitIsAtomicAndIdempotent(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(*testing.T) Store
+	}{
+		{name: "memory", open: func(*testing.T) Store { return NewMemoryStore() }},
+		{name: "sqlite", open: func(t *testing.T) Store {
+			database, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dynamic-commit.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return database
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			database := test.open(t)
+			t.Cleanup(func() { _ = database.Close() })
+			conversationID := "private_alice_bob"
+			if err := database.SaveConversation(&Conversation{
+				ID: conversationID, Type: "private", Title: "Dynamic", Participants: []string{"alice", "bob"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			original := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "status", "props": map[string]interface{}{"text": "Pending"}},
+			})}
+			message, err := database.StoreMessage(conversationID, "alice", "Alice", original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := &DynamicInteractionEvent{
+				EventID: "event-1", ConversationID: conversationID, MessageID: message.ID,
+				ContentID: "card-1", NodeID: "root", Event: "click", Action: "approve",
+				ActorID: "bob", ActorNickname: "Bob", ActorKind: "user", CreatedAt: time.Now(),
+			}
+			updated := []protocol.MessageSegment{protocol.DynamicContentSegment(map[string]interface{}{
+				"id": "card-1", "version": "1.0", "source": "ai",
+				"tree": map[string]interface{}{"id": "root", "type": "status", "props": map[string]interface{}{"text": "Approved"}},
+			})}
+			committer, ok := database.(DynamicInteractionCommitter)
+			if !ok {
+				t.Fatal("store does not implement atomic dynamic interaction commits")
+			}
+			duplicate, err := committer.CommitDynamicInteractionEvent(event, updated)
+			if err != nil || duplicate {
+				t.Fatalf("first commit duplicate=%v err=%v", duplicate, err)
+			}
+			history, err := database.GetMessages(conversationID, 100)
+			if err != nil || len(history) != 1 {
+				t.Fatalf("history after commit = %d err=%v", len(history), err)
+			}
+			status := history[0].Segments[0].Data["tree"].(map[string]interface{})["props"].(map[string]interface{})["text"]
+			if status != "Approved" {
+				t.Fatalf("projected status = %#v", status)
+			}
+			events, err := database.GetDynamicInteractionEvents(conversationID, message.ID, "card-1", 100)
+			if err != nil || len(events) != 1 {
+				t.Fatalf("event ledger after commit = %d err=%v", len(events), err)
+			}
+			duplicate, err = committer.CommitDynamicInteractionEvent(event, original)
+			if err != nil || !duplicate {
+				t.Fatalf("duplicate commit duplicate=%v err=%v", duplicate, err)
+			}
+			events, err = database.GetDynamicInteractionEvents(conversationID, message.ID, "card-1", 100)
+			if err != nil || len(events) != 1 {
+				t.Fatalf("duplicate commit changed ledger = %d err=%v", len(events), err)
+			}
+			missing := *event
+			missing.EventID = "event-missing"
+			missing.MessageID = "message-does-not-exist"
+			if _, err := committer.CommitDynamicInteractionEvent(&missing, updated); err == nil {
+				t.Fatal("missing target commit unexpectedly succeeded")
+			}
+			events, err = database.GetDynamicInteractionEvents(conversationID, "message-does-not-exist", "card-1", 100)
+			if err != nil || len(events) != 0 {
+				t.Fatalf("failed commit left event ledger rows = %d err=%v", len(events), err)
+			}
+		})
+	}
+}
+
 func TestDynamicContentUpdateIdempotencyDoesNotReapplyPatch(t *testing.T) {
 	tests := []struct {
 		name string

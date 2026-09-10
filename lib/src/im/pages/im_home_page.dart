@@ -1088,6 +1088,13 @@ class _ImHomePageState extends State<ImHomePage>
                           .catchError((_) {}),
                     );
                   },
+                  onLoadDynamicInteractions:
+                      (messageId, contentId) =>
+                          repository.getDynamicInteractions(
+                            conversationId: conv.id,
+                            messageId: messageId,
+                            contentId: contentId,
+                          ),
                   onCreateDynamic:
                       _dynamicCreationPermissions[conv.id] == true
                           ? (command) =>

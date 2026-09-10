@@ -237,6 +237,8 @@ func (g *Gateway) handleRequest(client *Client, req *protocol.Request) {
 		g.handleSetConversationPreferences(client, req)
 	case protocol.ActionGetMessages:
 		g.handleGetMessages(client, req)
+	case protocol.ActionGetDynamicInteractions:
+		g.handleGetDynamicInteractions(client, req)
 	case protocol.ActionMarkRead:
 		g.handleMarkRead(client, req)
 	case protocol.ActionGetUser:
@@ -372,6 +374,11 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 			participants = append(participants, client.userID)
 		}
 	}
+	if strings.HasPrefix(id, "agent_") &&
+		(convType != "private" || !isExactAgentConversationParticipants(participants, client.userID)) {
+		g.sendError(client, req.Echo, "Agent conversations must contain only the current user and Fairy")
+		return
+	}
 	if convType == "private" {
 		existing, _ := g.store.GetConversation(id)
 		if existing != nil {
@@ -388,11 +395,11 @@ func (g *Gateway) handleEnsureConversation(client *Client, req *protocol.Request
 				}
 			}
 			friends, _ := g.store.AreFriends(client.userID, otherUserID)
-			if otherUserID == "" || !friends {
+			if otherUserID == "" || (otherUserID != "fairy" && !friends) {
 				g.sendError(client, req.Echo, "direct messages require a friend relationship")
 				return
 			}
-			if g.isEitherBlocked(client.userID, otherUserID) {
+			if otherUserID != "fairy" && g.isEitherBlocked(client.userID, otherUserID) {
 				g.sendError(client, req.Echo, "direct messages are blocked")
 				return
 			}
@@ -822,6 +829,76 @@ func validUserID(value string) bool {
 		strings.IndexFunc(value, unicode.IsControl) == -1
 }
 
+// validateAgentRouteSegments protects the internal local-Agent transport.
+// The marker is intentionally accepted only from an authenticated ZZZTerm
+// device so ordinary IM clients cannot impersonate Fairy or inject messages
+// into the local execution loop.
+func (g *Gateway) validateAgentRouteSegments(
+	client *Client,
+	conversationID string,
+	conversationType string,
+	segments []protocol.MessageSegment,
+) error {
+	var routeRole string
+	for _, segment := range segments {
+		if segment.Type != "agent_route" {
+			continue
+		}
+		if !isZZZTermDevice(client.deviceID) {
+			return fmt.Errorf("agent_route is only available to ZZZTerm devices")
+		}
+		if conversationType != "private" || conversationID == "" {
+			return fmt.Errorf("agent_route requires a private Agent conversation")
+		}
+		conversation, err := g.store.GetConversation(conversationID)
+		if err != nil || conversation == nil || conversation.Type != "private" {
+			return fmt.Errorf("agent_route conversation was not found")
+		}
+		if !isExactAgentConversationParticipants(conversation.Participants, client.userID) {
+			return fmt.Errorf("agent_route requires a private conversation with only the current user and Fairy")
+		}
+		route, _ := segment.Data["route"].(string)
+		if route != "local" {
+			return fmt.Errorf("agent_route route is invalid")
+		}
+		role, _ := segment.Data["role"].(string)
+		if role != "user" && role != "assistant" {
+			return fmt.Errorf("agent_route role is invalid")
+		}
+		if routeRole != "" && routeRole != role {
+			return fmt.Errorf("agent_route roles must agree")
+		}
+		routeRole = role
+	}
+	if routeRole == "user" {
+		for _, segment := range segments {
+			switch segment.Type {
+			case "dynamic_content", "terminal_request", "terminal_result":
+				return fmt.Errorf("local Agent user messages cannot contain %s", segment.Type)
+			}
+		}
+	}
+	return nil
+}
+
+func isExactAgentConversationParticipants(participants []string, userID string) bool {
+	if len(participants) != 2 || userID == "" {
+		return false
+	}
+	seenUser, seenFairy := false, false
+	for _, participant := range participants {
+		switch participant {
+		case userID:
+			seenUser = true
+		case "fairy":
+			seenFairy = true
+		default:
+			return false
+		}
+	}
+	return seenUser && seenFairy
+}
+
 func (g *Gateway) canAccessConversation(userID, conversationID string) bool {
 	if userID == "" || conversationID == "" {
 		return false
@@ -847,6 +924,9 @@ func (g *Gateway) canAccessConversation(userID, conversationID string) bool {
 		return false
 	}
 	if conversation.Type == "private" {
+		if otherUserID == "fairy" {
+			return true
+		}
 		friends, err := g.store.AreFriends(userID, otherUserID)
 		return err == nil && friends && !g.isEitherBlocked(userID, otherUserID)
 	}
@@ -1028,6 +1108,10 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	if len(convID) > 6 && convID[:6] == "group_" {
 		convType = "group"
 	}
+	if err := g.validateAgentRouteSegments(client, convID, convType, segments); err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
+	}
 	if !g.canAccessConversation(client.userID, convID) {
 		g.sendError(client, req.Echo, "conversation access denied")
 		return
@@ -1035,7 +1119,7 @@ func (g *Gateway) handleSendMessage(client *Client, req *protocol.Request) {
 	if convType == "private" {
 		if conversation, _ := g.store.GetConversation(convID); conversation != nil {
 			for _, participantID := range conversation.Participants {
-				if participantID != client.userID && g.isEitherBlocked(client.userID, participantID) {
+				if participantID != client.userID && participantID != "fairy" && g.isEitherBlocked(client.userID, participantID) {
 					g.sendError(client, req.Echo, "direct messages are blocked")
 					return
 				}
@@ -1417,6 +1501,13 @@ func (g *Gateway) lockDynamicMessageUpdate(messageID string) func() {
 
 func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conversationID, conversationType string, segment protocol.MessageSegment) {
 	messageID, _ := segment.Data["message_id"].(string)
+	contentID, _ := segment.Data["content_id"].(string)
+	if messageID == "" || contentID == "" {
+		g.sendError(client, req.Echo, "dynamic event message_id and content_id are required")
+		return
+	}
+	unlock := g.lockDynamicMessageUpdate(messageID)
+	defer unlock()
 	target, err := g.store.GetMessage(messageID)
 	if err != nil || target == nil {
 		g.sendError(client, req.Echo, "dynamic event target message not found")
@@ -1434,36 +1525,287 @@ func (g *Gateway) handleDynamicEvent(client *Client, req *protocol.Request, conv
 		g.sendError(client, req.Echo, err.Error())
 		return
 	}
-
-	g.sendJSON(client, protocol.Response{
-		Status:  "ok",
-		RetCode: 0,
-		Data: map[string]interface{}{
-			"message_id": messageID,
-			"dispatched": true,
-		},
-		Echo: req.Echo,
-	})
-
-	user, _ := g.store.GetUser(client.userID)
-	nickname := client.userID
-	avatar := ""
-	if user != nil {
-		nickname = user.Nickname
-		avatar = user.Avatar
+	schema, config, configured, err := dynamicInteractionSchema(target, contentID)
+	if err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
 	}
-	// Dynamic events are transient interactions. They are delivered to the
-	// other participants but deliberately do not create an empty history row.
-	g.broadcastToConversationExceptClient(conversationID, protocol.MessageEvent{
-		PostType:       "message",
-		MessageType:    conversationType,
+	now := time.Now()
+	user, _ := g.store.GetUser(client.userID)
+	nickname, avatar := client.userID, ""
+	if user != nil {
+		nickname, avatar = user.Nickname, user.Avatar
+	}
+	actorKind := "user"
+	if client.userID == "fairy" {
+		actorKind = "agent"
+	}
+	eventID := dynamicInteractionEventID(conversationID, client.userID, segment.Data)
+	payload, _ := segment.Data["payload"].(map[string]interface{})
+	candidate := &store.DynamicInteractionEvent{
+		EventID:        eventID,
+		ConversationID: conversationID,
 		MessageID:      messageID,
+		ContentID:      contentID,
+		NodeID:         fmt.Sprint(segment.Data["node_id"]),
+		Event:          fmt.Sprint(segment.Data["event"]),
+		Action:         fmt.Sprint(segment.Data["action"]),
+		Payload:        cloneDynamicMap(payload),
+		ActorID:        client.userID,
+		ActorNickname:  nickname,
+		ActorKind:      actorKind,
+		CreatedAt:      now,
+	}
+	events, err := g.store.GetDynamicInteractionEvents(conversationID, messageID, contentID, maxDynamicInteractionEvents)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load dynamic interaction state")
+		return
+	}
+	if existing := existingDynamicInteractionEvent(events, client.userID, eventID); existing != nil {
+		if !sameDynamicInteractionEvent(existing, candidate) {
+			g.sendError(client, req.Echo, "dynamic event_id was already used for a different event")
+			return
+		}
+		g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Data: map[string]interface{}{
+			"message_id": messageID, "content_id": contentID, "event_id": eventID,
+			"dispatched": true, "duplicate": true,
+		}, Echo: req.Echo})
+		return
+	}
+	groupRole := ""
+	if conversationType == "group" {
+		groupRole = g.groupMemberRole(conversationID, client.userID)
+	}
+	isAuthor := target.SenderID == client.userID
+	if err := validateDynamicInteractionPolicy(config, configured, events, candidate, groupRole, isAuthor, now); err != nil {
+		g.sendError(client, req.Echo, err.Error())
+		return
+	}
+	// Compute the next projection before committing the event. Built-in stores
+	// persist both pieces atomically; this ordering keeps reducer failures from
+	// leaving an event that can never be projected.
+	eventsWithCandidate := append(append([]*store.DynamicInteractionEvent(nil), events...), candidate)
+	sortedDynamicInteractionEvents(eventsWithCandidate)
+	localAgent, fairyOwned := dynamicEventTargetOwnership(target)
+	stateChanged := false
+	var replacement protocol.MessageSegment
+	var reduction dynamicInteractionReduction
+	updatedSegments := append([]protocol.MessageSegment(nil), target.Segments...)
+	if configured {
+		nextSegments, nextReplacement, nextReduction, changed, stateErr := applyDynamicInteraction(
+			target, contentID, eventsWithCandidate, dynamicInteractionTotal(g.store, conversationID), now,
+		)
+		if stateErr != nil {
+			g.sendError(client, req.Echo, "failed to update interaction state")
+			return
+		}
+		updatedSegments = nextSegments
+		stateChanged, replacement, reduction = changed, nextReplacement, nextReduction
+	}
+	duplicate := false
+	if committer, ok := g.store.(store.DynamicInteractionCommitter); ok {
+		duplicate, err = committer.CommitDynamicInteractionEvent(candidate, updatedSegments)
+	} else {
+		// Compatibility path for external stores compiled against the older
+		// Store contract. Production stores all implement the atomic method.
+		duplicate, err = g.store.AppendDynamicInteractionEvent(candidate)
+		if err == nil && !duplicate && stateChanged {
+			_, err = g.store.UpdateMessageSegments(target.ID, updatedSegments)
+		}
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrDynamicInteractionIdempotencyConflict) {
+			g.sendError(client, req.Echo, "dynamic event_id was already used for a different event")
+		} else {
+			g.sendError(client, req.Echo, "failed to commit dynamic interaction")
+		}
+		return
+	}
+	if duplicate {
+		g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Data: map[string]interface{}{
+			"message_id": messageID, "content_id": contentID, "event_id": eventID,
+			"dispatched": true, "duplicate": true, "state": reduction.state,
+		}, Echo: req.Echo})
+		return
+	}
+	events = eventsWithCandidate
+	// Only cards that explicitly opt into a Fairy route are delivered to Fairy.
+	// Other participants still receive the transient event for client-local UI.
+	fairyOwned = fairyOwned && dynamicEventShouldRouteToFairy(config, configured, reduction)
+	nowUnix, nowMS := now.Unix(), now.UnixMilli()
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Data: map[string]interface{}{
+		"message_id": messageID, "content_id": contentID, "event_id": eventID,
+		"dispatched": true, "duplicate": false, "state": reduction.state,
+	}, Echo: req.Echo})
+	g.broadcastToConversationExceptClient(conversationID, protocol.MessageEvent{
+		PostType: "message", MessageType: conversationType, MessageID: messageID,
 		ConversationID: conversationID,
 		Sender:         protocol.Sender{UserID: client.userID, Nickname: nickname, Avatar: avatar},
-		Message:        []protocol.MessageSegment{segment},
-		Timestamp:      time.Now().Unix(),
-		TimestampMS:    time.Now().UnixMilli(),
+		Message:        []protocol.MessageSegment{segment}, Timestamp: nowUnix, TimestampMS: nowMS,
+		LocalAgent: localAgent, FairyOwned: fairyOwned,
 	}, client)
+	if stateChanged {
+		g.broadcastToConversation(conversationID, protocol.MessageEvent{
+			PostType: "message", MessageType: conversationType, MessageID: target.ID,
+			ConversationID: conversationID,
+			Sender:         protocol.Sender{UserID: client.userID, Nickname: nickname, Avatar: avatar},
+			Message:        []protocol.MessageSegment{replacement}, Timestamp: nowUnix, TimestampMS: nowMS,
+		}, "")
+	}
+	// Legacy cards retain the old visible audit row. Generic cards use the
+	// interaction ledger and a shared aggregate projection instead.
+	if dynamicInteractionUsesLegacyAudit(schema, configured) {
+		resultData := cloneDynamicMap(segment.Data)
+		resultData["event_id"] = eventID
+		resultData["actor_id"], resultData["actor_nickname"] = client.userID, nickname
+		resultData["actor_kind"] = actorKind
+		resultData["summary"] = dynamicEventResultSummary(nickname, segment.Data)
+		auditSegments := []protocol.MessageSegment{protocol.TextSegment(resultData["summary"].(string)), protocol.DynamicEventResultSegment(resultData)}
+		auditID := "dynamic-event-" + hexDigest(fmt.Sprintf("%s\x00%s\x00%s", conversationID, client.userID, eventID))
+		audit, auditDuplicate, auditErr := g.store.StoreMessageIdempotent(conversationID, client.userID, nickname, auditID, auditSegments)
+		if auditErr != nil || audit == nil {
+			g.sendError(client, req.Echo, "failed to record dynamic event audit")
+			return
+		}
+		if !auditDuplicate {
+			g.broadcastToConversation(conversationID, protocol.MessageEvent{PostType: "message", MessageType: conversationType, MessageID: audit.ID, ConversationID: conversationID, Sender: protocol.Sender{UserID: client.userID, Nickname: nickname, Avatar: avatar}, Message: audit.Segments, Timestamp: audit.Timestamp.Unix(), TimestampMS: audit.Timestamp.UnixMilli(), DynamicEventAudit: true}, "")
+			g.pushToConversation(conversationID, audit, "", false)
+		}
+	}
+}
+
+func dynamicEventShouldRouteToFairy(config dynamicInteractionConfig, configured bool, reduction dynamicInteractionReduction) bool {
+	if !configured {
+		return true
+	}
+	switch config.fairyRoute {
+	case "each_event":
+		return true
+	case "on_close":
+		return reduction.closed
+	case "on_threshold":
+		return config.fairyThreshold > 0 && reduction.responded >= config.fairyThreshold
+	default:
+		return false
+	}
+}
+
+func dynamicInteractionUsesLegacyAudit(schema map[string]interface{}, configured bool) bool {
+	if !configured {
+		// Cards created before the interaction contract (including legacy
+		// terminal_request approvals) still need a durable visible result.
+		return true
+	}
+	metadata, _ := schema["metadata"].(map[string]interface{})
+	interaction, _ := metadata["interaction"].(map[string]interface{})
+	_, hasReducer := interaction["reducer"]
+	_, hasPolicy := interaction["policy"]
+	return !hasReducer && !hasPolicy
+}
+
+func dynamicEventResultSummary(nickname string, data map[string]interface{}) string {
+	event, _ := data["event"].(string)
+	action, _ := data["action"].(string)
+	if event == "" {
+		event = "interaction"
+	}
+	if action == "" {
+		return fmt.Sprintf("%s performed %s", nickname, event)
+	}
+	return fmt.Sprintf("%s performed %s (%s)", nickname, event, action)
+}
+
+func hexDigest(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+func (g *Gateway) handleGetDynamicInteractions(client *Client, req *protocol.Request) {
+	if client.userID == "" {
+		g.sendError(client, req.Echo, "not authenticated")
+		return
+	}
+	params, ok := req.Params.(map[string]interface{})
+	if !ok {
+		g.sendError(client, req.Echo, "invalid dynamic interaction params")
+		return
+	}
+	conversationID, _ := params["conversation_id"].(string)
+	messageID, _ := params["message_id"].(string)
+	contentID, _ := params["content_id"].(string)
+	if conversationID == "" || messageID == "" || contentID == "" || !g.canAccessConversation(client.userID, conversationID) {
+		g.sendError(client, req.Echo, "dynamic interaction target is invalid")
+		return
+	}
+	target, err := g.store.GetMessage(messageID)
+	if err != nil || target == nil || target.ConversationID != conversationID {
+		g.sendError(client, req.Echo, "dynamic interaction target not found")
+		return
+	}
+	schema, config, configured, err := dynamicInteractionSchema(target, contentID)
+	if err != nil || !configured {
+		g.sendError(client, req.Echo, "dynamic interaction is not configured")
+		return
+	}
+	events, err := g.store.GetDynamicInteractionEvents(conversationID, messageID, contentID, maxDynamicInteractionEvents)
+	if err != nil {
+		g.sendError(client, req.Echo, "failed to load dynamic interactions")
+		return
+	}
+	role := ""
+	if conversation, _ := g.store.GetConversation(conversationID); conversation != nil && conversation.Type == "group" {
+		role = g.groupMemberRole(conversationID, client.userID)
+	}
+	detailAllowed := config.visibility == "public_detail" || (config.visibility == "admin_detail" && (role == "owner" || role == "admin" || target.SenderID == client.userID))
+	filtered := make([]map[string]interface{}, 0, len(events))
+	for _, event := range events {
+		// Aggregate visibility exposes the projection only. Do not return even
+		// anonymized event rows, otherwise clients could infer response volume
+		// and timing beyond the declared aggregate contract.
+		if config.visibility == "public_aggregate" || config.visibility == "anonymous_aggregate" {
+			continue
+		}
+		if config.visibility == "actor_only" && event.ActorID != client.userID {
+			continue
+		}
+		if config.visibility == "admin_detail" && !detailAllowed {
+			continue
+		}
+		item := dynamicInteractionEventDetail(event)
+		if !detailAllowed && config.visibility != "actor_only" {
+			item["actor_id"], item["actor_nickname"] = "", ""
+			item["payload"] = nil
+		}
+		filtered = append(filtered, item)
+	}
+	metadata, _ := schema["metadata"].(map[string]interface{})
+	state, _ := metadata["interaction_state"].(map[string]interface{})
+	g.sendJSON(client, protocol.Response{Status: "ok", RetCode: 0, Echo: req.Echo, Data: map[string]interface{}{
+		"message_id": messageID, "content_id": contentID, "visibility": config.visibility,
+		"events": filtered, "state": state,
+	}})
+}
+
+func dynamicEventTargetOwnership(message *store.Message) (localAgent, fairyOwned bool) {
+	if message == nil {
+		return false, false
+	}
+	fairyOwned = message.SenderID == "fairy"
+	for _, segment := range message.Segments {
+		switch segment.Type {
+		case "agent_route":
+			route, _ := segment.Data["route"].(string)
+			localAgent = localAgent || route == "local"
+		case "dynamic_content":
+			schema, err := dynamicSchemaFromData(segment.Data)
+			if err != nil {
+				continue
+			}
+			source, _ := schema["source"].(string)
+			fairyOwned = fairyOwned || source == "ai" || source == "plugin"
+		}
+	}
+	return localAgent, fairyOwned
 }
 
 func validClientMessageID(value string) bool {

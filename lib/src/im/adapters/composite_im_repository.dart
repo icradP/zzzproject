@@ -336,11 +336,49 @@ class CompositeImRepository implements ImRepository {
       nodeId: event.nodeId,
       event: event.event,
       action: event.action,
+      eventId: event.eventId,
       payload: event.payload,
     );
     return registration.repository.sendDynamicEvent(
       conversationId: ImSourceAddress.localIdOf(conversationId),
       event: localEvent,
+    );
+  }
+
+  @override
+  Future<ImDynamicInteractionSnapshot> getDynamicInteractions({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+  }) async {
+    final registration = _registrationForValue(conversationId);
+    _requireMatchingSource(
+      registration,
+      messageId,
+      'Dynamic interaction message',
+    );
+    final snapshot = await registration.repository.getDynamicInteractions(
+      conversationId: ImSourceAddress.localIdOf(conversationId),
+      messageId: ImSourceAddress.localIdOf(messageId),
+      contentId: contentId,
+    );
+    return ImDynamicInteractionSnapshot(
+      conversationId: ImSourceAddress.scope(
+        registration.id,
+        snapshot.conversationId.isEmpty
+            ? ImSourceAddress.localIdOf(conversationId)
+            : snapshot.conversationId,
+      ),
+      messageId: ImSourceAddress.scope(
+        registration.id,
+        snapshot.messageId.isEmpty
+            ? ImSourceAddress.localIdOf(messageId)
+            : snapshot.messageId,
+      ),
+      contentId: snapshot.contentId,
+      visibility: snapshot.visibility,
+      state: snapshot.state,
+      events: snapshot.events,
     );
   }
 
@@ -1256,6 +1294,7 @@ class CompositeImRepository implements ImRepository {
         nodeId: event.nodeId,
         event: event.event,
         action: event.action,
+        eventId: event.eventId,
         payload: event.payload,
       ),
       sentAt: envelope.sentAt,

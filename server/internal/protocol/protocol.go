@@ -28,6 +28,54 @@ type DynamicContentCapabilities struct {
 	ContentOperations bool     `json:"content_operations"`
 }
 
+// DynamicInteractionConfig describes the behavior attached to a Dynamic
+// Content schema. UI layout remains in tree; this contract owns interaction
+// policy, state reduction, projection, and optional Agent routing.
+type DynamicInteractionConfig struct {
+	Version    string                       `json:"version,omitempty"`
+	Kind       string                       `json:"kind,omitempty"`
+	Reducer    string                       `json:"reducer,omitempty"`
+	Policy     DynamicInteractionPolicy     `json:"policy,omitempty"`
+	Routing    DynamicInteractionRouting    `json:"routing,omitempty"`
+	Projection DynamicInteractionProjection `json:"projection,omitempty"`
+
+	// Legacy flat fields remain readable for cards created before the generic
+	// reducer contract was introduced.
+	Total           int    `json:"total,omitempty"`
+	AllowChange     *bool  `json:"allow_change,omitempty"`
+	CloseOnResponse *bool  `json:"close_on_response,omitempty"`
+	ProgressNodeID  string `json:"progress_node_id,omitempty"`
+	StatusNodeID    string `json:"status_node_id,omitempty"`
+	ProgressText    string `json:"progress_text,omitempty"`
+}
+
+type DynamicInteractionPolicy struct {
+	Response             string              `json:"response,omitempty"`
+	AllowChange          *bool               `json:"allow_change,omitempty"`
+	Visibility           string              `json:"visibility,omitempty"`
+	ExpiresAtMS          int64               `json:"expires_at_ms,omitempty"`
+	Audience             []string            `json:"audience,omitempty"`
+	AllowAgent           bool                `json:"allow_agent,omitempty"`
+	MaxResponsesPerActor int                 `json:"max_responses_per_actor,omitempty"`
+	Total                int                 `json:"total,omitempty"`
+	Quorum               int                 `json:"quorum,omitempty"`
+	Veto                 *bool               `json:"veto,omitempty"`
+	InitialState         string              `json:"initial_state,omitempty"`
+	Transitions          map[string][]string `json:"transitions,omitempty"`
+}
+
+type DynamicInteractionRouting struct {
+	Fairy     string `json:"fairy,omitempty"`
+	Handler   string `json:"handler,omitempty"`
+	Threshold int    `json:"threshold,omitempty"`
+}
+
+type DynamicInteractionProjection struct {
+	ProgressNodeID string `json:"progress_node_id,omitempty"`
+	StatusNodeID   string `json:"status_node_id,omitempty"`
+	ProgressText   string `json:"progress_text,omitempty"`
+}
+
 func CurrentServerCapabilities() Capabilities {
 	return Capabilities{
 		ProtocolVersion: CurrentProtocolVersion,
@@ -190,6 +238,28 @@ func DynamicEventSegment(messageID, contentID, nodeID, event, action string, pay
 	return MessageSegment{Type: "dynamic_event", Data: data}
 }
 
+// DynamicEventSegmentWithID is the v1 event-ledger form. eventID is generated
+// by the client and is the idempotency key for exactly one attempted action.
+func DynamicEventSegmentWithID(eventID, messageID, contentID, nodeID, event, action string, payload map[string]interface{}) MessageSegment {
+	segment := DynamicEventSegment(messageID, contentID, nodeID, event, action, payload)
+	if eventID != "" {
+		segment.Data["event_id"] = eventID
+	}
+	return segment
+}
+
+// DynamicEventResultSegment is the durable audit record created after a
+// validated dynamic interaction. It is intentionally a passive segment: the
+// readable summary is carried by the adjacent text segment and clients must
+// never treat this record as a new UI event.
+func DynamicEventResultSegment(data map[string]interface{}) MessageSegment {
+	result := make(map[string]interface{}, len(data))
+	for key, value := range data {
+		result[key] = value
+	}
+	return MessageSegment{Type: "dynamic_event_result", Data: result}
+}
+
 // TerminalRequestSegment asks an online ZZZ Term client to present a
 // short-lived, locally approved operation. It is transported as an IM message
 // so the requester and result remain visible in the conversation audit trail.
@@ -217,15 +287,18 @@ type Sender struct {
 
 // MessageEvent is pushed to clients when a new message arrives.
 type MessageEvent struct {
-	PostType       string           `json:"post_type"`
-	MessageType    string           `json:"message_type"`
-	MessageID      string           `json:"message_id"`
-	ConversationID string           `json:"conversation_id"`
-	Sender         Sender           `json:"sender"`
-	Message        []MessageSegment `json:"message"`
-	Reactions      []Reaction       `json:"reactions,omitempty"`
-	Timestamp      int64            `json:"timestamp"`
-	TimestampMS    int64            `json:"timestamp_ms"`
+	PostType          string           `json:"post_type"`
+	MessageType       string           `json:"message_type"`
+	MessageID         string           `json:"message_id"`
+	ConversationID    string           `json:"conversation_id"`
+	Sender            Sender           `json:"sender"`
+	Message           []MessageSegment `json:"message"`
+	Reactions         []Reaction       `json:"reactions,omitempty"`
+	Timestamp         int64            `json:"timestamp"`
+	TimestampMS       int64            `json:"timestamp_ms"`
+	LocalAgent        bool             `json:"local_agent,omitempty"`
+	FairyOwned        bool             `json:"fairy_owned,omitempty"`
+	DynamicEventAudit bool             `json:"dynamic_event_audit,omitempty"`
 }
 
 // Reaction is an aggregate reaction count attached to a message.
@@ -336,6 +409,7 @@ const (
 	ActionGetConversations           = "get_conversations"
 	ActionSetConversationPreferences = "set_conversation_preferences"
 	ActionGetMessages                = "get_messages"
+	ActionGetDynamicInteractions     = "get_dynamic_interactions"
 	ActionMarkRead                   = "mark_read"
 	ActionGetUser                    = "get_user"
 	ActionUpdateProfile              = "update_profile"

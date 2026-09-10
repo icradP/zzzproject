@@ -1695,6 +1695,14 @@ class ZzzServerSource implements ImMessageSource {
   void _handleEvent(Map<String, dynamic> json) {
     switch (json['post_type']) {
       case 'message':
+        if (json['dynamic_event_audit'] == true) {
+          // Dynamic interaction results are durable messages with an explicit
+          // marker. Render them immediately like history, but never route the
+          // audit row back into a Fairy turn.
+          final audit = _parseMessage(json);
+          if (audit != null) _addMessageToStream(audit);
+          break;
+        }
         if (_dynamicEventData(json) != null) {
           _emitDynamicEvent(json);
           break;
@@ -2009,6 +2017,28 @@ class ZzzServerSource implements ImMessageSource {
       ],
     });
     _requireOk(response, 'Send dynamic event');
+  }
+
+  @override
+  Future<ImDynamicInteractionSnapshot> getDynamicInteractions({
+    required String conversationId,
+    required String messageId,
+    required String contentId,
+  }) async {
+    final response = await _request('get_dynamic_interactions', {
+      'conversation_id': conversationId,
+      'message_id': messageId,
+      'content_id': contentId,
+    });
+    _requireOk(response, 'Load dynamic interactions');
+    final data = response['data'];
+    if (data is! Map) {
+      throw StateError('Dynamic interaction response is invalid.');
+    }
+    return ImDynamicInteractionSnapshot.fromJson(
+      Map<String, dynamic>.from(data),
+      conversationId: conversationId,
+    );
   }
 
   /// Applies a node-id patch to an existing dynamic content message. The
@@ -2471,13 +2501,19 @@ class ZzzServerSource implements ImMessageSource {
         relationship: knownSender?.relationship ?? ImRelationship.none,
       );
       if (_friendIds.contains(senderId)) _emitUsers();
+      final presentsAsFairy = _isLocalAssistantMessage(segments);
+      final displaySenderId = presentsAsFairy ? 'fairy' : senderId;
+      final displaySenderName =
+          presentsAsFairy
+              ? (_users['fairy']?.displayName ?? 'Fairy')
+              : senderDisplayName;
       final mediaUrl = (data['url'] as String?) ?? (data['file'] as String?);
       final thumbnailUrl = data['thumbnail_url'] as String?;
       return ImMessage(
         id: '${json['message_id']}',
         conversationId: conversationId,
-        senderId: senderId,
-        senderDisplayName: senderDisplayName,
+        senderId: displaySenderId,
+        senderDisplayName: displaySenderName,
         text: segments.map(_segmentDisplayText).join().trim(),
         sentAt:
             _timestampFromJson(json) ?? DateTime.fromMillisecondsSinceEpoch(0),
@@ -2485,7 +2521,7 @@ class ZzzServerSource implements ImMessageSource {
         status: _statusFromJson(json['status']),
         readCount: (json['read_count'] as num?)?.toInt() ?? 0,
         recipientCount: (json['recipient_count'] as num?)?.toInt() ?? 0,
-        isMine: senderId == _selfId,
+        isMine: !presentsAsFairy && senderId == _selfId,
         segments: oneBotChainFromJson(segments),
         mediaPath: _resolveMediaUrl(mediaUrl),
         mediaUrl: mediaUrl,
@@ -2563,6 +2599,7 @@ class ZzzServerSource implements ImMessageSource {
       'dynamic_replace' => '',
       'dynamic_remove' => '',
       'dynamic_event' => '',
+      'dynamic_event_result' => '${data['summary'] ?? '[交互结果]'}',
       'at' => '@${data['qq'] ?? ''}',
       'reply' => '',
       final type => '[${type ?? 'unknown'}]',
@@ -2723,10 +2760,15 @@ class ZzzServerSource implements ImMessageSource {
     final firstData = first['data'] as Map?;
     final mediaUrl = firstData?['url'] as String?;
     final thumbnailUrl = firstData?['thumbnail_url'] as String?;
+    final presentsAsFairy = _isLocalAssistantMessage(segments);
     final message = ImMessage(
       id: '${responseData['message_id']}',
       conversationId: conversationId,
-      senderId: _selfId,
+      senderId: presentsAsFairy ? 'fairy' : _selfId,
+      senderDisplayName:
+          presentsAsFairy
+              ? (_users['fairy']?.displayName ?? 'Fairy')
+              : _users[_selfId]?.displayName,
       text: segments.map(_segmentDisplayText).join().trim(),
       sentAt: _timestampFromJson(responseData) ?? DateTime.now(),
       kind: _kindForSegment(first['type'] as String?),
@@ -2736,7 +2778,7 @@ class ZzzServerSource implements ImMessageSource {
               .where((participantId) => participantId != _selfId)
               .length ??
           0,
-      isMine: true,
+      isMine: !presentsAsFairy,
       segments: oneBotChainFromJson(segments),
       replyToMessageId: _replyMessageId(reply),
       mediaPath: _resolveMediaUrl(mediaUrl),
@@ -2765,6 +2807,16 @@ class ZzzServerSource implements ImMessageSource {
       if (predicate(segment)) return segment;
     }
     return null;
+  }
+
+  bool _isLocalAssistantMessage(List<Map<String, dynamic>> segments) {
+    for (final segment in segments) {
+      if (segment['type'] != 'agent_route') continue;
+      final data = segment['data'];
+      if (data is! Map) continue;
+      return data['route'] == 'local' && data['role'] == 'assistant';
+    }
+    return false;
   }
 
   DateTime? _timestampFromJson(

@@ -23,6 +23,8 @@ type MemoryStore struct {
 	messages                 map[string][]*Message                         // conversationID -> messages
 	messageIdempotency       map[string]memoryMessageIdempotency           // senderID + clientMessageID -> request
 	dynamicUpdateIdempotency map[string]memoryDynamicUpdateIdempotency     // senderID + clientMessageID -> update request
+	dynamicInteractionEvents map[string][]*DynamicInteractionEvent         // messageID -> immutable interaction events
+	dynamicInteractionByID   map[string]memoryDynamicInteractionEvent      // actorID + eventID -> request
 	messageReactions         map[string]map[string]map[string]struct{}     // messageID -> emojiID -> userID
 	readStates               map[string]map[string]*ReadState              // conversationID -> userID -> cursor
 	friendRequests           map[string]*FriendRequest
@@ -50,6 +52,11 @@ type memoryDynamicUpdateIdempotency struct {
 	messageID   string
 }
 
+type memoryDynamicInteractionEvent struct {
+	fingerprint string
+	event       *DynamicInteractionEvent
+}
+
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		users:                    make(map[string]*User),
@@ -62,6 +69,8 @@ func NewMemoryStore() *MemoryStore {
 		messages:                 make(map[string][]*Message),
 		messageIdempotency:       make(map[string]memoryMessageIdempotency),
 		dynamicUpdateIdempotency: make(map[string]memoryDynamicUpdateIdempotency),
+		dynamicInteractionEvents: make(map[string][]*DynamicInteractionEvent),
+		dynamicInteractionByID:   make(map[string]memoryDynamicInteractionEvent),
 		messageReactions:         make(map[string]map[string]map[string]struct{}),
 		readStates:               make(map[string]map[string]*ReadState),
 		friendRequests:           make(map[string]*FriendRequest),
@@ -210,6 +219,7 @@ func (s *MemoryStore) DeleteConversation(id string) error {
 	for _, msg := range s.messages[id] {
 		delete(s.messageReactions, msg.ID)
 		s.deleteMessageIdempotencyLocked(msg.ID)
+		s.deleteDynamicInteractionEventsLocked(msg.ID)
 	}
 	delete(s.conversations, id)
 	delete(s.preferences, id)
@@ -263,6 +273,94 @@ func (s *MemoryStore) UpdateMessageSegments(msgID string, segments []protocol.Me
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.updateMessageSegmentsLocked(msgID, segments)
+}
+
+func (s *MemoryStore) AppendDynamicInteractionEvent(event *DynamicInteractionEvent) (bool, error) {
+	if event == nil || event.EventID == "" || event.ActorID == "" {
+		return false, fmt.Errorf("dynamic interaction event identity is required")
+	}
+	fingerprint, err := dynamicInteractionFingerprint(event)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := event.ActorID + "\x00" + event.EventID
+	if existing, ok := s.dynamicInteractionByID[key]; ok {
+		if existing.fingerprint != fingerprint {
+			return false, ErrDynamicInteractionIdempotencyConflict
+		}
+		return true, nil
+	}
+	copy := cloneDynamicInteractionEvent(event)
+	if copy.CreatedAt.IsZero() {
+		copy.CreatedAt = time.Now()
+	}
+	s.dynamicInteractionEvents[copy.MessageID] = append(s.dynamicInteractionEvents[copy.MessageID], copy)
+	s.dynamicInteractionByID[key] = memoryDynamicInteractionEvent{fingerprint: fingerprint, event: copy}
+	return false, nil
+}
+
+func (s *MemoryStore) CommitDynamicInteractionEvent(event *DynamicInteractionEvent, segments []protocol.MessageSegment) (bool, error) {
+	if event == nil || event.EventID == "" || event.ActorID == "" {
+		return false, fmt.Errorf("dynamic interaction event identity is required")
+	}
+	fingerprint, err := dynamicInteractionFingerprint(event)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := event.ActorID + "\x00" + event.EventID
+	if existing, ok := s.dynamicInteractionByID[key]; ok {
+		if existing.fingerprint != fingerprint {
+			return false, ErrDynamicInteractionIdempotencyConflict
+		}
+		return true, nil
+	}
+	if message := s.findMessageLocked(event.MessageID); message == nil {
+		return false, fmt.Errorf("dynamic interaction target message not found")
+	}
+	if _, err := s.updateMessageSegmentsLocked(event.MessageID, segments); err != nil {
+		return false, err
+	}
+	copy := cloneDynamicInteractionEvent(event)
+	if copy.CreatedAt.IsZero() {
+		copy.CreatedAt = time.Now()
+	}
+	s.dynamicInteractionEvents[copy.MessageID] = append(s.dynamicInteractionEvents[copy.MessageID], copy)
+	s.dynamicInteractionByID[key] = memoryDynamicInteractionEvent{fingerprint: fingerprint, event: copy}
+	return false, nil
+}
+
+func (s *MemoryStore) GetDynamicInteractionEvents(conversationID, messageID, contentID string, limit int) ([]*DynamicInteractionEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]*DynamicInteractionEvent, 0)
+	for _, event := range s.dynamicInteractionEvents[messageID] {
+		if event.ConversationID != conversationID || event.ContentID != contentID {
+			continue
+		}
+		result = append(result, cloneDynamicInteractionEvent(event))
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	return result, nil
+}
+
+func cloneDynamicInteractionEvent(event *DynamicInteractionEvent) *DynamicInteractionEvent {
+	if event == nil {
+		return nil
+	}
+	copy := *event
+	if event.Payload != nil {
+		copy.Payload = make(map[string]interface{}, len(event.Payload))
+		for key, value := range event.Payload {
+			copy.Payload[key] = value
+		}
+	}
+	return &copy
 }
 
 func (s *MemoryStore) LookupDynamicUpdateIdempotency(senderID, clientMessageID, fingerprint string) (*Message, bool, error) {
@@ -422,6 +520,7 @@ func (s *MemoryStore) DeleteMessage(msgID string) (bool, error) {
 			}
 			s.messages[conversationID] = append(messages[:index], messages[index+1:]...)
 			delete(s.messageReactions, msgID)
+			s.deleteDynamicInteractionEventsLocked(msgID)
 			s.deleteMessageIdempotencyLocked(msgID)
 			return true, nil
 		}
@@ -440,6 +539,13 @@ func (s *MemoryStore) deleteMessageIdempotencyLocked(messageID string) {
 			delete(s.dynamicUpdateIdempotency, key)
 		}
 	}
+}
+
+func (s *MemoryStore) deleteDynamicInteractionEventsLocked(messageID string) {
+	for _, event := range s.dynamicInteractionEvents[messageID] {
+		delete(s.dynamicInteractionByID, event.ActorID+"\x00"+event.EventID)
+	}
+	delete(s.dynamicInteractionEvents, messageID)
 }
 
 func (s *MemoryStore) ReactToMessage(msgID, userID, emojiID string, remove bool) (*Message, error) {
