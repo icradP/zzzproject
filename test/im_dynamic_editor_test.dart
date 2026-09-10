@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zzzproject/src/widgets/zzz_widgets.dart';
 import 'package:zzzproject/zzz_im_chat.dart';
 
 void main() {
@@ -112,9 +113,170 @@ void main() {
 
     expect(find.byType(TabBar), findsOneWidget);
     expect(find.byType(Tab), findsNWidgets(3));
-    expect(find.text('Components'), findsWidgets);
-    expect(find.text('Properties'), findsWidgets);
+    expect(find.text('Build'), findsOneWidget);
+    expect(find.text('Action'), findsOneWidget);
     expect(find.text('Preview'), findsWidgets);
+    expect(find.byKey(const ValueKey('dynamic-editor-save')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('creator stays usable at 320px and switches real templates', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(320, 700)
+      ..devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    ImDynamicCommand? created;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ZzzModalPanel(
+            title: 'Interactive Message',
+            icon: Icons.dashboard_customize_outlined,
+            maxWidth: 900,
+            maxHeight: 680,
+            child: ImDynamicContentCreatorPanel(
+              messageId: 'mobile-draft',
+              onCreate: (command) => created = command,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Progress controls'), findsOneWidget);
+    expect(find.text('Build'), findsOneWidget);
+    final panelRect = tester.getRect(find.byType(ZzzModalPanel));
+    expect(panelRect.left, greaterThanOrEqualTo(0));
+    expect(panelRect.right, lessThanOrEqualTo(320));
+    expect(panelRect.top, greaterThanOrEqualTo(0));
+    expect(panelRect.bottom, lessThanOrEqualTo(700));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(
+      find.byKey(const ValueKey('dynamic-editor-template-progressControls')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Survey / vote').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('question'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('dynamic-editor-save')));
+    await tester.pump();
+    expect(created?.operation, ImDynamicCommandOperation.create);
+    expect(created?.content?.metadata['template'], 'survey');
+  });
+
+  testWidgets('action editor creates a generic progress projection', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(390, 720)
+      ..devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final controller = ImDynamicEditorController(
+      content: const ImDynamicContent(
+        id: 'action-editor-card',
+        version: '1.0',
+        source: ImDynamicContentSource.user,
+        tree: ImDynamicNode(
+          id: 'root',
+          type: 'column',
+          children: [
+            ImDynamicNode(
+              id: 'progress',
+              type: 'progress',
+              props: {'value': 0.2, 'text': '20%'},
+            ),
+            ImDynamicNode(
+              id: 'change',
+              type: 'button',
+              props: {'text': 'Change'},
+              events: {
+                'click': {'action': 'respond'},
+              },
+            ),
+          ],
+        ),
+      ),
+    )..selectNode('change');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 700,
+            child: ImDynamicEditor(
+              controller: controller,
+              messageId: 'action-message',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Action'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('dynamic-editor-action-behavior-response')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Increase progress').last);
+    await tester.pumpAndSettle();
+
+    expect(controller.content.tree.findById('change')?.events['click'], {
+      'action': 'adjust_progress',
+      'projection': {'progress_delta': 0.1, 'progress_node_id': 'progress'},
+    });
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('progress control template changes progress in preview', (
+    tester,
+  ) async {
+    final content = ImDynamicEditorTemplates.build(
+      template: ImDynamicEditorTemplate.progressControls,
+      contentId: 'progress-preview',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ImDynamicContentView(
+            content: content,
+            messageId: 'progress-preview-message',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    double progress() =>
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator).first,
+            )
+            .value!;
+    expect(progress(), closeTo(0.5, 0.001));
+
+    await tester.tap(find.text('+10%'));
+    await tester.pump();
+    expect(progress(), closeTo(0.6, 0.001));
+
+    await tester.tap(find.text('-10%'));
+    await tester.pump();
+    expect(progress(), closeTo(0.5, 0.001));
   });
 }

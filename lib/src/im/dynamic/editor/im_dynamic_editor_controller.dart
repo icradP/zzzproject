@@ -160,6 +160,31 @@ class ImDynamicEditorController extends ChangeNotifier {
     updateNode(nodeId: nodeId, events: events);
   }
 
+  /// Replaces one complete declarative event definition.
+  ///
+  /// Low-code editors should use this method when an event contains optional
+  /// fields such as `projection`. Updating only action/target/value through
+  /// [setNodeEvent] would otherwise discard those extensions.
+  void setNodeEventDefinition({
+    required String nodeId,
+    required String event,
+    Map<String, dynamic>? definition,
+  }) {
+    final current = content.tree.findById(nodeId);
+    if (current == null) {
+      throw ImDynamicPatchException('Node $nodeId was not found');
+    }
+    final events = <String, Map<String, dynamic>>{...current.events};
+    final action = definition?['action']?.toString().trim() ?? '';
+    if (definition == null || action.isEmpty) {
+      events.remove(event);
+    } else {
+      events[event] = <String, dynamic>{...definition, 'action': action}
+        ..removeWhere((key, value) => value == null);
+    }
+    updateNode(nodeId: nodeId, events: events);
+  }
+
   void removeNode(String nodeId) {
     _commitPatch(
       ImDynamicPatch(operation: ImDynamicPatchOperation.remove, nodeId: nodeId),

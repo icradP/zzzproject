@@ -1401,6 +1401,42 @@ void main() {
     expect(progress.value, 0.1);
   });
 
+  testWidgets('interaction summaries display persisted aggregate counts', (
+    tester,
+  ) async {
+    const content = ImDynamicContent(
+      id: 'survey-summary',
+      version: '1.0',
+      source: ImDynamicContentSource.user,
+      tree: ImDynamicNode(
+        id: 'root',
+        type: 'text',
+        props: {'text': 'Survey result'},
+      ),
+      metadata: {
+        'interaction': {'reducer': 'set_by_actor'},
+        'interaction_state': {
+          'status': 'active',
+          'responded': 3,
+          'total': 4,
+          'counts': {'option_a': 2, 'option_b': 1},
+        },
+      },
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: ImDynamicContentView(content: content)),
+      ),
+    );
+
+    expect(find.text('3 / 4 responded'), findsOneWidget);
+    expect(find.text('Option A'), findsOneWidget);
+    expect(find.text('Option B'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+  });
+
   testWidgets('non-approval actions can declare a progress projection', (
     tester,
   ) async {

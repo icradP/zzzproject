@@ -223,6 +223,14 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
     final progress =
         snapshot?.progress ??
         (total > 0 ? (responded / total).clamp(0.0, 1.0) : 0.0);
+    final rawCounts = state['counts'];
+    final counts = <String, int>{};
+    if (rawCounts is Map) {
+      for (final entry in rawCounts.entries) {
+        final count = entry.value;
+        if (count is num) counts['${entry.key}'] = count.toInt();
+      }
+    }
     final scheme = Theme.of(context).colorScheme;
     final statusColor = closed ? scheme.outline : scheme.primary;
     return Container(
@@ -274,7 +282,23 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
               '$responded / $total responded',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-          ] else if (_interactionError != null)
+          ],
+          if (counts.isNotEmpty) ...[
+            const Divider(height: 14),
+            for (final entry in counts.entries)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(_interactionLabel(entry.key))),
+                    Text(
+                      entry.value.toString(),
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
+                ),
+              ),
+          ] else if (total <= 0 && _interactionError != null)
             Text(
               'Response details unavailable',
               style: Theme.of(context).textTheme.bodySmall,
@@ -282,6 +306,15 @@ class _ImDynamicContentViewState extends State<ImDynamicContentView> {
         ],
       ),
     );
+  }
+
+  String _interactionLabel(String value) {
+    final words = value.replaceAll('_', ' ').trim();
+    if (words.isEmpty) return value;
+    return words
+        .split(RegExp(r'\s+'))
+        .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
   }
 
   Future<void> _openInteractionDetails(BuildContext context) async {

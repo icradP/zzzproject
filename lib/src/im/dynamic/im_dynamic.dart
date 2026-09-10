@@ -3,6 +3,7 @@ export 'adapters/im_dynamic_message_patch_adapter.dart';
 export 'adapters/im_dynamic_command_adapter.dart';
 export 'editor/im_dynamic_editor_controller.dart';
 export 'editor/im_dynamic_editor.dart';
+export 'editor/im_dynamic_editor_templates.dart';
 export 'models/im_dynamic_command.dart';
 export 'models/im_dynamic_models.dart';
 export 'models/im_dynamic_template.dart';

@@ -1094,8 +1094,7 @@ class _ImChatRoomViewState extends State<ImChatRoomView> {
       builder:
           (dialogContext) => ZzzModalPanel(
             key: const ValueKey('dynamic-creator-panel'),
-            title: 'Create Dynamic Content',
-            subtitle: 'Build an interactive message',
+            title: 'Interactive Message',
             icon: Icons.dashboard_customize_outlined,
             maxWidth: 900,
             maxHeight: 680,

@@ -126,4 +126,80 @@ void main() {
       'value': 'Done',
     });
   });
+
+  test('complete event edits retain generic projection fields', () {
+    final controller = ImDynamicEditorController(content: aiContent);
+    addTearDown(controller.dispose);
+    controller.setNodeEventDefinition(
+      nodeId: 'title',
+      event: 'click',
+      definition: const {
+        'action': 'advance_stage',
+        'projection': {'progress_delta': 0.25, 'progress_node_id': 'progress'},
+      },
+    );
+    final current = controller.content.tree.findById('title')!.events['click']!;
+    controller.setNodeEventDefinition(
+      nodeId: 'title',
+      event: 'click',
+      definition: {...current, 'action': 'advance_custom_stage'},
+    );
+
+    expect(
+      controller.content.tree.findById('title')?.events['click']?['projection'],
+      {'progress_delta': 0.25, 'progress_node_id': 'progress'},
+    );
+  });
+
+  test('editor templates create distinct generic interaction contracts', () {
+    for (final template in ImDynamicEditorTemplate.values) {
+      final content = ImDynamicEditorTemplates.build(
+        template: template,
+        contentId: 'template-${template.name}',
+      );
+      expect(
+        const ImDynamicSchemaValidator().validate(content).isValid,
+        isTrue,
+        reason: template.name,
+      );
+    }
+
+    final progress = ImDynamicEditorTemplates.build(
+      template: ImDynamicEditorTemplate.progressControls,
+      contentId: 'progress-template',
+    );
+    expect(
+      progress.tree
+          .findById('increase')
+          ?.events['click']?['projection']?['progress_delta'],
+      0.1,
+    );
+    expect(
+      progress.tree
+          .findById('decrease')
+          ?.events['click']?['projection']?['progress_delta'],
+      -0.1,
+    );
+
+    final survey = ImDynamicEditorTemplates.build(
+      template: ImDynamicEditorTemplate.survey,
+      contentId: 'survey-template',
+    );
+    expect((survey.metadata['interaction'] as Map)['reducer'], 'set_by_actor');
+
+    final receipt = ImDynamicEditorTemplates.build(
+      template: ImDynamicEditorTemplate.readReceipt,
+      contentId: 'receipt-template',
+    );
+    expect(receipt.tree.findById('mark-read'), isNotNull);
+
+    final confirmation = ImDynamicEditorTemplates.build(
+      template: ImDynamicEditorTemplate.confirmation,
+      contentId: 'confirmation-template',
+    );
+    expect(
+      (confirmation.metadata['interaction'] as Map)['reducer'],
+      'approval_quorum',
+    );
+  });
 }

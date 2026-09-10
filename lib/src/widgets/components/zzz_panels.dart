@@ -277,15 +277,20 @@ class _ZzzPanelState extends State<ZzzPanel>
 
   @override
   Widget build(BuildContext context) {
+    final borderRadius = BorderRadius.circular(widget.radius);
     final panel = Container(
-      padding: widget.padding,
       decoration: BoxDecoration(
         color: ZzzColors.panel,
-        borderRadius: BorderRadius.circular(widget.radius),
+        borderRadius: borderRadius,
         border: Border.all(color: Colors.white12),
         image: widget.background,
       ),
-      child: widget.child,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: borderRadius,
+        clipBehavior: Clip.antiAlias,
+        child: Padding(padding: widget.padding, child: widget.child),
+      ),
     );
 
     if (!widget.animateEntrance) return panel;
@@ -365,7 +370,7 @@ class _ZzzRevealState extends State<ZzzReveal>
   Widget build(BuildContext context) {
     return ClipRect(
       child: SizeTransition(
-        axisAlignment: -1,
+        alignment: Alignment.topCenter,
         sizeFactor: _sizeAnimation,
         child: FadeTransition(
           opacity: _sizeAnimation,

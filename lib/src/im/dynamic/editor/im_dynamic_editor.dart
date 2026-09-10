@@ -7,6 +7,7 @@ import '../models/im_dynamic_command.dart';
 import '../models/im_dynamic_models.dart';
 import '../widgets/im_dynamic_content_view.dart';
 import 'im_dynamic_editor_controller.dart';
+import 'im_dynamic_editor_templates.dart';
 
 /// A low-code editor for the controlled Dynamic Content schema.
 ///
@@ -98,41 +99,35 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final selected = controller.selectedNode;
-    return Card(
+    return Column(
       key: const ValueKey('dynamic-editor'),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildToolbar(context, controller),
-          const Divider(height: 1),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth < 760) {
-                  return _buildCompactEditor(context, controller, selected);
-                }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(
-                      width: 230,
-                      child: _buildTree(context, controller),
-                    ),
-                    const VerticalDivider(width: 1),
-                    SizedBox(
-                      width: 300,
-                      child: _buildProperties(context, controller, selected),
-                    ),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: _buildPreview(context, controller)),
-                  ],
-                );
-              },
-            ),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildToolbar(context, controller),
+        const Divider(height: 1),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 760) {
+                return _buildCompactEditor(context, controller, selected);
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(width: 230, child: _buildTree(context, controller)),
+                  const VerticalDivider(width: 1),
+                  SizedBox(
+                    width: 320,
+                    child: _buildProperties(context, controller, selected),
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: _buildPreview(context, controller)),
+                ],
+              );
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -147,9 +142,9 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
         children: [
           const TabBar(
             tabs: [
-              Tab(text: 'Components'),
-              Tab(text: 'Properties'),
-              Tab(text: 'Preview'),
+              Tab(icon: Icon(Icons.account_tree_outlined), text: 'Build'),
+              Tab(icon: Icon(Icons.tune_outlined), text: 'Action'),
+              Tab(icon: Icon(Icons.visibility_outlined), text: 'Preview'),
             ],
           ),
           Expanded(
@@ -170,58 +165,74 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
     BuildContext context,
     ImDynamicEditorController controller,
   ) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Undo',
-            onPressed: controller.canUndo ? controller.undo : null,
-            icon: const Icon(Icons.undo_rounded),
-          ),
-          IconButton(
-            tooltip: 'Redo',
-            onPressed: controller.canRedo ? controller.redo : null,
-            icon: const Icon(Icons.redo_rounded),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Dynamic Content',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          const SizedBox(width: 16),
-          FilledButton.icon(
-            key: const ValueKey('dynamic-editor-save'),
-            onPressed:
-                widget.onSave == null
-                    ? null
-                    : () => widget.onSave!(
-                      widget.creating
-                          ? controller.buildCreateCommand(
-                            messageId: widget.messageId,
-                          )
-                          : controller.buildSaveCommand(
-                            messageId: widget.messageId,
-                          ),
-                    ),
-            icon: const Icon(Icons.save_outlined),
-            label: Text(widget.creating ? 'Create' : 'Save'),
-          ),
-          if (!widget.creating && widget.onSave != null) ...[
-            const SizedBox(width: 4),
-            IconButton(
-              key: const ValueKey('dynamic-editor-remove-content'),
-              tooltip: 'Remove dynamic content',
-              onPressed:
-                  () => widget.onSave!(
-                    controller.buildRemoveCommand(messageId: widget.messageId),
+    void save() => widget.onSave!(
+      widget.creating
+          ? controller.buildCreateCommand(messageId: widget.messageId)
+          : controller.buildSaveCommand(messageId: widget.messageId),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Undo',
+                onPressed: controller.canUndo ? controller.undo : null,
+                icon: const Icon(Icons.undo_rounded),
+              ),
+              IconButton(
+                tooltip: 'Redo',
+                onPressed: controller.canRedo ? controller.redo : null,
+                icon: const Icon(Icons.redo_rounded),
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Interactive message',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
-              icon: const Icon(Icons.delete_outline),
-            ),
-          ],
-        ],
-      ),
+                ),
+              ] else
+                const Spacer(),
+              if (compact)
+                IconButton.filled(
+                  key: const ValueKey('dynamic-editor-save'),
+                  tooltip: widget.creating ? 'Create message' : 'Save message',
+                  onPressed: widget.onSave == null ? null : save,
+                  icon: Icon(
+                    widget.creating ? Icons.send_rounded : Icons.save_outlined,
+                  ),
+                )
+              else
+                FilledButton.icon(
+                  key: const ValueKey('dynamic-editor-save'),
+                  onPressed: widget.onSave == null ? null : save,
+                  icon: Icon(
+                    widget.creating ? Icons.send_rounded : Icons.save_outlined,
+                  ),
+                  label: Text(widget.creating ? 'Create' : 'Save'),
+                ),
+              if (!widget.creating && widget.onSave != null)
+                IconButton(
+                  key: const ValueKey('dynamic-editor-remove-content'),
+                  tooltip: 'Remove dynamic content',
+                  onPressed:
+                      () => widget.onSave!(
+                        controller.buildRemoveCommand(
+                          messageId: widget.messageId,
+                        ),
+                      ),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -303,7 +314,7 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
     final props = node.props;
     final canDelete = node.id != controller.content.tree.id;
     return ListView(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 520 ? 12 : 14),
       children: [
         Text(node.type, style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
@@ -313,10 +324,7 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
           decoration: InputDecoration(
             labelText: node.type == 'markdown' ? 'Content' : 'Text / content',
           ),
-          onSubmitted: (value) {
-            // Resolve the selection at submit time as well as at build time.
-            // This keeps keyboard submission reliable while the tree selection
-            // is being changed in the adjacent panel.
+          onChanged: (value) {
             final selected = controller.selectedNode ?? node;
             final key = selected.type == 'markdown' ? 'content' : 'text';
             controller.updateNode(
@@ -341,7 +349,7 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
             key: const ValueKey('dynamic-editor-progress-label'),
             decoration: const InputDecoration(labelText: 'Progress label'),
             initialValue: props['text']?.toString() ?? '',
-            onFieldSubmitted:
+            onChanged:
                 (value) => controller.updateNode(
                   nodeId: node.id,
                   props: {...props, 'text': value},
@@ -479,80 +487,249 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
         node.events['change'] ??
         node.events['submit'] ??
         const <String, dynamic>{};
-    final event = node.type == 'button' ? 'click' : 'change';
+    final event = switch (node.type) {
+      'button' => 'click',
+      'input' => 'submit',
+      _ => 'change',
+    };
     final targetIds = _nodeIds(
       controller.content.tree,
     ).where((id) => id != node.id).toList(growable: false);
     final target = definition['target']?.toString();
+    final projection =
+        definition['projection'] is Map
+            ? Map<String, dynamic>.from(definition['projection'] as Map)
+            : <String, dynamic>{};
+    final delta = _asDouble(projection['progress_delta']);
+    final behavior = switch (definition['action']?.toString()) {
+      'respond' => 'response',
+      'set_property' || 'set_value' || 'set_status' => 'set_property',
+      'toggle' => 'toggle',
+      'set_progress' => 'set_progress',
+      'increment_progress' =>
+        (_asDouble(definition['value']) ?? 0) < 0
+            ? 'decrease_progress'
+            : 'increase_progress',
+      _
+          when projection.containsKey('progress') ||
+              projection.containsKey('progress_value') =>
+        'set_progress',
+      _ when delta != null && delta < 0 => 'decrease_progress',
+      _ when delta != null => 'increase_progress',
+      _ when definition.isEmpty => 'response',
+      _ => 'custom',
+    };
+    final progressTargets = _nodeIdsByType(controller.content.tree, 'progress');
+    final progressTarget =
+        projection['progress_node_id']?.toString() ??
+        projection['progress_target']?.toString();
+
+    void commit(Map<String, dynamic> next) => controller.setNodeEventDefinition(
+      nodeId: node.id,
+      event: event,
+      definition: next,
+    );
+
+    void setBehavior(String nextBehavior) {
+      final next = <String, dynamic>{...definition};
+      switch (nextBehavior) {
+        case 'response':
+          next['action'] = 'respond';
+          next.remove('target');
+          next.remove('property');
+          next.remove('value');
+          next.remove('projection');
+        case 'set_property':
+          next['action'] = 'set_property';
+          next['target'] =
+              target ?? (targetIds.isEmpty ? null : targetIds.first);
+          next['property'] = definition['property'] ?? 'text';
+          next['value'] = definition['value'] ?? 'Updated';
+          next.remove('projection');
+        case 'toggle':
+          next['action'] = 'toggle';
+          next['target'] =
+              target ?? (targetIds.isEmpty ? null : targetIds.first);
+          next['property'] = definition['property'] ?? 'value';
+          next.remove('value');
+          next.remove('projection');
+        case 'set_progress':
+          next['action'] = 'adjust_progress';
+          next.remove('target');
+          next.remove('property');
+          next.remove('value');
+          next['projection'] = {
+            'progress': 0.5,
+            if (progressTargets.isNotEmpty)
+              'progress_node_id': progressTargets.first,
+          };
+        case 'increase_progress':
+        case 'decrease_progress':
+          next['action'] = 'adjust_progress';
+          next.remove('target');
+          next.remove('property');
+          next.remove('value');
+          next['projection'] = {
+            'progress_delta': nextBehavior == 'decrease_progress' ? -0.1 : 0.1,
+            if (progressTargets.isNotEmpty)
+              'progress_node_id': progressTargets.first,
+          };
+        case 'custom':
+          next['action'] =
+              definition['action']?.toString().trim().isNotEmpty == true
+                  ? definition['action']
+                  : 'custom_action';
+      }
+      commit(next..removeWhere((key, value) => value == null));
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 12),
-        Text('Action link', style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 6),
-        TextFormField(
-          key: const ValueKey('dynamic-editor-action'),
-          initialValue: definition['action']?.toString() ?? '',
-          decoration: const InputDecoration(labelText: 'Action name'),
-          onFieldSubmitted:
-              (value) => controller.setNodeEvent(
-                nodeId: node.id,
-                event: event,
-                action: value,
-                targetNodeId: target,
-                property: definition['property']?.toString(),
-                value: definition['value'],
-              ),
-        ),
+        Text('Interaction', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          key: const ValueKey('dynamic-editor-action-target'),
-          initialValue: targetIds.contains(target) ? target : null,
-          decoration: const InputDecoration(labelText: 'Target component'),
-          items: [
-            for (final id in targetIds)
-              DropdownMenuItem(value: id, child: Text(id)),
+          key: ValueKey('dynamic-editor-action-behavior-$behavior'),
+          initialValue: behavior,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Behavior'),
+          items: const [
+            DropdownMenuItem(
+              value: 'response',
+              child: Text('Record response only'),
+            ),
+            DropdownMenuItem(
+              value: 'set_property',
+              child: Text('Set component content'),
+            ),
+            DropdownMenuItem(value: 'toggle', child: Text('Toggle on / off')),
+            DropdownMenuItem(
+              value: 'set_progress',
+              child: Text('Set progress'),
+            ),
+            DropdownMenuItem(
+              value: 'increase_progress',
+              child: Text('Increase progress'),
+            ),
+            DropdownMenuItem(
+              value: 'decrease_progress',
+              child: Text('Decrease progress'),
+            ),
+            DropdownMenuItem(value: 'custom', child: Text('Custom action')),
           ],
-          onChanged:
-              (value) => controller.setNodeEvent(
-                nodeId: node.id,
-                event: event,
-                action: definition['action']?.toString() ?? 'set_property',
-                targetNodeId: value,
-                property: definition['property']?.toString() ?? 'text',
-                value: definition['value'] ?? 'Updated',
-              ),
+          onChanged: (value) {
+            if (value != null) setBehavior(value);
+          },
         ),
         const SizedBox(height: 8),
         TextFormField(
-          key: const ValueKey('dynamic-editor-action-property'),
-          initialValue: definition['property']?.toString() ?? 'text',
-          decoration: const InputDecoration(labelText: 'Target property'),
-          onFieldSubmitted:
-              (value) => controller.setNodeEvent(
-                nodeId: node.id,
-                event: event,
-                action: definition['action']?.toString() ?? 'set_property',
-                targetNodeId: target,
-                property: value,
-                value: definition['value'] ?? 'Updated',
-              ),
+          key: const ValueKey('dynamic-editor-action'),
+          initialValue:
+              definition['action']?.toString() ??
+              (behavior == 'response' ? 'respond' : ''),
+          decoration: const InputDecoration(labelText: 'Action ID'),
+          onChanged: (value) => commit({...definition, 'action': value.trim()}),
         ),
-        const SizedBox(height: 8),
-        TextFormField(
-          key: const ValueKey('dynamic-editor-action-value'),
-          initialValue: definition['value']?.toString() ?? 'Updated',
-          decoration: const InputDecoration(labelText: 'Target value'),
-          onFieldSubmitted:
-              (value) => controller.setNodeEvent(
-                nodeId: node.id,
-                event: event,
-                action: definition['action']?.toString() ?? 'set_property',
-                targetNodeId: target,
-                property: definition['property']?.toString() ?? 'text',
-                value: value,
+        if (behavior == 'set_property' || behavior == 'toggle') ...[
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            key: const ValueKey('dynamic-editor-action-target'),
+            initialValue: targetIds.contains(target) ? target : null,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Target component'),
+            items: [
+              for (final id in targetIds)
+                DropdownMenuItem(value: id, child: Text(id)),
+            ],
+            onChanged: (value) => commit({...definition, 'target': value}),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            key: const ValueKey('dynamic-editor-action-property'),
+            initialValue:
+                definition['property']?.toString() ??
+                (behavior == 'toggle' ? 'value' : 'text'),
+            decoration: const InputDecoration(labelText: 'Target property'),
+            onChanged:
+                (value) => commit({...definition, 'property': value.trim()}),
+          ),
+          if (behavior == 'set_property') ...[
+            const SizedBox(height: 8),
+            TextFormField(
+              key: const ValueKey('dynamic-editor-action-value'),
+              initialValue: definition['value']?.toString() ?? 'Updated',
+              decoration: const InputDecoration(labelText: 'New value'),
+              onChanged:
+                  (value) => commit({
+                    ...definition,
+                    'value': _parsePropertyValue(value),
+                  }),
+            ),
+          ],
+        ],
+        if ({
+          'set_progress',
+          'increase_progress',
+          'decrease_progress',
+        }.contains(behavior)) ...[
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            key: const ValueKey('dynamic-editor-progress-target'),
+            initialValue:
+                progressTargets.contains(progressTarget)
+                    ? progressTarget
+                    : (progressTargets.isEmpty ? null : progressTargets.first),
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Progress component'),
+            items: [
+              for (final id in progressTargets)
+                DropdownMenuItem(value: id, child: Text(id)),
+            ],
+            onChanged: (value) {
+              final nextProjection = {...projection};
+              nextProjection['progress_node_id'] = value;
+              commit({...definition, 'projection': nextProjection});
+            },
+          ),
+          const SizedBox(height: 8),
+          _numberField(
+            key: 'progress-effect',
+            label: behavior == 'set_progress' ? 'Progress (0-1)' : 'Step (0-1)',
+            value:
+                behavior == 'set_progress'
+                    ? projection['progress'] ??
+                        projection['progress_value'] ??
+                        0.5
+                    : (delta?.abs() ?? 0.1),
+            onChanged: (value) {
+              final nextProjection = <String, dynamic>{...projection};
+              if (behavior == 'set_progress') {
+                nextProjection
+                  ..remove('progress_delta')
+                  ..remove('increment')
+                  ..['progress'] = value.clamp(0.0, 1.0);
+              } else {
+                nextProjection
+                  ..remove('progress')
+                  ..remove('progress_value')
+                  ..['progress_delta'] =
+                      behavior == 'decrease_progress'
+                          ? -value.abs()
+                          : value.abs();
+              }
+              commit({...definition, 'projection': nextProjection});
+            },
+          ),
+          if (progressTargets.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Add a Progress component before assigning this behavior.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
-        ),
+            ),
+        ],
       ],
     );
   }
@@ -566,7 +743,7 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
   ) => TextFormField(
     initialValue: node.props[key]?.toString() ?? '',
     decoration: InputDecoration(labelText: label),
-    onFieldSubmitted:
+    onChanged:
         (value) => controller.updateNode(
           nodeId: node.id,
           props: {...node.props, key: value},
@@ -583,7 +760,7 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
     initialValue: value?.toString() ?? '',
     keyboardType: const TextInputType.numberWithOptions(decimal: true),
     decoration: InputDecoration(labelText: label),
-    onFieldSubmitted: (raw) {
+    onChanged: (raw) {
       final parsed = double.tryParse(raw);
       if (parsed != null) onChanged(parsed);
     },
@@ -635,6 +812,18 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
       },
       _ => const {'text': 'New text'},
     },
+    events: switch (type) {
+      'button' => const {
+        'click': {'action': 'respond'},
+      },
+      'input' => const {
+        'submit': {'action': 'respond'},
+      },
+      'checkbox' || 'select' => const {
+        'change': {'action': 'respond'},
+      },
+      _ => const {},
+    },
   );
 
   String _newNodeId(ImDynamicNode root, String type) {
@@ -656,6 +845,31 @@ class _ImDynamicEditorState extends State<ImDynamicEditor> {
 
     visit(root);
     return result;
+  }
+
+  List<String> _nodeIdsByType(ImDynamicNode root, String type) {
+    final result = <String>[];
+    void visit(ImDynamicNode node) {
+      if (node.type == type) result.add(node.id);
+      for (final child in node.children) {
+        visit(child);
+      }
+    }
+
+    visit(root);
+    return result;
+  }
+
+  double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse('${value ?? ''}'.trim());
+  }
+
+  Object _parsePropertyValue(String raw) {
+    final value = raw.trim();
+    if (value == 'true') return true;
+    if (value == 'false') return false;
+    return num.tryParse(value) ?? raw;
   }
 }
 
@@ -740,15 +954,18 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
 
     return ExpansionTile(
       key: const ValueKey('dynamic-interaction-policy-panel'),
-      initiallyExpanded: interaction.isNotEmpty,
+      initiallyExpanded: false,
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
       leading: const Icon(Icons.tune_outlined),
-      title: const Text('Interaction policy'),
+      title: const Text('Response settings'),
       subtitle: Text(
         interaction.isEmpty
-            ? 'Optional response, visibility and Fairy routing'
-            : '${interaction['reducer'] ?? 'none'} · ${policy['visibility'] ?? 'public_aggregate'}',
+            ? 'No aggregate response model'
+            : _interactionSummary(
+              interaction['reducer']?.toString(),
+              policy['visibility']?.toString(),
+            ),
       ),
       children: [
         DropdownButtonFormField<String>(
@@ -766,20 +983,21 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
                   }.contains(interaction['reducer'])
                   ? interaction['reducer'] as String
                   : 'none',
-          decoration: const InputDecoration(labelText: 'Reducer'),
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Response model'),
           items: const [
-            DropdownMenuItem(value: 'none', child: Text('None')),
+            DropdownMenuItem(value: 'none', child: Text('No aggregate')),
             DropdownMenuItem(
               value: 'set_by_actor',
-              child: Text('Set by actor'),
+              child: Text('One choice per member'),
             ),
-            DropdownMenuItem(value: 'append', child: Text('Append events')),
-            DropdownMenuItem(value: 'counter', child: Text('Counter')),
+            DropdownMenuItem(value: 'append', child: Text('Event history')),
+            DropdownMenuItem(value: 'counter', child: Text('Response counter')),
             DropdownMenuItem(value: 'checklist', child: Text('Checklist')),
-            DropdownMenuItem(value: 'form', child: Text('Form')),
+            DropdownMenuItem(value: 'form', child: Text('Form responses')),
             DropdownMenuItem(
               value: 'approval_quorum',
-              child: Text('Approval quorum'),
+              child: Text('Decision quorum'),
             ),
             DropdownMenuItem(
               value: 'state_machine',
@@ -869,7 +1087,7 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
           decoration: const InputDecoration(
             labelText: 'Audience roles (all, users, agents, admins, owner)',
           ),
-          onFieldSubmitted:
+          onChanged:
               (value) => update(
                 audience: value
                     .split(',')
@@ -907,17 +1125,21 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
                   }.contains(routing['fairy'])
                   ? routing['fairy'] as String
                   : 'manual',
-          decoration: const InputDecoration(labelText: 'Fairy routing'),
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Send results to Fairy'),
           items: const [
-            DropdownMenuItem(value: 'manual', child: Text('Manual')),
+            DropdownMenuItem(
+              value: 'manual',
+              child: Text('Only when requested'),
+            ),
             DropdownMenuItem(
               value: 'each_event',
-              child: Text('Every response'),
+              child: Text('After every response'),
             ),
-            DropdownMenuItem(value: 'on_close', child: Text('When closed')),
+            DropdownMenuItem(value: 'on_close', child: Text('When completed')),
             DropdownMenuItem(
               value: 'on_threshold',
-              child: Text('At threshold'),
+              child: Text('At response threshold'),
             ),
           ],
           onChanged: (value) => update(fairyRoute: value),
@@ -933,7 +1155,7 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
             key: const ValueKey('dynamic-policy-initial-state'),
             initialValue: policy['initial_state']?.toString() ?? 'open',
             decoration: const InputDecoration(labelText: 'Initial state'),
-            onFieldSubmitted: (value) => update(initialState: value.trim()),
+            onChanged: (value) => update(initialState: value.trim()),
           ),
         if (interaction['reducer'] == 'state_machine')
           TextFormField(
@@ -944,7 +1166,7 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
             decoration: const InputDecoration(
               labelText: 'Transitions JSON (state -> allowed states)',
             ),
-            onFieldSubmitted: (value) {
+            onChanged: (value) {
               try {
                 final decoded = jsonDecode(value);
                 if (decoded is Map) {
@@ -962,13 +1184,13 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
           key: const ValueKey('dynamic-policy-progress-node'),
           initialValue: projection['progress_node_id']?.toString() ?? '',
           decoration: const InputDecoration(labelText: 'Progress node ID'),
-          onFieldSubmitted: (value) => update(progressNodeId: value.trim()),
+          onChanged: (value) => update(progressNodeId: value.trim()),
         ),
         TextFormField(
           key: const ValueKey('dynamic-policy-status-node'),
           initialValue: projection['status_node_id']?.toString() ?? '',
           decoration: const InputDecoration(labelText: 'Status node ID'),
-          onFieldSubmitted: (value) => update(statusNodeId: value.trim()),
+          onChanged: (value) => update(statusNodeId: value.trim()),
         ),
         TextFormField(
           key: const ValueKey('dynamic-policy-progress-text'),
@@ -976,10 +1198,31 @@ class ImDynamicInteractionPolicyPanel extends StatelessWidget {
           decoration: const InputDecoration(
             labelText: 'Progress text template',
           ),
-          onFieldSubmitted: (value) => update(progressText: value),
+          onChanged: (value) => update(progressText: value),
         ),
       ],
     );
+  }
+
+  String _interactionSummary(String? reducer, String? visibility) {
+    final model = switch (reducer) {
+      'set_by_actor' => 'One choice per member',
+      'append' => 'Event history',
+      'counter' => 'Response counter',
+      'checklist' => 'Checklist',
+      'form' => 'Form responses',
+      'approval_quorum' => 'Decision quorum',
+      'state_machine' => 'State workflow',
+      _ => 'No aggregate',
+    };
+    final audience = switch (visibility) {
+      'public_detail' => 'details visible to everyone',
+      'admin_detail' => 'details visible to admins',
+      'actor_only' => 'private response',
+      'anonymous_aggregate' => 'anonymous totals',
+      _ => 'totals visible to everyone',
+    };
+    return '$model · $audience';
   }
 }
 
@@ -1000,7 +1243,7 @@ class _InteractionIntField extends StatelessWidget {
     initialValue: value == 0 ? '' : value.toString(),
     keyboardType: TextInputType.number,
     decoration: InputDecoration(labelText: label),
-    onFieldSubmitted: (raw) {
+    onChanged: (raw) {
       final parsed = int.tryParse(raw.trim());
       if (parsed != null && parsed >= 0) onChanged(parsed);
     },
@@ -1026,62 +1269,74 @@ class ImDynamicContentCreatorPanel extends StatefulWidget {
 
 class _ImDynamicContentCreatorPanelState
     extends State<ImDynamicContentCreatorPanel> {
-  late final ImDynamicEditorController _controller;
+  late ImDynamicEditorController _controller;
+  late final String _contentId;
+  ImDynamicEditorTemplate _template = ImDynamicEditorTemplate.progressControls;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     final token = DateTime.now().microsecondsSinceEpoch;
+    _contentId = 'user-content-$token';
     _controller = ImDynamicEditorController(
-      content: ImDynamicContent(
-        id: 'user-content-$token',
-        version: '1.0',
-        source: ImDynamicContentSource.user,
-        tree: const ImDynamicNode(
-          id: 'root',
-          type: 'column',
-          props: {'spacing': 8.0},
-          children: [
-            ImDynamicNode(
-              id: 'title',
-              type: 'text',
-              props: {'text': 'Interactive content'},
-            ),
-            ImDynamicNode(
-              id: 'actions',
-              type: 'row',
-              props: {'spacing': 8.0},
-              children: [
-                ImDynamicNode(
-                  id: 'status',
-                  type: 'status',
-                  props: {'text': 'Ready'},
-                ),
-                ImDynamicNode(
-                  id: 'approve',
-                  type: 'button',
-                  props: {'text': 'Approve'},
-                  events: {
-                    'click': {
-                      'action': 'set_status',
-                      'target': 'status',
-                      'property': 'text',
-                      'value': 'Approved',
-                    },
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-        fallback: const ImDynamicFallback(
-          type: 'text',
-          content: 'Interactive content',
-        ),
-        metadata: const {'created_by': 'dynamic_creator_panel'},
+      content: ImDynamicEditorTemplates.build(
+        template: _template,
+        contentId: _contentId,
       ),
     )..selectNode('title');
+  }
+
+  void _selectTemplate(ImDynamicEditorTemplate template) {
+    if (template == _template || _saving) return;
+    final previous = _controller;
+    final next = ImDynamicEditorController(
+      content: ImDynamicEditorTemplates.build(
+        template: template,
+        contentId: _contentId,
+      ),
+    );
+    final preferredNode = switch (template) {
+      ImDynamicEditorTemplate.survey => 'question',
+      ImDynamicEditorTemplate.readReceipt => 'notice',
+      ImDynamicEditorTemplate.confirmation => 'request',
+      _ => 'title',
+    };
+    next.selectNode(preferredNode);
+    setState(() {
+      _template = template;
+      _controller = next;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+  }
+
+  Widget _buildTemplatePicker(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      child: DropdownButtonFormField<ImDynamicEditorTemplate>(
+        key: ValueKey('dynamic-editor-template-${_template.name}'),
+        initialValue: _template,
+        isExpanded: true,
+        decoration: const InputDecoration(
+          labelText: 'Message template',
+          prefixIcon: Icon(Icons.widgets_outlined),
+        ),
+        items: [
+          for (final template in ImDynamicEditorTemplate.values)
+            DropdownMenuItem(
+              value: template,
+              child: Text(
+                template.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: (value) {
+          if (value != null) _selectTemplate(value);
+        },
+      ),
+    );
   }
 
   @override
@@ -1091,25 +1346,35 @@ class _ImDynamicContentCreatorPanelState
   }
 
   @override
-  Widget build(BuildContext context) => ImDynamicEditor(
-    controller: _controller,
-    messageId: widget.messageId,
-    creating: true,
-    onSave:
-        _saving
-            ? null
-            : (command) {
-              setState(() => _saving = true);
-              final messenger = ScaffoldMessenger.maybeOf(context);
-              Future<void>.sync(() => widget.onCreate(command)).catchError((
-                error,
-              ) {
-                if (!mounted) return;
-                setState(() => _saving = false);
-                messenger?.showSnackBar(
-                  SnackBar(content: Text(error.toString())),
-                );
-              });
-            },
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _buildTemplatePicker(context),
+      const Divider(height: 1),
+      Expanded(
+        child: ImDynamicEditor(
+          key: ValueKey('dynamic-editor-${_template.name}'),
+          controller: _controller,
+          messageId: widget.messageId,
+          creating: true,
+          onSave:
+              _saving
+                  ? null
+                  : (command) {
+                    setState(() => _saving = true);
+                    final messenger = ScaffoldMessenger.maybeOf(context);
+                    Future<void>.sync(
+                      () => widget.onCreate(command),
+                    ).catchError((error) {
+                      if (!mounted) return;
+                      setState(() => _saving = false);
+                      messenger?.showSnackBar(
+                        SnackBar(content: Text(error.toString())),
+                      );
+                    });
+                  },
+        ),
+      ),
+    ],
   );
 }
